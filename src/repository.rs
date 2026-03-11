@@ -454,7 +454,7 @@ impl H5iRepository {
             // 以前実装した「h5i commit」で、コミット時にこのUpdateをサイドカーに保存しておく設計が必要
             if let Ok(update_data) = self.load_specific_delta_for_commit(oid, file_path) {
                 let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&update_data)?);
+                txn.apply_update(yrs::Update::decode_v1(&update_data)?)?;
             }
         }
         Ok(())
@@ -475,7 +475,7 @@ impl H5iRepository {
             let oid = oid_res?;
             if let Ok(update_data) = self.load_specific_delta_for_commit(oid, file_path) {
                 let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&update_data)?);
+                txn.apply_update(yrs::Update::decode_v1(&update_data)?)?;
             } else {
                 // サイドカーにデルタがない（通常の人間によるコミットなど）場合のフォールバック
                 // その時点のファイル内容を「まるごと挿入」として扱う
@@ -793,7 +793,7 @@ mod tests {
             let text = doc.get_or_insert_text("code");
             // ベースを再現
             let mut txn = doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&base_update)?);
+            txn.apply_update(Update::decode_v1(&base_update)?)?;
             // 変更を加える
             text.insert(&mut txn, 0, "# OURS COMMENT\n");
             let update = txn.encode_update_v1(); // ここでは「差分」ではなく「全状態」として一旦扱う（簡易化のため）
@@ -816,7 +816,7 @@ mod tests {
             let doc = Doc::new();
             let text = doc.get_or_insert_text("code");
             let mut txn = doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&base_update)?);
+            txn.apply_update(Update::decode_v1(&base_update)?)?;
             // 変更を加える
             text.push(&mut txn, "\nprint('done')");
             let update = txn.encode_update_v1();

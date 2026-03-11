@@ -53,12 +53,12 @@ impl H5iCommitRecord {
     /// Fields related to AI generation, testing, and AST hashes are left as `None`
     /// because this information is not available in standard Git commits.
     ///
-    /// ## Parameters
+    /// # Parameters
     ///
     /// * `repo` - The Git repository containing the commit.
     /// * `oid` - The object ID of the commit to inspect.
     ///
-    /// ## Panics
+    /// # Panics
     ///
     /// This function panics if the commit cannot be found in the repository.
     /// In production environments, it is recommended to propagate errors
