@@ -4,6 +4,8 @@ use h5i_core::session::LocalAgentSession;
 use h5i_core::watcher::start_h5i_watcher;
 use std::path::PathBuf;
 
+/*
+
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era")]
 struct Cli {
@@ -39,4 +41,4 @@ fn main() -> h5i_core::error::Result<()> {
         }
     }
     Ok(())
-}
+}*/
