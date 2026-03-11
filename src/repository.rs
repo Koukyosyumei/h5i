@@ -1140,18 +1140,6 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_commit(repo: &Repository, path: &str, content: &str, msg: &str) -> Oid {
-        let mut index = repo.index().unwrap();
-        let full_path = repo.workdir().unwrap().join(path);
-        fs::write(&full_path, content).unwrap();
-        index.add_path(Path::new(path)).unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let sig = Signature::now("tester", "test@h5i.io").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[])
-            .unwrap()
-    }
-
     // --- 1. Lifecycle & Basic Info ---
 
     #[test]
@@ -1172,7 +1160,13 @@ mod tests {
         let h5i_repo = setup_test_repo(dir.path());
 
         // Create a commit without using h5i_repo.commit (no sidecar)
-        let oid = create_test_commit(h5i_repo.git(), "legacy.txt", "old data", "legacy commit");
+        let oid = create_commit(
+            h5i_repo.git(),
+            "legacy commit",
+            "legacy.txt",
+            "old data",
+            &vec![],
+        );
 
         // h5i_log should fallback to minimal record
         let logs = h5i_repo.h5i_log(1).unwrap();
@@ -1186,7 +1180,13 @@ mod tests {
         let h5i_repo = setup_test_repo(dir.path());
         let path = Path::new("README.md");
 
-        create_test_commit(h5i_repo.git(), "README.md", "Line 1\nLine 2", "initial");
+        create_commit(
+            h5i_repo.git(),
+            "initial",
+            "README.md",
+            "Line 1\nLine 2",
+            &vec![],
+        );
 
         let results = h5i_repo.blame(path, BlameMode::Line).unwrap();
         assert_eq!(results.len(), 2);
@@ -1234,7 +1234,7 @@ mod tests {
 
         // Base
         let base_content = "def start(): pass";
-        let base_oid = create_test_commit(git_repo, file_path, base_content, "base");
+        let _base_id = create_commit(git_repo, "base", file_path, base_content, &vec![]);
 
         // OURS: Insert comment at top
         let ours_update = {
@@ -1245,7 +1245,13 @@ mod tests {
             text.insert(&mut txn, 0, "# OURS\n");
             txn.encode_update_v1()
         };
-        let our_oid = create_test_commit(git_repo, file_path, "# OURS\ndef start(): pass", "ours");
+        let our_oid = create_commit(
+            git_repo,
+            "ours",
+            file_path,
+            "# OURS\ndef start(): pass",
+            &vec![],
+        );
         h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_update)?;
 
         // THEIRS: Insert print at bottom
@@ -1257,11 +1263,12 @@ mod tests {
             text.push(&mut txn, "\nprint('done')");
             txn.encode_update_v1()
         };
-        let their_oid = create_test_commit(
+        let their_oid = create_commit(
             git_repo,
+            "theirs",
             file_path,
             "def start(): pass\nprint('done')",
-            "theirs",
+            &vec![],
         );
         h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_update)?;
 
