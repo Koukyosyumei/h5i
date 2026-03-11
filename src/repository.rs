@@ -746,6 +746,7 @@ mod tests {
 
         // --- 5. 検証 ---
         // CRDT により、OURS の変更(先頭)と THEIRS の変更(末尾)が両方取り込まれているはず
+        println!("merged_text: {}", merged_text);
         assert!(merged_text.starts_with("# OURS"));
         assert!(merged_text.contains("def main():"));
         assert!(merged_text.ends_with("print('done')"));
