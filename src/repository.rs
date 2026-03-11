@@ -623,3 +623,137 @@ impl H5iRepository {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::{Oid, Repository, Signature};
+    use std::fs;
+    use tempfile::tempdir;
+    use yrs::{Doc, Text, Transact};
+
+    // --- テスト用ヘルパー ---
+
+    /// テスト用の Git リポジトリを初期化し、H5iRepository を返す
+    fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
+        let repo = Repository::init(root).unwrap();
+        let h5i_root = root.join(".h5i");
+        fs::create_dir_all(h5i_root.join("metadata")).unwrap();
+        fs::create_dir_all(h5i_root.join("delta")).unwrap();
+
+        H5iRepository {
+            git_repo: repo,
+            h5i_root,
+        }
+    }
+
+    /// Git コミットを作成するヘルパー
+    fn create_commit(
+        repo: &Repository,
+        message: &str,
+        file_path: &str,
+        content: &str,
+        parents: &[&git2::Commit],
+    ) -> Oid {
+        let mut index = repo.index().unwrap();
+        let path = std::path::Path::new(file_path);
+
+        // ファイルを物理的に書き込んでインデックスに追加
+        fs::write(repo.workdir().unwrap().join(path), content).unwrap();
+        index.add_path(path).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        let sig = Signature::now("test", "test@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, parents)
+            .unwrap()
+    }
+
+    // --- テストケース ---
+
+    #[test]
+    fn test_get_content_at_oid() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let git_repo = &h5i_repo.git_repo;
+
+        // 1. コミットを作成
+        let oid = create_commit(git_repo, "initial", "hello.txt", "hello world", &[]);
+
+        // 2. 取得検証
+        let content = h5i_repo
+            .get_content_at_oid(oid, std::path::Path::new("hello.txt"))
+            .unwrap();
+        assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn test_merge_h5i_logic_semantic_convergence() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let git_repo = &h5i_repo.git_repo;
+        let file_path = "app.py";
+
+        // --- 1. Base (共通祖先) ---
+        let base_content = "def main():\n    pass";
+        let base_oid = create_commit(git_repo, "base", file_path, base_content, &[]);
+        let base_commit = git_repo.find_commit(base_oid)?;
+
+        // --- 2. Branch OURS (自分: 先頭にコメント追加) ---
+        // CRDT 操作を記録
+        let store_ours = DeltaStore::new(h5i_repo.h5i_root.clone(), file_path);
+        let doc_ours = Doc::new();
+        let text_ours = doc_ours.get_or_insert_text("code");
+        {
+            let mut txn = doc_ours.transact_mut();
+            text_ours.push(&mut txn, base_content);
+            text_ours.insert(&mut txn, 0, "# OURS\n");
+            store_ours.append_update(&txn.encode_update_v1())?;
+        }
+        let our_oid = create_commit(
+            git_repo,
+            "ours",
+            file_path,
+            &text_ours.get_string(&doc_ours.transact()),
+            &[&base_commit],
+        );
+        // メタデータを保存（apply_updates_between が読み込めるようにする）
+        h5i_repo.persist_h5i_record(H5iCommitRecord::minimal_from_git(git_repo, our_oid))?;
+
+        // --- 3. Branch THEIRS (相手: 末尾にプリント追加) ---
+        // Git の HEAD を base に戻してブランチを切るシミュレーション
+        git_repo.set_head_detached(base_oid)?;
+        let store_theirs = DeltaStore::new(h5i_repo.h5i_root.clone(), file_path);
+        let doc_theirs = Doc::new();
+        let text_theirs = doc_theirs.get_or_insert_text("code");
+        {
+            let mut txn = doc_theirs.transact_mut();
+            text_theirs.push(&mut txn, base_content);
+            text_theirs.push(&mut txn, "\nprint('done')");
+            store_theirs.append_update(&txn.encode_update_v1())?;
+        }
+        let their_oid = create_commit(
+            git_repo,
+            "theirs",
+            file_path,
+            &text_theirs.get_string(&doc_theirs.transact()),
+            &[&base_commit],
+        );
+        h5i_repo.persist_h5i_record(H5iCommitRecord::minimal_from_git(git_repo, their_oid))?;
+
+        // --- 4. Merge 実行 ---
+        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        // --- 5. 検証 ---
+        // CRDT により、OURS の変更(先頭)と THEIRS の変更(末尾)が両方取り込まれているはず
+        assert!(merged_text.starts_with("# OURS"));
+        assert!(merged_text.contains("def main():"));
+        assert!(merged_text.ends_with("print('done')"));
+        assert!(
+            !merged_text.contains("<<<< HEAD"),
+            "Should not contain conflict markers"
+        );
+
+        Ok(())
+    }
+}
