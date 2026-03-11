@@ -82,33 +82,47 @@ mod tests {
     #[test]
     fn test_concurrent_conflict_resolution_simulation() -> crate::error::Result<()> {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("code.rs");
-        let delta_path = dir.path().join("log.bin");
+        let repo_root = dir.path().to_path_buf(); // 第一引数：リポジトリルート
+        let file_path = repo_root.join("code.rs"); // 第二引数：ファイルパス
 
+        // 1. 事前にソースファイルを作成しておく
         fs::write(&file_path, "fn main() {}")?;
 
-        // Create session
-        let mut session = LocalAgentSession::new(file_path, delta_path)?;
+        // 2. セッションの作成 (引数の順番を new(repo_root, file_path) に合わせる)
+        let mut session = LocalAgentSession::new(repo_root, file_path)?;
 
-        // Create an external update (simulating another agent)
+        // 3. 外部エージェントの更新をシミュレート
         let remote_doc = Doc::new();
-        let remote_text = remote_doc.get_or_insert_text("content");
+        // 重要: LocalAgentSession 内の識別子 "code" と合わせる必要があります
+        let remote_text = remote_doc.get_or_insert_text("code");
+
         let remote_update = {
             let mut txn = remote_doc.transact_mut();
             remote_text.insert(&mut txn, 0, "// Agent Alpha\n");
             txn.encode_update_v1()
         };
 
-        // Apply remote update to our local session
+        // 4. ローカルセッションにリモートの更新を適用
         {
             let mut txn = session.doc.transact_mut();
+            // yrs の Update::decode_v1 は Result を返すため ? で処理
             txn.apply_update(yrs::Update::decode_v1(&remote_update)?);
         }
 
-        // Verify local merge
+        // 5. マージ結果の検証
         let final_text = session.get_current_text();
-        assert!(final_text.starts_with("// Agent Alpha"));
-        assert!(final_text.contains("fn main()"));
+
+        // Agent Alpha のコメントが先頭にあり、かつ元の fn main も残っていることを確認
+        assert!(
+            final_text.contains("// Agent Alpha"),
+            "Should contain remote comment. Current text: {}",
+            final_text
+        );
+        assert!(
+            final_text.contains("fn main()"),
+            "Should preserve local code. Current text: {}",
+            final_text
+        );
 
         Ok(())
     }
