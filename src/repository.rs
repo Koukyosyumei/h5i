@@ -204,7 +204,29 @@ impl H5iRepository {
 // ============================================================
 
 impl H5iRepository {
-    /// AI情報を含む拡張コミットログを取得する
+    /// Retrieves an extended commit log that includes AI provenance metadata.
+    ///
+    /// This function traverses the Git commit history starting from `HEAD`
+    /// and attempts to load the corresponding `h5i` sidecar metadata for
+    /// each commit.
+    ///
+    /// If a sidecar metadata file does not exist for a given commit,
+    /// the function falls back to constructing a minimal record using
+    /// only the information available in the Git commit object.
+    ///
+    /// # Parameters
+    ///
+    /// - `limit` – Maximum number of commits to return.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of [`H5iCommitRecord`] entries representing the
+    /// most recent commits, enriched with `h5i` metadata when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Git revision walker cannot be created
+    /// or if the repository history cannot be traversed.
     pub fn get_log(&self, limit: usize) -> Result<Vec<H5iCommitRecord>, H5iError> {
         let mut revwalk = self.git_repo.revwalk()?;
         revwalk.push_head()?;
@@ -212,7 +234,8 @@ impl H5iRepository {
         let mut records = Vec::new();
         for oid in revwalk.take(limit) {
             let oid = oid?;
-            // .h5i/metadata/<oid>.json を読み取る。存在しない場合は最小限のGit情報を返す
+            // Read `.h5i/metadata/<oid>.json`. If it does not exist,
+            // return a minimal record derived from Git.
             let record = self
                 .load_h5i_record(oid)
                 .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
@@ -221,15 +244,39 @@ impl H5iRepository {
         Ok(records)
     }
 
-    /// AI メタデータを含む拡張ログの取得
+    /// Retrieves the extended `h5i` commit log including AI metadata.
+    ///
+    /// This method behaves similarly to `get_log`, but is intended as the
+    /// primary API for accessing commit history enriched with `h5i`
+    /// provenance data such as:
+    ///
+    /// - AI generation metadata
+    /// - test provenance metrics
+    /// - AST hash tracking
+    ///
+    /// The history traversal begins at `HEAD` and proceeds backwards.
+    ///
+    /// # Parameters
+    ///
+    /// - `limit` – Maximum number of commits to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of [`H5iCommitRecord`] values representing the
+    /// extended commit history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Git revision walker fails to initialize
+    /// or if history traversal encounters an issue.
     pub fn h5i_log(&self, limit: usize) -> Result<Vec<H5iCommitRecord>, H5iError> {
         let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.push_head()?; // HEAD から遡る
+        revwalk.push_head()?; // Traverse history starting from HEAD
 
         let mut logs = Vec::new();
         for oid in revwalk.take(limit) {
             let oid = oid?;
-            // サイドカーデータを読み取る。なければ Git 情報から最小構成を作成
+            // Load sidecar metadata. If unavailable, construct a minimal record from Git data.
             let record = self
                 .load_h5i_record(oid)
                 .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
@@ -238,6 +285,31 @@ impl H5iRepository {
         Ok(logs)
     }
 
+    /// Prints a human-readable commit log enriched with `h5i` metadata.
+    ///
+    /// This function traverses the Git history starting from `HEAD` and
+    /// prints commit information similar to `git log`, augmented with
+    /// additional `h5i` metadata when available.
+    ///
+    /// The output may include:
+    ///
+    /// - Commit identifier and author
+    /// - AI agent metadata (agent ID, model name, prompt hash)
+    /// - Test provenance metrics (test suite hash and coverage)
+    /// - Number of tracked AST hashes
+    /// - Commit message
+    ///
+    /// Missing metadata is handled gracefully; commits without sidecar
+    /// records are displayed using only the standard Git information.
+    ///
+    /// # Parameters
+    ///
+    /// - `limit` – Maximum number of commits to display.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the repository history cannot be traversed
+    /// or if commit objects cannot be retrieved.
     pub fn print_log(&self, limit: usize) -> anyhow::Result<()> {
         let mut revwalk = self.git_repo.revwalk()?;
         revwalk.push_head()?;
@@ -245,7 +317,7 @@ impl H5iRepository {
         for oid in revwalk.take(limit) {
             let oid = oid?;
             let commit = self.git_repo.find_commit(oid)?;
-            let record = self.load_h5i_record(oid).ok(); // オプショナルに読み込み
+            let record = self.load_h5i_record(oid).ok();
 
             println!("commit {}", oid);
             println!("Author: {}", commit.author());
@@ -762,7 +834,7 @@ impl H5iRepository {
     }
 
     /// // h5_i_test_start 間のコードを抽出してハッシュ化
-    fn scan_test_metrics(&self, path: &std::path::Path) -> Option<TestMetrics> {
+    pub fn scan_test_metrics(&self, path: &std::path::Path) -> Option<TestMetrics> {
         let content = std::fs::read_to_string(path).ok()?;
         let start_tag = "// h5_i_test_start";
         let end_tag = "// h5_i_test_end";
