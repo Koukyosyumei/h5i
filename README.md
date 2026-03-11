@@ -6,52 +6,6 @@
 
 ---
 
-## 🖐️ The 5 Dimensions of h5i
-
-Unlike traditional VCS, every "version" in **h5i** is a 5D coordinate in the project's evolution:
-
-### 1. The Temporal Dimension (History)
-
-- **What it is:** The standard Git-compatible linear timeline.
-
-- **h5i Edge:** Powered by **yrs** (CRDT), this dimension supports non-blocking, asynchronous edits where history can be rewritten or branched without the "bad merge" tax.
-
-
-
-### 2. The Structural Dimension (Syntax)
-
-- **What it is:** The **AST (Abstract Syntax Tree)** representation.
-
-- **h5i Edge:** Optional S-expression mapping allows for "Semantic Blame". It recognizes that a function moved from line 10 to line 500 is still the *same* logic, preventing artificial merge conflicts.
-
-
-
-### 3. The Intentional Dimension (Spirit)
-
-- **What it is:** The "Why" behind the change—Prompts and Reasoning Traces.
-
-- **h5i Edge:** Stores the model ID, prompt hash, and agent "thought logs" as first-class metadata. You don't just see the code; you see the instructions that birthed it.
-
-
-
-### 4. The Empirical Dimension (Quality)
-
-- **What it is:** Test coverage, performance benchmarks, and security scores.
-
-- **h5i Edge:** Native tracking of code blocks between `// h5_i_test_start` tags. It ensures that a commit's "Health" is versioned alongside its logic.
-
-
-
-### 5. The Associative Dimension (Intelligence)
-
-- **What it is:** A native **Vector Memory** for RAG (Retrieval-Augmented Generation).
-
-- **h5i Edge:** Every change is embedded and indexed. Agents can query the repository's "long-term memory" to see how similar problems were solved in the past, eliminating "context rot".
-
-
-
----
-
 ## 🌟 Core Technologies
 
 ### ⚡ Rust-Powered Core
