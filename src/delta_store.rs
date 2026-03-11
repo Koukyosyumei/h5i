@@ -5,6 +5,13 @@ use std::path::PathBuf;
 
 use crate::error::H5iError;
 
+pub fn sha256_hash(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    format!("{:x}", hasher.finalize())
+}
+
 pub struct DeltaStore {
     log_path: PathBuf,
 }
@@ -91,7 +98,6 @@ impl DeltaStore {
 
     /// 指定されたオフセットから新しく追記された更新分だけを読み出す。
     /// 返り値: (新規更新データのリスト, 次回読み出し用のオフセット)
-    /// ロックを一旦排して、シンプルに差分読み込みを行う
     pub fn read_new_updates(&self, mut offset: u64) -> Result<(Vec<Vec<u8>>, u64), H5iError> {
         if !self.log_path.exists() {
             return Ok((vec![], 0));
@@ -125,13 +131,6 @@ impl DeltaStore {
 
         Ok((new_updates, offset))
     }
-}
-
-pub fn sha256_hash(input: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    format!("{:x}", hasher.finalize())
 }
 
 #[cfg(test)]
@@ -312,7 +311,7 @@ mod tests {
         let new_text = new_doc.get_or_insert_text("code");
         {
             let mut txn = new_doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&read_updates[0])?);
+            txn.apply_update(Update::decode_v1(&read_updates[0])?)?;
             assert_eq!(new_text.get_string(&txn), "Hello World");
         }
 
