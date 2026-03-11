@@ -780,12 +780,11 @@ impl H5iRepository {
         oid: Oid,
         file_path: &str,
     ) -> Result<Vec<u8>, H5iError> {
-        let file_hash = sha256_hash(file_path);
-        let delta_path = self
-            .h5i_root
-            .join("deltas")
-            .join(oid.to_string())
-            .join(format!("{}.bin", file_hash));
+        let delta_path = DeltaStore::committed_path(
+            &self.h5i_root.parent().unwrap(),
+            &oid.to_string(),
+            file_path,
+        );
 
         if !delta_path.exists() {
             return Err(H5iError::Internal("Delta not found for this commit".into()));

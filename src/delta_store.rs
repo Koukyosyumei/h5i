@@ -1,7 +1,7 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::H5iError;
 
@@ -45,6 +45,29 @@ impl DeltaStore {
         let hash = sha256_hash(file_path); // Hash the file path to generate a stable log filename
         let log_path = repo_root.join(".h5i/delta").join(format!("{}.bin", hash));
         Self { log_path }
+    }
+}
+
+impl DeltaStore {
+    /// Returns the path to the active (uncommitted) delta log.
+    /// This corresponds to the current working session's changes.
+    pub fn active_path(&self) -> &PathBuf {
+        &self.log_path
+    }
+
+    /// Returns the path to the current session's snapshot.
+    pub fn snapshot_path(&self) -> PathBuf {
+        self.log_path.with_extension("snapshot")
+    }
+
+    /// Returns the path to a committed delta log associated with a specific OID.
+    /// This follows the structure: .h5i/deltas/<oid>/<file_hash>.bin
+    pub fn committed_path(repo_root: &Path, oid: &str, file_path: &str) -> PathBuf {
+        let hash = sha256_hash(file_path);
+        repo_root
+            .join(".h5i/deltas")
+            .join(oid)
+            .join(format!("{}.bin", hash))
     }
 }
 
