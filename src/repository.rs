@@ -1,17 +1,18 @@
-use crate::error::H5iError;
 use git2::Repository;
-use sha2::Digest as _;
+use git2::{Commit, Index, ObjectType, Oid, Signature};
+use sha2::{Digest as _, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::blame::{BlameMode, BlameResult};
+use crate::error::H5iError;
+use crate::metadata::{AiMetadata, H5iCommitRecord, TestMetrics};
 
 pub struct H5iRepository {
     git_repo: Repository,
     h5i_root: PathBuf,
 }
-
-use crate::metadata::{AiMetadata, H5iCommitRecord, TestMetrics};
-use git2::{Commit, Index, ObjectType, Oid, Signature};
-use std::collections::HashMap;
 
 impl H5iRepository {
     /// Gitコミットを実行し、h5i拡張データをアトミックに紐付ける
@@ -99,6 +100,73 @@ impl H5iRepository {
             None
         }
     }
+
+    /// 外部から提供された S式 (AST) をサイドカーに保存し、そのハッシュを返す。
+    /// AST はオプショナルな機能であるため、提供された場合のみこの処理が呼ばれる。
+    pub fn save_ast_to_sidecar(&self, file_path: &str, sexp: &str) -> Result<String, H5iError> {
+        // 1. S式のコンテンツハッシュを計算
+        // これにより、内容が同じであれば同じファイルとして扱われる（デデュープ）
+        let mut hasher = Sha256::new();
+        hasher.update(sexp.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
+        // 2. 保存先パスの決定 (.h5i/ast/<hash>.sexp)
+        let ast_dir = self.h5i_root.join("ast");
+        if !ast_dir.exists() {
+            fs::create_dir_all(&ast_dir).map_err(|e| H5iError::Io(e))?;
+        }
+
+        let target_path = ast_dir.join(format!("{}.sexp", hash));
+
+        // 3. ファイルの書き込み
+        // すでに存在する場合は、コンテンツアドレス指定のため書き込みをスキップしてもよいが、
+        // 確実性のために常に書き込むか、存在チェックを行う
+        if !target_path.exists() {
+            fs::write(&target_path, sexp).map_err(|e| H5iError::Io(e))?;
+        }
+
+        // 4. ハッシュを返す (これが H5iCommitRecord の ast_hashes に格納される)
+        Ok(hash)
+    }
+
+    /// H5iCommitRecord を JSON 形式でサイドカーディレクトリに永続化する。
+    /// ファイル名は Git のコミットハッシュ (<oid>.json) となる。
+    pub fn persist_h5i_record(&self, record: H5iCommitRecord) -> Result<(), H5iError> {
+        // 1. 保存先ディレクトリ (.h5i/metadata) のパスを確定
+        let metadata_dir = self.h5i_root.join("metadata");
+
+        // 2. ディレクトリが存在しない場合は作成
+        if !metadata_dir.exists() {
+            fs::create_dir_all(&metadata_dir).map_err(|e| H5iError::Io(e))?;
+        }
+
+        // 3. ファイルパスの決定 (<git_oid>.json)
+        let file_path = metadata_dir.join(format!("{}.json", record.git_oid));
+
+        // 4. JSON へのシリアライズ
+        // 実戦での可読性とデバッグ性を考慮し、pretty-print 形式を採用
+        let json_data = serde_json::to_string_pretty(&record)?;
+
+        // 5. ファイルの書き込み
+        // 書き込み失敗時は H5iError::io を通じて詳細なパス情報を付与
+        fs::write(&file_path, json_data).map_err(|e| H5iError::Io(e))?;
+
+        Ok(())
+    }
+
+    /// 指定された OID に紐づく h5i レコードを読み込む (log や blame で使用)
+    pub fn load_h5i_record(&self, oid: git2::Oid) -> Result<H5iCommitRecord, H5iError> {
+        let file_path = self.h5i_root.join("metadata").join(format!("{}.json", oid));
+
+        if !file_path.exists() {
+            return Err(H5iError::RecordNotFound(oid.to_string()));
+        }
+
+        let data = fs::read_to_string(&file_path).map_err(|e| H5iError::Io(e))?;
+        let record: H5iCommitRecord = serde_json::from_str(&data)?;
+
+        Ok(record)
+    }
 }
 
 impl H5iRepository {
@@ -143,7 +211,11 @@ impl H5iRepository {
         let h5i_root = git_repo
             .path()
             .parent()
-            .ok_or(H5iError::InvalidPath)?
+            .ok_or_else(|| {
+                H5iError::InvalidPath(
+                    "Could not find the parent directory of the repository".to_string(),
+                )
+            })?
             .join(".h5i");
 
         if !h5i_root.exists() {
@@ -282,7 +354,10 @@ impl H5iRepository {
     }
 
     /// AST ベースの Blame (構造ハッシュの変化を追跡)
-    fn blame_by_ast(&self, path: &std::path::Path) -> anyhow::Result<Vec<BlameResult>> {
+    fn blame_by_ast(
+        &self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<crate::blame::BlameResult>> {
         // 1. 最新のレコードから対象ファイルの AST ハッシュを取得
         // 2. 履歴を遡り、そのハッシュが「最後に変化した」コミットを特定
         // 3. そのコミットの AI 情報を取得
@@ -294,7 +369,10 @@ impl H5iRepository {
 
 impl H5iRepository {
     /// コミットに紐づくメタデータを保存する
-    pub fn save_metadata(&self, provenance: CommitProvenance) -> Result<(), crate::H5iError> {
+    pub fn save_metadata(
+        &self,
+        provenance: crate::metadata::CommitProvenance,
+    ) -> Result<(), H5iError> {
         let path = self
             .h5i_path()
             .join("metadata")
@@ -306,7 +384,11 @@ impl H5iRepository {
 }
 
 impl H5iRepository {
-    pub fn get_blame(&self, path: &Path, use_ast: bool) -> Result<Vec<H5iBlameEntry>, H5iError> {
+    pub fn get_blame(
+        &self,
+        path: &Path,
+        use_ast: bool,
+    ) -> Result<Vec<crate::blame::H5iBlameEntry>, H5iError> {
         if use_ast {
             // 1. 最新のレコードから AST ハッシュ履歴を取得
             // 2. 構造が変わったコミットを特定
