@@ -3,6 +3,10 @@ name = "h5i-core"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "h5i"
+path = "src/main.rs"
+
 [dependencies]
 git2 = "0.20.4"
 yrs = "0.25.0"
@@ -14,7 +18,7 @@ anyhow = "1.0"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 notify = "8.2.0"
-clap = "4.5.60"
+clap = { version = "4.5.60", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.8"

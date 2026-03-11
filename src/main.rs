@@ -1,15 +1,14 @@
-fn main() {}
-
-/*
-
 use clap::{Parser, Subcommand};
+use git2::Oid;
+use h5i_core::blame::BlameMode;
+use h5i_core::metadata::AiMetadata;
 use h5i_core::repository::H5iRepository;
-use h5i_core::session::LocalAgentSession;
+use h5i_core::session::LocalSession;
 use h5i_core::watcher::start_h5i_watcher;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "h5i", about = "Advanced Git for the AI Era")]
+#[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -17,30 +16,172 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 指定したファイルのリアルタイム記録とAI同期を開始する
+    /// Initialize the h5i sidecar in the current repository
+    Init,
+
+    /// Start a real-time recording session for a specific file
     Start {
+        /// The source file to watch and sync via CRDT
         #[arg(short, long)]
         file: PathBuf,
     },
-    // ... 他のコマンド (commit, log, blame等)
+
+    /// Commit staged changes with AI provenance and quality tracking
+    Commit {
+        /// Standard Git commit message
+        #[arg(short, long)]
+        message: String,
+
+        /// The name of the AI model that assisted in these changes
+        #[arg(long)]
+        model: Option<String>,
+
+        /// The unique ID of the AI agent
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Enable automatic test provenance detection
+        #[arg(short, long)]
+        tests: bool,
+
+        /// Enable AST-based structural tracking for the commit
+        #[arg(long)]
+        ast: bool,
+    },
+
+    /// Display the enriched 5D commit history
+    Log {
+        /// Number of recent commits to display
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
+
+    /// Analyze file ownership with optional structural (AST) logic
+    Blame {
+        /// Path to the file to inspect
+        file: PathBuf,
+
+        /// Mode of blame: 'line' (standard) or 'ast' (semantic)
+        #[arg(short, long, default_value = "line")]
+        mode: String,
+    },
+
+    /// Resolve branch conflicts using CRDT-based semantic merging
+    Resolve {
+        /// OID of the local branch (OURS)
+        ours: String,
+        /// OID of the incoming branch (THEIRS)
+        theirs: String,
+        /// Relative path to the file to resolve
+        file: String,
+    },
 }
 
-fn main() -> h5i_core::error::Result<()> {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { file } => {
-            // 1. リポジトリの発見
+        Commands::Init => {
             let repo = H5iRepository::open(".")?;
+            println!("✅ h5i sidecar initialized at {:?}", repo.h5i_path());
+        }
 
-            // 2. セッションの開始
+        Commands::Start { file } => {
+            let repo = H5iRepository::open(".")?;
             println!("🚀 Initializing h5i session for: {:?}", file);
-            let session = LocalAgentSession::new(repo.h5i_root.clone(), file)?;
-
-            // 3. ウォッチャーの起動 (無限ループ)
+            let session = LocalSession::new(repo.h5i_root.clone(), file)?;
             println!("👀 Watching for changes... (Press Ctrl+C to stop)");
             start_h5i_watcher(session)?;
         }
+
+        Commands::Commit {
+            message,
+            model,
+            agent,
+            tests,
+            ast,
+        } => {
+            let repo = H5iRepository::open(".")?;
+            let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            let ai_meta = if let (Some(m), Some(a)) = (model, agent) {
+                Some(AiMetadata {
+                    model_name: m,
+                    agent_id: a,
+                    prompt_hash: "cli-manual".to_string(), // In production, this would be computed from context
+                })
+            } else {
+                None
+            };
+
+            // Simple demo AST parser hook
+            let ast_parser = if ast {
+                Some(
+                    &(|_p: &std::path::Path| Some("(ast-node-root)".to_string()))
+                        as &dyn Fn(&std::path::Path) -> Option<String>,
+                )
+            } else {
+                None
+            };
+
+            let oid = repo.commit(&message, &sig, &sig, ai_meta, tests, ast_parser)?;
+            println!("📦 5D Commit Created: {}", oid);
+        }
+
+        Commands::Log { limit } => {
+            let repo = H5iRepository::open(".")?;
+            repo.print_log(limit)?;
+        }
+
+        Commands::Blame { file, mode } => {
+            let repo = H5iRepository::open(".")?;
+            let blame_mode = if mode.to_lowercase() == "ast" {
+                BlameMode::Ast
+            } else {
+                BlameMode::Line
+            };
+
+            let results = repo.blame(&file, blame_mode)?;
+            println!(
+                "{:<4} {:<8} {:<15} | {}",
+                "STAT", "COMMIT", "AUTHOR/AGENT", "CONTENT"
+            );
+            println!("{:-<60}", "");
+
+            for r in results {
+                let test_indicator = match r.test_passed {
+                    Some(true) => "✅",
+                    Some(false) => "❌",
+                    None => "  ",
+                };
+                let semantic_indicator = if r.is_semantic_change { "✨" } else { "  " };
+
+                println!(
+                    "{} {} {:<8} {:<15} | {}",
+                    test_indicator,
+                    semantic_indicator,
+                    &r.commit_id[..8],
+                    r.agent_info,
+                    r.line_content
+                );
+            }
+        }
+
+        Commands::Resolve { ours, theirs, file } => {
+            let repo = H5iRepository::open(".")?;
+            let our_oid = Oid::from_str(&ours)?;
+            let their_oid = Oid::from_str(&theirs)?;
+
+            println!("🧬 Performing CRDT semantic merge for {}...", file);
+            let merged_text = repo.merge_h5i_logic(our_oid, their_oid, &file)?;
+
+            println!("\n--- Merge Result ---\n{}", merged_text);
+            println!(
+                "\n💡 Tip: Use `git add {}` to stage the resolved content.",
+                file
+            );
+        }
     }
+
     Ok(())
-}*/
+}
