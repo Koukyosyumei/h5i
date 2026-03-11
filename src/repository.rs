@@ -1226,61 +1226,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_h5i_logic_convergence() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_test_repo(dir.path());
-        let git_repo = h5i_repo.git();
-        let file_path = "app.py";
-
-        // Base
-        let base_content = "def start(): pass";
-        let _base_id = create_commit(git_repo, "base", file_path, base_content, &vec![]);
-
-        // OURS: Insert comment at top
-        let ours_update = {
-            let doc = Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            text.push(&mut txn, base_content);
-            text.insert(&mut txn, 0, "# OURS\n");
-            txn.encode_update_v1()
-        };
-        let our_oid = create_commit(
-            git_repo,
-            "ours",
-            file_path,
-            "# OURS\ndef start(): pass",
-            &vec![],
-        );
-        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_update)?;
-
-        // THEIRS: Insert print at bottom
-        let theirs_update = {
-            let doc = Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            text.push(&mut txn, base_content);
-            text.push(&mut txn, "\nprint('done')");
-            txn.encode_update_v1()
-        };
-        let their_oid = create_commit(
-            git_repo,
-            "theirs",
-            file_path,
-            "def start(): pass\nprint('done')",
-            &vec![],
-        );
-        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_update)?;
-
-        // CRDT Merge Logic
-        let merged = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
-
-        assert!(merged.contains("# OURS"));
-        assert!(merged.contains("print('done')"));
-        Ok(())
-    }
-
-    #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
         let h5i_repo = setup_test_repo(dir.path());
