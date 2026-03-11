@@ -13,3 +13,6 @@ thiserror = "2.0.18"
 anyhow = "1.0"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3.8"

@@ -1,6 +1,5 @@
 use crate::metadata::{AiMetadata, TestMetrics};
 
-// src/blame.rs
 pub enum BlameMode {
     Line, // 従来の行ベース (標準)
     Ast,  // AST ハッシュベース (Optional)
@@ -12,8 +11,6 @@ pub struct BlameEntry {
     pub ai_metadata: Option<AiMetadata>,   // AIが書いた場合
     pub test_metrics: Option<TestMetrics>, // その時のテスト結果
 }
-
-// src/blame.rs
 
 pub struct H5iBlameEntry {
     pub line_number: usize,

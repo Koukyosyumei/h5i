@@ -1,4 +1,4 @@
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use git2::Oid;
 use git2::Repository;
 use serde::{Deserialize, Serialize};

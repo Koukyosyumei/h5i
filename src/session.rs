@@ -1,23 +1,22 @@
 use crate::delta_store::DeltaStore;
+use crate::error::H5iError;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
 
 pub struct LocalAgentSession {
-    doc: Doc,
-    text_ref: TextRef,
-    delta_store: DeltaStore,
-    target_fs_path: PathBuf,
+    pub doc: Doc,
+    pub text_ref: TextRef,
+    pub delta_store: DeltaStore,
+    pub target_fs_path: PathBuf,
 }
-
-// src/session.rs
 
 impl LocalAgentSession {
     /// コミット直前に呼び出し、未保存の CRDT 変更を強制的にログへ書き出す
     pub fn flush_and_sync_file(&mut self) -> Result<(), crate::error::H5iError> {
         // 現在のドキュメントの差分をエンコード
-        let mut txn = self.doc.transact_mut(); // y-crdt のトランザクション
+        let txn = self.doc.transact_mut(); // y-crdt のトランザクション
         let update = txn.encode_update_v1(); // 最新の更新分を取得
 
         // 共有バイナリログ (.h5i/delta/...) に追記
@@ -33,6 +32,14 @@ impl LocalAgentSession {
 
 impl LocalAgentSession {
     pub fn new(repo_root: PathBuf, target_path: PathBuf) -> Result<Self, crate::error::H5iError> {
+        // 1. The ACTUAL source code must exist to start a session
+        if !target_path.exists() {
+            return Err(H5iError::InvalidPath(format!(
+                "Source file not found: {:?}",
+                target_path
+            )));
+        }
+
         let doc = Doc::new();
         let text_ref = doc.get_or_insert_text("code");
         let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
@@ -41,21 +48,37 @@ impl LocalAgentSession {
             doc,
             text_ref,
             delta_store,
-            target_fs_path: target_path,
+            target_fs_path: target_path.clone(),
         };
 
         // 起動時に既存の操作ログを全て適用して最新状態にする
-        session.sync_from_disk()?;
+        session.sync_from_disk(&target_path)?;
         Ok(session)
     }
 
+    pub fn get_current_text(&self) -> String {
+        let txn = self.doc.transact();
+        self.text_ref.get_string(&txn)
+    }
+
     /// 他のエージェントの変更をディスクから読み取ってマージ
-    pub fn sync_from_disk(&mut self) -> Result<(), crate::error::H5iError> {
+    pub fn sync_from_disk(&mut self, target_path: &Path) -> Result<(), crate::error::H5iError> {
         let updates = self.delta_store.read_all_updates()?;
-        let mut txn = self.doc.transact_mut();
-        for data in updates {
-            let update = Update::decode_v1(&data)?;
-            txn.apply_update(update)?;
+
+        if updates.is_empty() {
+            // 1. updates が空の場合：ディスクの内容を取り込む
+            let content = fs::read_to_string(target_path).map_err(H5iError::Io)?;
+            // トランザクションはこのスコープ内だけで開く
+            let mut txn = self.doc.transact_mut();
+            self.text_ref.push(&mut txn, &content);
+        } else {
+            // 2. updates がある場合：ログをリプレイする
+            let mut txn = self.doc.transact_mut();
+            for data in updates {
+                let update = Update::decode_v1(&data)?;
+                // 補足: txn.apply_update は通常戻り値が () です（yrs のバージョンによります）
+                txn.apply_update(update)?;
+            }
         }
         Ok(())
     }
