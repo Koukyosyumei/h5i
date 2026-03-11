@@ -140,6 +140,9 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+    use yrs::updates::decoder::Decode;
+    use yrs::GetString;
+    use yrs::{Doc, Text, Transact, Update};
 
     #[test]
     fn test_delta_store_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -228,6 +231,106 @@ mod tests {
 
         let results = store.read_all_updates()?;
         assert_eq!(results[0].len(), 1_024 * 1_024);
+
+        Ok(())
+    }
+
+    /// 1. Snapshotのテスト: デルタログが消去され、スナップショットが生成されるか
+    #[test]
+    fn test_save_snapshot_clears_delta_log() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let repo_root = dir.path().to_path_buf();
+        let store = DeltaStore::new(repo_root, "test.rs");
+
+        // 複数のアップデートを書き込む
+        store.append_update(&[1, 2, 3])?;
+        store.append_update(&[4, 5, 6])?;
+        assert!(store.log_path.exists());
+
+        // スナップショットを保存
+        let dummy_state = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        store.save_snapshot(&dummy_state)?;
+
+        // 検証: デルタログ (.bin) が消え、スナップショット (.snapshot) が存在すること
+        assert!(
+            !store.log_path.exists(),
+            "Delta log should be removed after snapshot"
+        );
+        let snapshot_path = store.log_path.with_extension("snapshot");
+        assert!(snapshot_path.exists(), "Snapshot file should be created");
+
+        // 検証: 内容が正しいこと
+        let saved_data = std::fs::read(snapshot_path)?;
+        assert_eq!(saved_data, dummy_state);
+
+        Ok(())
+    }
+
+    /// 2. Compactionのテスト: 複数のUpdateが1つに統合され、CRDT状態が維持されるか
+    #[test]
+    fn test_compact_integrates_multiple_updates() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let repo_root = dir.path().to_path_buf();
+        let store = DeltaStore::new(repo_root, "compaction_test.rs");
+
+        // 実際に yrs を使って意味のある Update を生成
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("code");
+
+        let mut updates = Vec::new();
+
+        // 操作1: "Hello " を挿入
+        {
+            let mut txn = doc.transact_mut();
+            text.insert(&mut txn, 0, "Hello ");
+            updates.push(txn.encode_update_v1());
+        }
+        // 操作2: "World" を挿入
+        {
+            let mut txn = doc.transact_mut();
+            text.insert(&mut txn, 6, "World");
+            updates.push(txn.encode_update_v1());
+        }
+
+        // デルタストアに保存
+        for u in &updates {
+            store.append_update(u)?;
+        }
+
+        // Compaction 実行
+        store.compact()?;
+
+        // 検証: ログ内のエントリー数が 1 になっていること
+        let read_updates = store.read_all_updates()?;
+        assert_eq!(
+            read_updates.len(),
+            1,
+            "Should be compacted into a single update"
+        );
+
+        // セマンティック検証: マージされたデータを新しい Doc に適用して "Hello World" になるか
+        let new_doc = Doc::new();
+        let new_text = new_doc.get_or_insert_text("code");
+        {
+            let mut txn = new_doc.transact_mut();
+            txn.apply_update(Update::decode_v1(&read_updates[0])?);
+            assert_eq!(new_text.get_string(&txn), "Hello World");
+        }
+
+        Ok(())
+    }
+
+    /// 3. エッジケース: 更新が1つしかない場合の Compaction は何もしない
+    #[test]
+    fn test_compact_noop_for_single_update() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let store = DeltaStore::new(dir.path().to_path_buf(), "noop.rs");
+
+        store.append_update(&[1, 2, 3])?;
+        store.compact()?;
+
+        let updates = store.read_all_updates()?;
+        assert_eq!(updates.len(), 1);
 
         Ok(())
     }
