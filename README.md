@@ -6,14 +6,6 @@
 
 ---
 
-## 💎 The Name: Why "h5i"?
-
-The name **h5i** is derived from **Holistic 5-Dimensional Integration**.
-
-In the analog world, a "High Five" is a gesture of successful collaboration. In the digital world, **h5i** is the handshake between **H**uman intuition and **i**ntelligent agents, synchronized across **5** planes of data. It represents the transition from "flat" history to "volumetric" memory.
-
----
-
 ## 🖐️ The 5 Dimensions of h5i
 
 Unlike traditional VCS, every "version" in **h5i** is a 5D coordinate in the project's evolution:
