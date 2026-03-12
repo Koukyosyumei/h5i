@@ -1411,7 +1411,7 @@ mod integration_tests {
         fs::write(&full_file_path, "// Initial content\n")?;
 
         // 2. Start a LocalSession (Simulation of 'h5i start')
-        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_file_path.clone())?;
+        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_file_path.clone(), 0)?;
 
         // 3. Apply edits via Session
         session.apply_local_edit(0, "// AI Optimized\n")?;
@@ -1462,8 +1462,7 @@ mod integration_tests {
         // --- PHASE 1: Base Commit ---
         // Start from an empty state to ensure the first insertion is recorded as a delta
         fs::write(&full_path, "")?;
-        let mut session_ours =
-            LocalSession::new_with_id(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
+        let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
 
         // Initial code: 20 characters long
         let base_content = "def main():\n    pass";

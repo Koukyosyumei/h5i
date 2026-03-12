@@ -54,34 +54,7 @@ impl LocalSession {
     ///
     /// Returns an error if the target file does not exist or if
     /// synchronization from disk fails.
-    pub fn new(repo_root: PathBuf, target_path: PathBuf) -> Result<Self, crate::error::H5iError> {
-        // 1. The ACTUAL source code must exist to start a session
-        if !target_path.exists() {
-            return Err(H5iError::InvalidPath(format!(
-                "Source file not found: {:?}",
-                target_path
-            )));
-        }
-
-        let doc = Doc::new();
-        let text_ref = doc.get_or_insert_text("code");
-        let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
-
-        let mut session = Self {
-            doc,
-            text_ref,
-            delta_store,
-            target_fs_path: target_path.clone(),
-            update_count: 0,
-            last_read_offset: 0,
-        };
-
-        // At startup, apply all existing operation logs to reconstruct the latest state
-        session.sync_from_disk(&target_path)?;
-        Ok(session)
-    }
-
-    pub fn new_with_id(
+    pub fn new(
         repo_root: PathBuf,
         target_path: PathBuf,
         client_id: u64,
@@ -94,10 +67,7 @@ impl LocalSession {
             )));
         }
 
-        let doc = yrs::Doc::with_options(yrs::Options {
-            client_id: client_id,
-            ..Default::default()
-        });
+        let doc = yrs::Doc::with_options(yrs::Options::with_client_id(client_id));
         let text_ref = doc.get_or_insert_text("code");
         let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
 
@@ -187,6 +157,107 @@ impl LocalSession {
         Ok(())
     }
 
+    pub fn ingest_diff_from_disk(&mut self) -> Result<(), crate::error::H5iError> {
+        let path = self.target_fs_path.clone();
+
+        // 1. リトライロジック付きでディスクから読み込み
+        let mut content = None;
+        for attempt in 0..4 {
+            match fs::read_to_string(&path) {
+                Ok(s) => {
+                    content = Some(s);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+                    continue;
+                }
+                Err(e) => return Err(crate::error::H5iError::Io(e)),
+            }
+        }
+        let new_text = content.ok_or_else(|| {
+            crate::error::H5iError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File missing",
+            ))
+        })?;
+
+        // 2. 現在のメモリ上のテキストを取得
+        let old_text = self.get_current_text();
+        if old_text == new_text {
+            return Ok(());
+        }
+
+        // 3. 最小限の編集範囲を特定 (Prefix/Suffix アルゴリズム)
+        let old_chars: Vec<char> = old_text.chars().collect();
+        let new_chars: Vec<char> = new_text.chars().collect();
+
+        let mut prefix_len = 0;
+        while prefix_len < old_chars.len()
+            && prefix_len < new_chars.len()
+            && old_chars[prefix_len] == new_chars[prefix_len]
+        {
+            prefix_len += 1;
+        }
+
+        let mut suffix_len = 0;
+        while suffix_len < (old_chars.len() - prefix_len)
+            && suffix_len < (new_chars.len() - prefix_len)
+            && old_chars[old_chars.len() - 1 - suffix_len]
+                == new_chars[new_chars.len() - 1 - suffix_len]
+        {
+            suffix_len += 1;
+        }
+
+        // 4. トランザクション内で最小限の操作を適用
+        {
+            let mut txn = self.doc.transact_mut();
+
+            // 古いテキストの中間部分を削除
+            let remove_len = old_chars.len() - prefix_len - suffix_len;
+            if remove_len > 0 {
+                self.text_ref
+                    .remove_range(&mut txn, prefix_len as u32, remove_len as u32);
+            }
+
+            // 新しいテキストの中間部分を挿入
+            let insert_text: String = new_chars[prefix_len..(new_chars.len() - suffix_len)]
+                .iter()
+                .collect();
+            if !insert_text.is_empty() {
+                self.text_ref
+                    .insert(&mut txn, prefix_len as u32, &insert_text);
+            }
+        }
+
+        // 5. 差分を保存
+        self.save_current_state_to_delta()?;
+        Ok(())
+    }
+
+    /// Persists the current in-memory CRDT state to the local sidecar delta store.
+    ///
+    /// This method is called to ensure that local edits are not lost and can be
+    /// reconstructed by `sync_from_disk` in future sessions.
+    pub fn save_current_state_to_delta(&mut self) -> Result<(), crate::error::H5iError> {
+        // We create a read transaction to encode the current state.
+        // Using an empty StateVector ensures we capture the full state
+        // as a single, restorable update block.
+        let update_data = {
+            let txn = self.doc.transact();
+            // Pointed out previously: encode_state_as_update_v1 requires a &StateVector
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
+        };
+
+        // Persist to the .h5i/delta directory via DeltaStore
+        self.delta_store.append_update(&update_data)?;
+
+        // Increment the internal update counter for tracking session activity
+        self.update_count += 1;
+
+        Ok(())
+    }
+
     /// Synchronizes the CRDT state from the full delta log on disk.
     ///
     /// This method reconstructs the current document state by either:
@@ -202,29 +273,39 @@ impl LocalSession {
     ///
     /// Returns an error if updates cannot be decoded or applied.
     pub fn sync_from_disk(&mut self, target_path: &Path) -> Result<(), crate::error::H5iError> {
-        // 1. Try to load from snapshot first
+        let mut history_applied = false;
+
+        // 1. Try Snapshot
         let snapshot_path = self.delta_store.snapshot_path();
         if snapshot_path.exists() {
             let data = fs::read(&snapshot_path)?;
             let mut txn = self.doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&data)?)?;
+            txn.apply_update(yrs::Update::decode_v1(&data)?)
+                .map_err(|e| H5iError::Crdt(e.to_string()))?;
+            history_applied = true;
         }
 
-        // 2. Apply remaining incremental updates
+        // 2. Apply incremental updates
         let updates = self.delta_store.read_all_updates()?;
-        if updates.is_empty() {
-            // Case 1: No updates exist — load the file contents
-            let content = fs::read_to_string(target_path).map_err(H5iError::Io)?;
-            let mut txn = self.doc.transact_mut();
-            self.text_ref.push(&mut txn, &content);
-        } else {
-            // Case 2: Updates exist — replay the update log
+        if !updates.is_empty() {
             let mut txn = self.doc.transact_mut();
             for data in updates {
-                let update = Update::decode_v1(&data)?;
-                txn.apply_update(update)?;
+                txn.apply_update(yrs::Update::decode_v1(&data)?)
+                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
+            }
+            history_applied = true;
+        }
+
+        // 3. Fallback to raw file ONLY if no CRDT history exists and Doc is empty
+        if !history_applied {
+            let content = fs::read_to_string(target_path).map_err(H5iError::Io)?;
+            let mut txn = self.doc.transact_mut();
+            // Check if text is already populated to prevent "print()print()"
+            if self.text_ref.len(&txn) == 0 {
+                self.text_ref.push(&mut txn, &content);
             }
         }
+
         Ok(())
     }
 
@@ -279,7 +360,7 @@ mod tests {
         fs::write(&file_path, "print('hello')")?;
 
         // Fix: Pass the existing code path and the repo root
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // Edit and Flush
         session.apply_local_edit(14, "\nprint('world')")?;
@@ -304,7 +385,7 @@ mod tests {
         // Create the source file beforehand
         fs::write(&file_path, "fn main() {}")?;
 
-        let session = LocalSession::new(repo_root, file_path)?;
+        let session = LocalSession::new(repo_root, file_path, 0)?;
 
         // Simulate an external agent update
         let remote_doc = Doc::new();
@@ -345,7 +426,7 @@ mod tests {
         let non_existent = dir.path().join("ghost.txt");
         let delta = dir.path().join("delta.bin");
 
-        let result = LocalSession::new(non_existent, delta);
+        let result = LocalSession::new(non_existent, delta, 0);
 
         // Verify that our H5iError::Io or InvalidPath is returned
         assert!(result.is_err());
@@ -360,7 +441,7 @@ mod tests {
         // Initial setup: File must exist
         fs::write(&file_path, "initial content")?;
 
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // 1. Perform 9 edits (compaction threshold is 10)
         for i in 0..9 {
@@ -403,7 +484,7 @@ mod tests {
         // Initial setup
         fs::write(&file_path, "baseline")?;
 
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // 1. Perform 50 edits to trigger the snapshot threshold
         for _ in 0..50 {
@@ -427,11 +508,99 @@ mod tests {
 
         // 4. Restoration: Re-initialize a session to ensure it can hydrate from the snapshot
         // Note: This requires sync_from_disk to be updated to look for .snapshot files
-        let new_session = LocalSession::new(repo_root, file_path)?;
+        let new_session = LocalSession::new(repo_root, file_path, 0)?;
         let final_text = new_session.get_current_text();
         assert!(final_text.contains("baseline"));
         assert!(final_text.contains("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbaseline"));
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+    use yrs::{Doc, Text, Transact};
+
+    fn get_canonical_path(path: &Path) -> String {
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_sync_from_disk_cold_start() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("app.py");
+        let content = "print('hello world')";
+        fs::write(&file_path, content)?;
+
+        // Initialize session - should trigger sync_from_disk fallback to raw file
+        let mut session = LocalSession::new(dir.path().to_path_buf(), file_path.clone(), 1)?;
+
+        // Use the method explicitly to verify it works as intended
+        session.sync_from_disk(&file_path)?;
+
+        assert_eq!(
+            session.get_current_text(),
+            content,
+            "Should load raw file when no CRDT history exists"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_from_disk_with_incremental_updates() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().to_path_buf();
+        let file_path = repo_root.join("logic.rs");
+        fs::write(&file_path, "Original")?;
+
+        {
+            let mut session_1 = LocalSession::new(repo_root.clone(), file_path.clone(), 1)?;
+            let base_update = session_1
+                .doc
+                .transact()
+                .encode_state_as_update_v1(&yrs::StateVector::default());
+            session_1.delta_store.append_update(&base_update)?;
+            session_1.apply_local_edit(8, " + Update")?;
+        }
+
+        let session_2 = LocalSession::new(repo_root, file_path, 2)?;
+
+        assert_eq!(session_2.get_current_text(), "Original + Update");
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_from_disk_with_snapshot_priority() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().to_path_buf();
+        let file_path = repo_root.join("data.txt");
+
+        // Physical file exists but is different
+        fs::write(&file_path, "File Content")?;
+
+        // Manually setup a snapshot in the .h5i/metadata dir (or wherever DeltaStore points)
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("code");
+        {
+            let mut txn = doc.transact_mut();
+            text.push(&mut txn, "Snapshot Content");
+        }
+        let snapshot_data = doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+
+        // We use the same name formatting as DeltaStore expects
+        let delta_store = DeltaStore::new(repo_root.clone(), &get_canonical_path(&file_path));
+        fs::create_dir_all(repo_root.join(".h5i/delta"))?;
+        delta_store.save_snapshot(&snapshot_data)?;
+
+        // New session should load "Snapshot Content" and ignore "File Content"
+        let session = LocalSession::new(repo_root, file_path, 1)?;
+
+        assert_eq!(session.get_current_text(), "Snapshot Content");
         Ok(())
     }
 }

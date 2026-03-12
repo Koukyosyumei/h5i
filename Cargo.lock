@@ -411,6 +411,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "fastrand",
  "git2",
  "notify",
  "serde",
