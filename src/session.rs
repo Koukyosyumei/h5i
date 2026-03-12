@@ -80,6 +80,40 @@ impl LocalSession {
         session.sync_from_disk(&target_path)?;
         Ok(session)
     }
+
+    pub fn new_with_id(
+        repo_root: PathBuf,
+        target_path: PathBuf,
+        client_id: u64,
+    ) -> Result<Self, crate::error::H5iError> {
+        // 1. The ACTUAL source code must exist to start a session
+        if !target_path.exists() {
+            return Err(H5iError::InvalidPath(format!(
+                "Source file not found: {:?}",
+                target_path
+            )));
+        }
+
+        let doc = yrs::Doc::with_options(yrs::Options {
+            client_id: client_id,
+            ..Default::default()
+        });
+        let text_ref = doc.get_or_insert_text("code");
+        let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
+
+        let mut session = Self {
+            doc,
+            text_ref,
+            delta_store,
+            target_fs_path: target_path.clone(),
+            update_count: 0,
+            last_read_offset: 0,
+        };
+
+        // At startup, apply all existing operation logs to reconstruct the latest state
+        session.sync_from_disk(&target_path)?;
+        Ok(session)
+    }
 }
 
 impl LocalSession {

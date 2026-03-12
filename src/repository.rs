@@ -1377,11 +1377,16 @@ mod tests {
 
 #[cfg(test)]
 mod integration_tests {
+    use crate::delta_store::DeltaStore;
     use crate::repository::H5iRepository;
+    use crate::session;
     use crate::session::LocalSession;
     use git2::{Repository, Signature};
-    use std::fs;
+    use std::{fs, path::Path};
     use tempfile::tempdir;
+    use yrs::updates::decoder::Decode;
+    use yrs::ReadTxn;
+    use yrs::Transact;
 
     /// Helper to setup both Git and H5i repositories in a temp directory.
     fn setup_integration_context(root: &std::path::Path) -> H5iRepository {
@@ -1447,6 +1452,273 @@ mod integration_tests {
 
     #[test]
     fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_integration_context(dir.path());
+        let git_repo = h5i_repo.git();
+        let file_path = "app.py";
+        let full_path = dir.path().join(file_path);
+        let sig = git2::Signature::now("h5i-tester", "test@h5i.io")?;
+
+        // --- PHASE 1: Base Commit ---
+        // Start from an empty state to ensure the first insertion is recorded as a delta
+        fs::write(&full_path, "")?;
+        let mut session_ours =
+            LocalSession::new_with_id(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
+
+        // Initial code: 20 characters long
+        let base_content = "def main():\n    pass";
+        session_ours.apply_local_edit(0, base_content)?;
+
+        let mut index = git_repo.index()?;
+        index.add_path(std::path::Path::new(file_path))?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
+        let base_commit = git_repo.find_commit(base_oid)?;
+
+        // Capture BASE state for later diffing
+        let base_delta = yrs::merge_updates_v1(&session_ours.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        let base_sv = session_ours.doc.transact().state_vector();
+        h5i_repo.persist_delta_for_commit(base_oid, file_path, &base_delta)?;
+
+        // --- PHASE 2: Branch OURS ---
+        // OURS adds a header at the very beginning (Index 0)
+        session_ours.apply_local_edit(0, "# Header\n")?;
+
+        // Save incremental delta for OURS
+        // For testing, we use encode_state_as_update or diff to get ONLY the new parts
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
+        let ours_diff: Vec<u8> = session_ours.doc.transact().encode_diff_v1(&base_sv);
+        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_diff)?;
+
+        // --- PHASE 3: Branch THEIRS ---
+        // Switch "context" back to base
+        git_repo.set_head_detached(base_oid)?;
+
+        // CRITICAL: We create a new doc and APPLY the base_delta
+        // to ensure character IDs match exactly.
+        let doc_theirs = yrs::Doc::with_options(yrs::Options {
+            client_id: 2,
+            ..Default::default()
+        });
+        let text_theirs = doc_theirs.get_or_insert_text("code");
+        {
+            let mut txn = doc_theirs.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&base_delta)?)
+                .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        }
+
+        // Simulate a second session branching from the SAME state
+        let mut session_theirs = LocalSession {
+            doc: doc_theirs,
+            text_ref: text_theirs,
+            delta_store: DeltaStore::new(dir.path().to_path_buf(), "theirs_temp"),
+            target_fs_path: full_path.clone(),
+            update_count: 0,
+            last_read_offset: 0,
+        };
+
+        // THEIRS adds print at the end of "def main():\n    pass" (index 18)
+        session_theirs.apply_local_edit(20, "\nprint('end')")?;
+
+        let tree = git_repo.find_tree(git_repo.index()?.write_tree()?)?;
+        let their_oid =
+            git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
+
+        let theirs_diff = session_theirs.doc.transact().encode_diff_v1(&base_sv);
+        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_diff)?;
+
+        // --- PHASE 4: Semantic Merge ---
+        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        // Final Assertions
+        println!("{}", merged_text);
+        assert!(merged_text.contains("# Header"), "OURS missing");
+        assert!(merged_text.contains("print('end')"), "THEIRS missing");
+        assert!(merged_text.contains("def main():"), "BASE missing");
+
+        // Ensure no weird interleaving
+        assert!(merged_text.contains("def main():\n    pass\nprint('end')"));
+
+        Ok(())
+    }
+
+    /*
+    #[test]
+    fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_integration_context(dir.path());
+        let git_repo = h5i_repo.git();
+        let file_path = "app.py";
+        let full_path = dir.path().join(file_path);
+        let sig = Signature::now("h5i-tester", "test@h5i.io")?;
+
+        // --- PHASE 1: Base Commit ---
+        // 最初は空のファイルからセッションを開始し、"初期コード" 自体をデルタとして記録する
+        fs::write(&full_path, "")?;
+        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+        session.apply_local_edit(0, "def main():\n    pass")?;
+
+        let mut index = git_repo.index()?;
+        index.add_path(Path::new(file_path))?;
+        index.write()?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
+
+        // Baseのデルタを保存 (これが「共通の過去」になる)
+        let base_delta = yrs::merge_updates_v1(&session.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        h5i_repo.persist_delta_for_commit(base_oid, file_path, &base_delta)?;
+
+        // --- PHASE 2: Branch OURS ---
+        // 前のセッションを引き継いで編集
+        session.apply_local_edit(0, "# Header\n")?;
+        index.add_path(Path::new(file_path))?;
+        index.write()?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
+
+        // OURSブランチ固有の「差分」を保存
+        // (実際には全ログを投げても apply_updates_between でフィルタされるので安全)
+        let ours_delta = yrs::merge_updates_v1(&session.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_delta)?;
+
+        // --- PHASE 3: Branch THEIRS ---
+        // 別の場所にチェックアウトしたと想定し、Baseの状態から新しいセッションを作る
+        git_repo.set_head_detached(base_oid)?;
+
+        // Baseの物理的な内容を復元
+        fs::write(&full_path, "def main():\n    pass")?;
+
+        // 【重要】新しいセッション。ただし、Baseの時点での Doc 状態から始めるべき。
+        // ここではテストを簡略化するため、Baseのデルタを再適用して再現
+        let mut session_theirs = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+        // THEIRSは末尾に print を追加
+        session_theirs.apply_local_edit(18, "\nprint('end')")?;
+
+        index.add_path(Path::new(file_path))?;
+        index.write()?;
+        let tree = git_repo.find_tree(index.write_tree()?)?;
+        let their_oid = git_repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "theirs",
+            &tree,
+            &[&git_repo.find_commit(base_oid)?],
+        )?;
+
+        let theirs_delta = yrs::merge_updates_v1(&session_theirs.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_delta)?;
+
+        // --- PHASE 4: Semantic Merge ---
+        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        // Verification
+        assert!(
+            merged_text.contains("# Header"),
+            "OURS missing. Result:\n{}",
+            merged_text
+        );
+        assert!(
+            merged_text.contains("print('end')"),
+            "THEIRS missing. Result:\n{}",
+            merged_text
+        );
+        assert!(
+            merged_text.contains("def main():"),
+            "BASE missing. Result:\n{}",
+            merged_text
+        );
+
+        Ok(())
+    }*/
+
+    /*
+    #[test]
+    fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_integration_context(dir.path());
+        let git_repo = h5i_repo.git();
+        let file_path = "app.py";
+        let full_path = dir.path().join(file_path);
+        let sig = Signature::now("user", "user@test.com")?;
+
+        // --- PHASE 1: Base Commit ---
+        let base_content = "def main():\n    pass";
+        fs::write(&full_path, base_content)?;
+
+        let mut index = git_repo.index()?;
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
+        let base_commit = git_repo.find_commit(base_oid)?;
+
+        // --- PHASE 2: Branch OURS ---
+        let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+
+        // 重要: 初期ロードによるデルタを消去し、ここからの「編集」だけを記録する
+        println!("{:?}", h5i_repo.h5i_root);
+        //fs::remove_dir_all(h5i_repo.h5i_root.join(".h5i/delta"))?;
+        fs::create_dir_all(h5i_repo.h5i_root.join(".h5i/delta"))?;
+
+        session_ours.apply_local_edit(0, "# Header\n")?;
+
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
+
+        let ours_updates = session_ours.delta_store.read_all_updates()?;
+        let ours_delta = yrs::merge_updates_v1(&ours_updates).unwrap();
+        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_delta)?;
+
+        // --- PHASE 3: Branch THEIRS ---
+        // ログをクリーンにしてから THEIRS を開始
+        // fs::remove_dir_all(h5i_repo.h5i_root.join("delta"))?;
+        // fs::create_dir_all(h5i_repo.h5i_root.join("delta"))?;
+
+        git_repo.set_head_detached(base_oid)?;
+        fs::write(&full_path, base_content)?;
+
+        let mut session_theirs = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+
+        // 重要: 初期ロード分を消去
+        // fs::remove_dir_all(h5i_repo.h5i_root.join("delta"))?;
+        // fs::create_dir_all(h5i_repo.h5i_root.join("delta"))?;
+
+        session_theirs.apply_local_edit(base_content.len() as u32, "\nprint('end')")?;
+
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let tree = git_repo.find_tree(index.write_tree()?)?;
+        let their_oid =
+            git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
+
+        let theirs_updates = session_theirs.delta_store.read_all_updates()?;
+        let theirs_delta = yrs::merge_updates_v1(&theirs_updates).unwrap();
+        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_delta)?;
+
+        // --- PHASE 4: Semantic Merge ---
+        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        // Verification
+        assert!(
+            merged_text.contains("# Header"),
+            "Should contain OURS. Got: {}",
+            merged_text
+        );
+        assert!(
+            merged_text.contains("print('end')"),
+            "Should contain THEIRS. Got: {}",
+            merged_text
+        );
+        assert!(merged_text.contains("def main():"), "Should preserve BASE");
+        /*  */
+        Ok(())
+    }*/
+
+    /*
+    #[test]
+    fn test_cross_branch_merge_using_session_history1() -> crate::error::Result<()> {
         let dir = tempdir().unwrap();
         let h5i_repo = setup_integration_context(dir.path());
         let git_repo = h5i_repo.git();
@@ -1519,5 +1791,5 @@ mod integration_tests {
             "Should preserve BASE content"
         );
         Ok(())
-    }
+    }*/
 }
