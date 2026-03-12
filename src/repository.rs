@@ -1154,6 +1154,45 @@ mod tests {
         assert_eq!(repo.h5i_path(), &repo.h5i_root);
     }
 
+    // --- 2. Commit & Metadata Persistence ---
+
+    #[test]
+    fn test_commit_with_ai_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("ai_agent", "bot@h5i.io")?;
+
+        let ai_meta = Some(AiMetadata {
+            model_name: "h5i-alpha-01".to_string(),
+            prompt_hash: "abc123hash".to_string(),
+            agent_id: "agent_7".to_string(),
+        });
+
+        // Prepare a staged file
+        fs::write(dir.path().join("logic.py"), "print('hello')")?;
+        let mut index = h5i_repo.git().index()?;
+        index.add_path(Path::new("logic.py"))?;
+        index.write()?;
+
+        let oid = h5i_repo.commit(
+            "AI generated commit",
+            &sig,
+            &sig,
+            ai_meta,
+            true, // enable_test_tracking
+            None, // ast_parser
+        )?;
+
+        // Verify standard git commit
+        let commit = h5i_repo.git().find_commit(oid)?;
+        assert_eq!(commit.message(), Some("AI generated commit"));
+
+        // Verify h5i sidecar record
+        let record = h5i_repo.load_h5i_record(oid)?;
+        assert_eq!(record.ai_metadata.unwrap().agent_id, "agent_7");
+        Ok(())
+    }
+
     #[test]
     fn test_load_h5i_record_fallback_to_git() {
         let dir = tempdir().unwrap();
@@ -1173,6 +1212,8 @@ mod tests {
         assert_eq!(logs[0].git_oid, oid.to_string());
         assert!(logs[0].ai_metadata.is_none());
     }
+
+    // --- 3. Blame & AST tracking ---
 
     #[test]
     fn test_blame_line_mode() {
