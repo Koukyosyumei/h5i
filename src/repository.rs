@@ -11,7 +11,7 @@ use yrs::{GetString, Text, Transact};
 use crate::blame::{BlameMode, BlameResult};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
-use crate::metadata::{count_tokens, AiMetadata, H5iCommitRecord, TestMetrics, TokenUsage};
+use crate::metadata::{AiMetadata, H5iCommitRecord, TestMetrics, TokenUsage};
 
 pub struct H5iRepository {
     git_repo: Repository,

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
+use yrs::{Doc, GetString, Text, TextRef, Transact};
 use yrs::{ReadTxn, StateVector};
 
 use crate::delta_store::DeltaStore;
