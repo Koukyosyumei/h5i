@@ -33,6 +33,10 @@ enum Commands {
         #[arg(short, long)]
         message: String,
 
+        // Prompt
+        #[arg(long)]
+        prompt: Option<String>,
+
         /// The name of the AI model that assisted in these changes
         #[arg(long)]
         model: Option<String>,
@@ -100,6 +104,7 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Commit {
             message,
+            prompt,
             model,
             agent,
             tests,
@@ -108,11 +113,12 @@ fn main() -> anyhow::Result<()> {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
 
-            let ai_meta = if let (Some(m), Some(a)) = (model, agent) {
+            let ai_meta = if let (Some(p), Some(m), Some(a)) = (prompt, model, agent) {
                 Some(AiMetadata {
                     model_name: m,
                     agent_id: a,
-                    prompt_hash: "cli-manual".to_string(), // In production, this would be computed from context
+                    prompt: p, // In production, this would be computed from context
+                    usage: None,
                 })
             } else {
                 None

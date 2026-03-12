@@ -3,7 +3,7 @@ use git2::{Commit, ObjectType, Oid, Signature};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{GetString, Text, Transact};
@@ -11,7 +11,7 @@ use yrs::{GetString, Text, Transact};
 use crate::blame::{BlameMode, BlameResult};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
-use crate::metadata::{AiMetadata, H5iCommitRecord, TestMetrics};
+use crate::metadata::{count_tokens, AiMetadata, H5iCommitRecord, TestMetrics, TokenUsage};
 
 pub struct H5iRepository {
     git_repo: Repository,
@@ -197,6 +197,55 @@ impl H5iRepository {
 
         Ok(commit_oid)
     }
+
+    fn count_tokens_internal(&self, text: &str, model: &str) -> usize {
+        use tiktoken_rs::get_bpe_from_model;
+        if let Ok(bpe) = get_bpe_from_model(model) {
+            bpe.encode_with_special_tokens(text).len()
+        } else {
+            text.split_whitespace().count()
+        }
+    }
+
+    pub fn commit_with_stats(
+        &self,
+        prompt: &str,
+        model_name: &str,
+        agent_id: &str,
+        file_path: &str,
+        sig: &Signature,
+    ) -> crate::error::Result<Oid> {
+        // 1. 現在の HEAD の内容（コンテキスト）を取得してトークンを数える
+        // 初回コミットなどで HEAD がない場合は空文字として扱う
+        let context_content = self.get_content_at_head(file_path).unwrap_or_default();
+
+        let prompt_tokens = self.count_tokens_internal(prompt, model_name);
+        let content_tokens = self.count_tokens_internal(&context_content, model_name);
+
+        let usage = TokenUsage {
+            prompt_tokens,
+            content_tokens,
+            total_tokens: prompt_tokens + content_tokens,
+            model: model_name.to_string(),
+        };
+
+        // 2. メタデータオブジェクトを構築 (プロンプトをそのまま保存)
+        let ai_meta = AiMetadata {
+            model_name: model_name.to_string(),
+            agent_id: agent_id.to_string(),
+            prompt: prompt.to_string(),
+            usage: Some(usage),
+        };
+
+        // 3. 通常の Git コミットを実行
+        // コミットメッセージにはプロンプトの要約などを使う運用が一般的です
+        let commit_oid = self.commit(prompt, sig, sig, None, false, None)?;
+
+        // 4. メタデータを .h5i/metadata/{oid}.json に保存
+        self.save_ai_metadata(commit_oid, &ai_meta)?;
+
+        Ok(commit_oid)
+    }
 }
 
 // ============================================================
@@ -325,7 +374,7 @@ impl H5iRepository {
             if let Some(r) = record {
                 if let Some(ai) = r.ai_metadata {
                     println!("Agent:  {} (Model: {})", ai.agent_id, ai.model_name);
-                    println!("Prompt: [hash: {}]", ai.prompt_hash);
+                    println!("Prompt: [{}]", ai.prompt);
                 }
                 if let Some(tm) = r.test_metrics {
                     println!(
@@ -605,6 +654,25 @@ impl H5iRepository {
             .join(format!("{}.json", provenance.commit_oid));
         let data = serde_json::to_string_pretty(&provenance)?;
         fs::write(path, data)?;
+        Ok(())
+    }
+
+    pub fn save_ai_metadata(&self, commit_oid: Oid, metadata: &AiMetadata) -> Result<(), H5iError> {
+        // 1. 保存先ディレクトリの準備 (.h5i/metadata)
+        let metadata_dir = self.h5i_root.join("metadata");
+        if !metadata_dir.exists() {
+            fs::create_dir_all(&metadata_dir)?;
+        }
+
+        // 2. JSON シリアライズ
+        let json_data = serde_json::to_string_pretty(metadata)
+            .map_err(|e| H5iError::Metadata(format!("Failed to serialize metadata: {}", e)))?;
+
+        // 3. コミットOIDをファイル名にして書き出し
+        let file_path = metadata_dir.join(format!("{}.json", commit_oid));
+        let mut file = fs::File::create(file_path)?;
+        file.write_all(json_data.as_bytes())?;
+
         Ok(())
     }
 }
@@ -1011,6 +1079,32 @@ impl H5iRepository {
         Ok(content.to_string())
     }
 
+    pub fn get_content_at_head(&self, file_path: &str) -> Result<String, H5iError> {
+        let repo = &self.git_repo;
+
+        // 1. HEAD を取得してコミットまで解決
+        let head = repo.head()?;
+        let head_commit = head.peel_to_commit()?;
+
+        // 2. コミットからツリー（ファイル構造の木）を取得
+        let tree = head_commit.tree()?;
+
+        // 3. ツリー内からパスを辿って Blob (データの塊) を取得
+        let entry = tree.get_path(Path::new(file_path))?;
+        let object = entry.to_object(repo)?;
+        let blob = object.as_blob().ok_or_else(|| {
+            H5iError::Internal(format!(
+                "Path {} exists but is not a file (blob)",
+                file_path
+            ))
+        })?;
+
+        let content = std::str::from_utf8(blob.content())
+            .map_err(|e| H5iError::Internal(format!("Content is not valid UTF-8: {}", e)))?;
+
+        Ok(content.to_string())
+    }
+
     /// Extracts the code block between
     /// `// h5_i_test_start` and `// h5_i_test_end` and computes its hash.
     ///
@@ -1165,8 +1259,9 @@ mod tests {
 
         let ai_meta = Some(AiMetadata {
             model_name: "h5i-alpha-01".to_string(),
-            prompt_hash: "abc123hash".to_string(),
+            prompt: "abc123hash".to_string(),
             agent_id: "agent_7".to_string(),
+            usage: None,
         });
 
         // Prepare a staged file

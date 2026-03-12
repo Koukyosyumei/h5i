@@ -3,6 +3,7 @@ use git2::Oid;
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tiktoken_rs::get_bpe_from_model;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct H5iCommitRecord {
@@ -15,11 +16,20 @@ pub struct H5iCommitRecord {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub content_tokens: usize,
+    pub total_tokens: usize,
+    pub model: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AiMetadata {
     pub model_name: String,
-    pub prompt_hash: String,
+    pub prompt: String,
     pub agent_id: String,
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -92,6 +102,12 @@ impl H5iCommitRecord {
             timestamp,
         }
     }
+}
+
+pub fn count_tokens(text: &str, model: &str) -> Result<usize, String> {
+    let bpe = get_bpe_from_model(model)
+        .map_err(|e| format!("Failed to get tokenizer for {}: {}", model, e))?;
+    Ok(bpe.encode_with_special_tokens(text).len())
 }
 
 #[cfg(test)]
