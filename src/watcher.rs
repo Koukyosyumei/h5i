@@ -1,9 +1,9 @@
-use crate::error::Result;
-use crate::session::LocalSession;
 use notify::{Config, EventKind, RecursiveMode, Watcher};
-use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+
+use crate::error::Result;
+use crate::session::LocalSession;
 
 pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
     let (tx, rx) = channel();

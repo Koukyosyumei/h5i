@@ -6,6 +6,7 @@ use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::watcher::start_h5i_watcher;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
@@ -91,9 +92,10 @@ fn main() -> anyhow::Result<()> {
             println!("🚀 Initializing h5i session for: {:?}", file);
             let mut rng: fastrand::Rng = fastrand::Rng::new();
             let client_id: u64 = rng.u64(0..u64::MAX);
-            let mut session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
+            let session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
+            let session_arc = Arc::new(Mutex::new(session));
             println!("👀 Watching for changes... (Press Ctrl+C to stop)");
-            // start_h5i_watcher(&mut session)?;
+            start_h5i_watcher(session_arc)?;
         }
 
         Commands::Commit {
