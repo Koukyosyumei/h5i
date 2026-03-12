@@ -142,13 +142,13 @@ mod watcher_tests {
 
     #[test]
     fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
-        for _ in 0..10 {
+        for cid in 0..10 {
             let dir = tempdir().unwrap();
             let repo_root = dir.path().to_path_buf();
             let file_path = repo_root.join("code.py");
             fs::write(&file_path, "initial")?;
 
-            let session = LocalSession::new(repo_root, file_path.clone(), 1)?;
+            let session = LocalSession::new(repo_root, file_path.clone(), cid)?;
             let session_arc = Arc::new(Mutex::new(session));
 
             // Watcherを別スレッドで起動 (Arcを渡す)
