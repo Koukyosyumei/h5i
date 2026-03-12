@@ -1625,7 +1625,6 @@ mod integration_tests {
         let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
 
         // Final Assertions
-        println!("{}", merged_text);
         assert!(merged_text.contains("# Header"), "OURS missing");
         assert!(merged_text.contains("print('end')"), "THEIRS missing");
         assert!(merged_text.contains("def main():"), "BASE missing");
