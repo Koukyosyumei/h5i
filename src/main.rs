@@ -46,7 +46,7 @@ enum Commands {
         agent: Option<String>,
 
         /// Enable automatic test provenance detection
-        #[arg(short, long)]
+        #[arg(long)]
         tests: bool,
 
         /// Enable AST-based structural tracking for the commit

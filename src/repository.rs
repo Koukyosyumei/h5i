@@ -192,8 +192,11 @@ impl H5iRepository {
             ast_hashes,
             timestamp: chrono::Utc::now(),
         };
+        let metadata_json = serde_json::to_string(&record)?;
+        self.git_repo
+            .note(author, committer, None, commit_oid, &metadata_json, false)?;
 
-        self.persist_h5i_record(record)?;
+        //self.persist_h5i_record(record)?;
 
         Ok(commit_oid)
     }
