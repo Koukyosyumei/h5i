@@ -157,29 +157,81 @@ impl LocalSession {
         Ok(())
     }
 
-    /// Forces the CRDT state to match the physical file on disk.
-    /// Used by the Watcher to ingest changes from external editors.
-    pub fn ingest_external_change(&mut self, path: &Path) -> Result<(), H5iError> {
-        let disk_content = fs::read_to_string(path).map_err(H5iError::Io)?;
-        let current_content = self.get_current_text();
+    pub fn ingest_diff_from_disk(&mut self) -> Result<(), crate::error::H5iError> {
+        let path = self.target_fs_path.clone();
 
-        if disk_content == current_content {
-            return Ok(()); // 変更がなければ何もしない
+        // 1. リトライロジック付きでディスクから読み込み
+        let mut content = None;
+        for attempt in 0..3 {
+            match fs::read_to_string(&path) {
+                Ok(s) => {
+                    content = Some(s);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+                    continue;
+                }
+                Err(e) => return Err(crate::error::H5iError::Io(e)),
+            }
+        }
+        let new_text = content.ok_or_else(|| {
+            crate::error::H5iError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File missing",
+            ))
+        })?;
+
+        // 2. 現在のメモリ上のテキストを取得
+        let old_text = self.get_current_text();
+        if old_text == new_text {
+            return Ok(());
         }
 
-        let mut txn = self.doc.transact_mut();
-        let old_len = self.text_ref.len(&txn);
+        // 3. 最小限の編集範囲を特定 (Prefix/Suffix アルゴリズム)
+        let old_chars: Vec<char> = old_text.chars().collect();
+        let new_chars: Vec<char> = new_text.chars().collect();
 
-        // シンプルかつ確実な方法: 全削除して再挿入
-        // ※ 本来的にはここで diff を取って最小限の操作にするのがプロフェッショナルですが、
-        // テストをパスさせるためにはこの「強制同期」が最も堅牢です。
-        self.text_ref.remove_range(&mut txn, 0, old_len);
-        self.text_ref.push(&mut txn, &disk_content);
+        let mut prefix_len = 0;
+        while prefix_len < old_chars.len()
+            && prefix_len < new_chars.len()
+            && old_chars[prefix_len] == new_chars[prefix_len]
+        {
+            prefix_len += 1;
+        }
 
-        // この変更をデルタとして保存
-        drop(txn); // トランザクションを閉じて更新を確定
+        let mut suffix_len = 0;
+        while suffix_len < (old_chars.len() - prefix_len)
+            && suffix_len < (new_chars.len() - prefix_len)
+            && old_chars[old_chars.len() - 1 - suffix_len]
+                == new_chars[new_chars.len() - 1 - suffix_len]
+        {
+            suffix_len += 1;
+        }
+
+        // 4. トランザクション内で最小限の操作を適用
+        {
+            let mut txn = self.doc.transact_mut();
+
+            // 古いテキストの中間部分を削除
+            let remove_len = old_chars.len() - prefix_len - suffix_len;
+            if remove_len > 0 {
+                self.text_ref
+                    .remove_range(&mut txn, prefix_len as u32, remove_len as u32);
+            }
+
+            // 新しいテキストの中間部分を挿入
+            let insert_text: String = new_chars[prefix_len..(new_chars.len() - suffix_len)]
+                .iter()
+                .collect();
+            if !insert_text.is_empty() {
+                self.text_ref
+                    .insert(&mut txn, prefix_len as u32, &insert_text);
+            }
+        }
+
+        // 5. 差分を保存
         self.save_current_state_to_delta()?;
-
         Ok(())
     }
 
@@ -190,7 +242,7 @@ impl LocalSession {
 
         // アトミック保存対策: 最大3回、少しずつ待機してリトライ
         let mut content = None;
-        for attempt in 0..3 {
+        for attempt in 0..30 {
             match fs::read_to_string(&path) {
                 Ok(s) => {
                     content = Some(s);

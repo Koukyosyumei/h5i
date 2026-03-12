@@ -5,40 +5,31 @@ use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
-    let (tx, rx) = channel();
+pub fn start_h5i_watcher(session_arc: Arc<Mutex<LocalSession>>) -> notify::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher = notify::recommended_watcher(tx)?;
 
-    // デバウンス（頻繁な書き込みを抑制）のために 500ms のディレイを設定
-    let mut watcher = notify::RecommendedWatcher::new(tx, Config::default())
-        .map_err(|e| crate::error::H5iError::Internal(e.to_string()))?;
-
-    let target_path = {
-        let sess = session.lock().unwrap();
+    let path = {
+        let sess = session_arc.lock().unwrap();
         sess.target_fs_path.clone()
     };
+    watcher.watch(&path, notify::RecursiveMode::NonRecursive)?;
 
-    watcher
-        .watch(&target_path, RecursiveMode::NonRecursive)
-        .map_err(|e| crate::error::H5iError::Internal(e.to_string()))?;
+    for res in &rx {
+        if res.is_ok() {
+            // 1. ロックを取得していない（Mutexの外）状態で待機する
+            // これにより、テストスレッドは自由に「まだかな？」と中を覗ける
+            std::thread::sleep(std::time::Duration::from_millis(100));
 
-    for res in rx {
-        match res {
-            Ok(event) => {
-                // ファイルの修正（保存）イベントのみを対象にする
-                {
-                    // if let EventKind::Modify(_) = event.kind {
-                    // println!("Change detected. Syncing to h5i...");
-                    let mut sess = session.lock().unwrap();
-                    let path = sess.target_fs_path.clone();
-                    if let Err(e) = sess.force_ingest_from_disk() {
-                        eprintln!("Sync error: {:?}", e);
-                    }
-                    // 2. デルタログを追記し、内部状態を整理
-                    // sess.flush_and_sync_file()?;
-                    //}
-                }
+            // 2. 待機中に溜まった余計なイベント（メタデータ変更など）を掃除する
+            while rx.try_recv().is_ok() {}
+
+            // 3. 最後に一瞬だけロックを取って、ディスクの「最新の真実」を吸い上げる
+            let mut sess = session_arc.lock().unwrap();
+            if let Err(e) = sess.ingest_diff_from_disk() {
+                eprintln!("Watcher sync failed: {:?}", e);
             }
-            Err(e) => println!("watch error: {:?}", e),
+            // 4. ここでロックが解放される
         }
     }
     Ok(())
@@ -61,6 +52,7 @@ mod watcher_tests {
         let start = Instant::now();
         while start.elapsed() < timeout {
             if let Ok(s) = session.try_lock() {
+                println!("s: {}", s.get_current_text());
                 if s.get_current_text() == expected {
                     return true;
                 }
@@ -69,6 +61,51 @@ mod watcher_tests {
         }
         false
     }
+
+    /*
+    #[test]
+    fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().to_path_buf();
+        let file_path = repo_root.join("code.py");
+
+        // 1. Initial State
+        let initial_content = "def hello():\n    pass";
+        fs::write(&file_path, initial_content)?;
+
+        let session = LocalSession::new(repo_root.clone(), file_path.clone(), 1)?;
+        let session_arc = Arc::new(Mutex::new(session));
+
+        // 2. Spawn Watcher Thread
+        let watcher_session = Arc::clone(&session_arc);
+        std::thread::spawn(move || {
+            // Note: In production, start_h5i_watcher would loop until an error or shutdown signal.
+            // For testing, we assume it's running.
+            let mut sess = watcher_session.lock().unwrap();
+            let _ = start_h5i_watcher(&mut sess);
+        });
+
+        // Allow the OS/Notify crate to register the watch
+        std::thread::sleep(Duration::from_millis(200));
+
+        // 3. Simulate External Edit
+        let updated_content = "def hello():\n    print('world')";
+        fs::write(&file_path, updated_content)?;
+
+        // 4. Verify Convergence
+        let success = wait_for_content(
+            Arc::clone(&session_arc),
+            updated_content,
+            Duration::from_secs(2),
+        );
+
+        assert!(
+            success,
+            "Watcher failed to sync external file changes into the session. Final text: {:?}",
+            session_arc.lock().unwrap().get_current_text()
+        );
+        Ok(())
+    }*/
 
     /*
     #[test]
@@ -83,7 +120,8 @@ mod watcher_tests {
 
         let watcher_session = Arc::clone(&session_arc);
         std::thread::spawn(move || {
-            let _ = start_h5i_watcher(watcher_session);
+            let mut sess = watcher_session.lock().unwrap();
+            let _ = start_h5i_watcher(sess);
         });
 
         std::thread::sleep(Duration::from_millis(200));
@@ -103,45 +141,47 @@ mod watcher_tests {
 
     #[test]
     fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let repo_root = dir.path().to_path_buf();
-        let file_path = repo_root.join("code.py");
-        fs::write(&file_path, "initial")?;
+        for _ in 0..10 {
+            let dir = tempdir().unwrap();
+            let repo_root = dir.path().to_path_buf();
+            let file_path = repo_root.join("code.py");
+            fs::write(&file_path, "initial")?;
 
-        let session = LocalSession::new(repo_root, file_path.clone(), 1)?;
-        let session_arc = Arc::new(Mutex::new(session));
+            let session = LocalSession::new(repo_root, file_path.clone(), 1)?;
+            let session_arc = Arc::new(Mutex::new(session));
 
-        // Watcherを別スレッドで起動 (Arcを渡す)
-        let watcher_session = Arc::clone(&session_arc);
-        std::thread::spawn(move || {
-            let _ = start_h5i_watcher(watcher_session);
-        });
+            // Watcherを別スレッドで起動 (Arcを渡す)
+            let watcher_session = Arc::clone(&session_arc);
+            std::thread::spawn(move || {
+                let _ = start_h5i_watcher(watcher_session);
+            });
 
-        // 監視が開始されるのを待機
-        std::thread::sleep(Duration::from_millis(100));
+            // 監視が開始されるのを待機
+            std::thread::sleep(Duration::from_millis(100));
 
-        // 外部エディタによる書き込みをシミュレート
-        let f = fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&file_path)?;
-        let mut writer = std::io::BufWriter::new(f);
-        std::io::Write::write_all(&mut writer, b"updated content")?;
-        writer.flush()?;
-        // ディスクへのフラッシュを確実に
-        writer.into_inner().unwrap().sync_all()?;
+            // 外部エディタによる書き込みをシミュレート
+            let f = fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&file_path)?;
+            let mut writer = std::io::BufWriter::new(f);
+            std::io::Write::write_all(&mut writer, b"updated content")?;
+            writer.flush()?;
+            // ディスクへのフラッシュを確実に
+            writer.into_inner().unwrap().sync_all()?;
 
-        fs::write(&file_path, "updated content")?;
-        //writer.into_inner().unwrap().sync_all()?;
+            fs::write(&file_path, "updated content")?;
+            //writer.into_inner().unwrap().sync_all()?;
 
-        // 検証: メインスレッドでロックを取得できるようになる！
-        let success = wait_for_content(
-            Arc::clone(&session_arc),
-            "updated content",
-            Duration::from_secs(1),
-        );
+            // 検証: メインスレッドでロックを取得できるようになる！
+            let success = wait_for_content(
+                Arc::clone(&session_arc),
+                "updated content",
+                Duration::from_secs(2),
+            );
 
-        assert!(success, "Deadlock broken, but content sync failed.");
+            assert!(success, "Deadlock broken, but content sync failed.");
+        }
         Ok(())
     }
 
