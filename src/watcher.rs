@@ -63,82 +63,37 @@ mod watcher_tests {
         false
     }
 
-    /*
-    #[test]
-    fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let repo_root = dir.path().to_path_buf();
-        let file_path = repo_root.join("code.py");
-
-        // 1. Initial State
-        let initial_content = "def hello():\n    pass";
-        fs::write(&file_path, initial_content)?;
-
-        let session = LocalSession::new(repo_root.clone(), file_path.clone(), 1)?;
-        let session_arc = Arc::new(Mutex::new(session));
-
-        // 2. Spawn Watcher Thread
-        let watcher_session = Arc::clone(&session_arc);
-        std::thread::spawn(move || {
-            // Note: In production, start_h5i_watcher would loop until an error or shutdown signal.
-            // For testing, we assume it's running.
-            let mut sess = watcher_session.lock().unwrap();
-            let _ = start_h5i_watcher(&mut sess);
-        });
-
-        // Allow the OS/Notify crate to register the watch
-        std::thread::sleep(Duration::from_millis(200));
-
-        // 3. Simulate External Edit
-        let updated_content = "def hello():\n    print('world')";
-        fs::write(&file_path, updated_content)?;
-
-        // 4. Verify Convergence
-        let success = wait_for_content(
-            Arc::clone(&session_arc),
-            updated_content,
-            Duration::from_secs(2),
-        );
-
-        assert!(
-            success,
-            "Watcher failed to sync external file changes into the session. Final text: {:?}",
-            session_arc.lock().unwrap().get_current_text()
-        );
-        Ok(())
-    }*/
-
-    /*
     #[test]
     fn test_watcher_handles_rapid_consecutive_writes() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let repo_root = dir.path().to_path_buf();
-        let file_path = repo_root.join("rapid.txt");
+        for cid in 0..10 {
+            let dir = tempdir().unwrap();
+            let repo_root = dir.path().to_path_buf();
+            let file_path = repo_root.join("rapid.txt");
 
-        fs::write(&file_path, "v0")?;
-        let session = LocalSession::new(repo_root.clone(), file_path.clone(), 1)?;
-        let session_arc = Arc::new(Mutex::new(session));
+            fs::write(&file_path, "v0")?;
+            let session = LocalSession::new(repo_root.clone(), file_path.clone(), cid)?;
+            let session_arc = Arc::new(Mutex::new(session));
 
-        let watcher_session = Arc::clone(&session_arc);
-        std::thread::spawn(move || {
-            let mut sess = watcher_session.lock().unwrap();
-            let _ = start_h5i_watcher(sess);
-        });
+            let watcher_session = Arc::clone(&session_arc);
+            std::thread::spawn(move || {
+                let _ = start_h5i_watcher(watcher_session);
+            });
 
-        std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(200));
 
-        // Simulate rapid-fire saves from an IDE
-        fs::write(&file_path, "v1")?;
-        std::thread::sleep(Duration::from_millis(10));
-        fs::write(&file_path, "v2")?;
-        std::thread::sleep(Duration::from_millis(10));
-        fs::write(&file_path, "v3 final")?;
+            // Simulate rapid-fire saves from an IDE
+            fs::write(&file_path, "v1")?;
+            std::thread::sleep(Duration::from_millis(10));
+            fs::write(&file_path, "v2")?;
+            std::thread::sleep(Duration::from_millis(10));
+            fs::write(&file_path, "v3 final")?;
 
-        let success =
-            wait_for_content(Arc::clone(&session_arc), "v3 final", Duration::from_secs(3));
-        assert!(success, "Watcher dropped events during rapid writes.");
+            let success =
+                wait_for_content(Arc::clone(&session_arc), "v3 final", Duration::from_secs(3));
+            assert!(success, "Watcher dropped events during rapid writes.");
+        }
         Ok(())
-    }*/
+    }
 
     #[test]
     fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
