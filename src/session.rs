@@ -235,46 +235,6 @@ impl LocalSession {
         Ok(())
     }
 
-    /// Discards current memory state and forces it to match the physical file.
-    /// Crucial for Watcher to ingest changes from external editors.
-    pub fn force_ingest_from_disk(&mut self) -> Result<(), crate::error::H5iError> {
-        let path = self.target_fs_path.clone();
-
-        // アトミック保存対策: 最大3回、少しずつ待機してリトライ
-        let mut content = None;
-        for attempt in 0..30 {
-            match fs::read_to_string(&path) {
-                Ok(s) => {
-                    content = Some(s);
-                    break;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
-                    continue;
-                }
-                Err(e) => return Err(crate::error::H5iError::Io(e)),
-            }
-        }
-
-        let disk_content = content.ok_or_else(|| {
-            crate::error::H5iError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("File still missing after retries: {:?}", path),
-            ))
-        })?;
-
-        let mut txn = self.doc.transact_mut();
-        let current_len = self.text_ref.len(&txn);
-
-        self.text_ref.remove_range(&mut txn, 0, current_len);
-        self.text_ref.push(&mut txn, &disk_content);
-
-        drop(txn);
-        self.save_current_state_to_delta()?;
-
-        Ok(())
-    }
-
     /// Persists the current in-memory CRDT state to the local sidecar delta store.
     ///
     /// This method is called to ensure that local edits are not lost and can be

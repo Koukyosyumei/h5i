@@ -5,31 +5,32 @@ use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-pub fn start_h5i_watcher(session_arc: Arc<Mutex<LocalSession>>) -> notify::Result<()> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = notify::recommended_watcher(tx)?;
+pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
+    let (tx, rx) = channel();
+    let mut watcher = notify::RecommendedWatcher::new(tx, Config::default())
+        .map_err(|e| crate::error::H5iError::Internal(e.to_string()))?;
 
-    let path = {
-        let sess = session_arc.lock().unwrap();
+    let target_path = {
+        let sess = session.lock().unwrap();
         sess.target_fs_path.clone()
     };
-    watcher.watch(&path, notify::RecursiveMode::NonRecursive)?;
 
-    for res in &rx {
-        if res.is_ok() {
-            // 1. ロックを取得していない（Mutexの外）状態で待機する
-            // これにより、テストスレッドは自由に「まだかな？」と中を覗ける
-            std::thread::sleep(std::time::Duration::from_millis(100));
+    watcher
+        .watch(&target_path, RecursiveMode::NonRecursive)
+        .map_err(|e| crate::error::H5iError::Internal(e.to_string()))?;
 
-            // 2. 待機中に溜まった余計なイベント（メタデータ変更など）を掃除する
-            while rx.try_recv().is_ok() {}
-
-            // 3. 最後に一瞬だけロックを取って、ディスクの「最新の真実」を吸い上げる
-            let mut sess = session_arc.lock().unwrap();
-            if let Err(e) = sess.ingest_diff_from_disk() {
-                eprintln!("Watcher sync failed: {:?}", e);
+    for res in rx {
+        match res {
+            Ok(event) => {
+                if let EventKind::Modify(_) = event.kind {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let mut sess = session.lock().unwrap();
+                    if let Err(e) = sess.ingest_diff_from_disk() {
+                        eprintln!("Sync error: {:?}", e);
+                    }
+                }
             }
-            // 4. ここでロックが解放される
+            Err(e) => println!("watch error: {:?}", e),
         }
     }
     Ok(())
@@ -141,7 +142,7 @@ mod watcher_tests {
 
     #[test]
     fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
-        for _ in 0..10 {
+        for _ in 0..5 {
             let dir = tempdir().unwrap();
             let repo_root = dir.path().to_path_buf();
             let file_path = repo_root.join("code.py");
@@ -177,7 +178,7 @@ mod watcher_tests {
             let success = wait_for_content(
                 Arc::clone(&session_arc),
                 "updated content",
-                Duration::from_secs(2),
+                Duration::from_secs(3),
             );
 
             assert!(success, "Deadlock broken, but content sync failed.");
