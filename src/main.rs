@@ -113,11 +113,11 @@ fn main() -> anyhow::Result<()> {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
 
-            let ai_meta = if let (Some(p), Some(m), Some(a)) = (prompt, model, agent) {
+            let ai_meta = if prompt.is_some() || model.is_some() || agent.is_some() {
                 Some(AiMetadata {
-                    model_name: m,
-                    agent_id: a,
-                    prompt: p, // In production, this would be computed from context
+                    model_name: model.unwrap_or_else(|| "unknown".into()),
+                    agent_id: agent.unwrap_or_else(|| "unknown".into()),
+                    prompt: prompt.unwrap_or_else(|| "".into()),
                     usage: None,
                 })
             } else {
