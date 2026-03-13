@@ -8,7 +8,7 @@ use crate::error::H5iError;
 /// Computes the SHA-256 hash of a string and returns the hexadecimal representation.
 ///
 /// This helper function is used to deterministically map file paths to
-/// delta log filenames inside the `.h5i/delta` directory.
+/// delta log filenames inside the `.git/.h5i/delta` directory.
 ///
 /// # Parameters
 ///
@@ -31,7 +31,7 @@ pub fn sha256_hash(input: &str) -> String {
 ///
 /// Each source file maps to a unique log file under:
 ///
-/// `.h5i/delta/<sha256(file_path)>.bin`
+/// `.git/.h5i/delta/<sha256(file_path)>.bin`
 ///
 /// The log format is:
 ///
@@ -43,7 +43,9 @@ pub struct DeltaStore {
 impl DeltaStore {
     pub fn new(repo_root: PathBuf, file_path: &str) -> Self {
         let hash = sha256_hash(file_path); // Hash the file path to generate a stable log filename
-        let log_path = repo_root.join(".h5i/delta").join(format!("{}.bin", hash));
+        let log_path = repo_root
+            .join(".git/.h5i/delta")
+            .join(format!("{}.bin", hash));
         Self { log_path }
     }
 }
@@ -90,7 +92,7 @@ impl DeltaStore {
     /// Returns an error if the directory cannot be created
     /// or if writing to the log file fails.
     pub fn append_update(&self, data: &[u8]) -> Result<(), H5iError> {
-        // Ensure the parent directory (.h5i/delta) exists
+        // Ensure the parent directory (.git/.h5i/delta) exists
         if let Some(parent) = self.log_path.parent() {
             fs::create_dir_all(parent).map_err(|e| H5iError::Io(e))?;
         }
@@ -263,7 +265,7 @@ mod tests {
         let repo_root = dir.path().to_path_buf();
 
         // Ensure the directory structure h5i expects exists
-        fs::create_dir_all(repo_root.join(".h5i/delta"))?;
+        fs::create_dir_all(repo_root.join(".git/.h5i/delta"))?;
 
         let file_path = "src/main.rs";
         let store = DeltaStore::new(repo_root.clone(), file_path);
@@ -307,7 +309,7 @@ mod tests {
     fn test_persistence_across_instances() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let repo_root = dir.path().to_path_buf();
-        fs::create_dir_all(repo_root.join(".h5i/delta"))?;
+        fs::create_dir_all(repo_root.join(".git/.h5i/delta"))?;
 
         let file_path = "lib.rs";
         let payload = vec![0xAA, 0xBB, 0xCC];
@@ -333,7 +335,7 @@ mod tests {
     fn test_large_payload_integrity() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let repo_root = dir.path().to_path_buf();
-        fs::create_dir_all(repo_root.join(".h5i/delta"))?;
+        fs::create_dir_all(repo_root.join(".git/.h5i/delta"))?;
 
         let store = DeltaStore::new(repo_root, "large_file.bin");
 

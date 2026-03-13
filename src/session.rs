@@ -11,7 +11,7 @@ use crate::error::H5iError;
 ///
 /// `LocalSession` manages a Yrs (Y-CRDT) document synchronized with:
 ///
-/// - a shared append-only update log stored in `.h5i/delta`
+/// - a shared append-only update log stored in `.git/.h5i/delta`
 /// - the actual source file on disk
 ///
 /// The CRDT log enables multiple agents or editors to concurrently
@@ -36,7 +36,7 @@ impl LocalSession {
     /// Creates a new `LocalSession`.
     ///
     /// The session initializes a Yrs CRDT document and connects it to a
-    /// persistent delta log stored under `.h5i/delta`.
+    /// persistent delta log stored under `.git/.h5i/delta`.
     ///
     /// During initialization:
     ///
@@ -249,7 +249,7 @@ impl LocalSession {
             txn.encode_state_as_update_v1(&yrs::StateVector::default())
         };
 
-        // Persist to the .h5i/delta directory via DeltaStore
+        // Persist to the .git/.h5i/delta directory via DeltaStore
         self.delta_store.append_update(&update_data)?;
 
         // Increment the internal update counter for tracking session activity
@@ -370,7 +370,7 @@ mod tests {
         assert!(updated_content.contains("hello"));
         assert!(updated_content.contains("world"));
 
-        let delta_path = repo_root.join(".h5i/delta");
+        let delta_path = repo_root.join(".git/.h5i/delta");
         assert!(delta_path.exists());
 
         Ok(())
@@ -581,7 +581,7 @@ mod sync_tests {
         // Physical file exists but is different
         fs::write(&file_path, "File Content")?;
 
-        // Manually setup a snapshot in the .h5i/metadata dir (or wherever DeltaStore points)
+        // Manually setup a snapshot in the .git/.h5i/metadata dir (or wherever DeltaStore points)
         let doc = Doc::new();
         let text = doc.get_or_insert_text("code");
         {
@@ -594,7 +594,7 @@ mod sync_tests {
 
         // We use the same name formatting as DeltaStore expects
         let delta_store = DeltaStore::new(repo_root.clone(), &get_canonical_path(&file_path));
-        fs::create_dir_all(repo_root.join(".h5i/delta"))?;
+        fs::create_dir_all(repo_root.join(".git/.h5i/delta"))?;
         delta_store.save_snapshot(&snapshot_data)?;
 
         // New session should load "Snapshot Content" and ignore "File Content"

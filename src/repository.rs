@@ -67,7 +67,7 @@ impl H5iRepository {
                     "Could not find the parent directory of the repository".to_string(),
                 )
             })?
-            .join(".h5i");
+            .join(".git/.h5i");
 
         if !h5i_root.exists() {
             fs::create_dir_all(&h5i_root)?;
