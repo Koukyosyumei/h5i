@@ -24,7 +24,7 @@ enum Commands {
     Init,
 
     /// Start a real-time recording session for a specific file
-    Start {
+    Session {
         /// The source file to watch and sync via CRDT
         #[arg(short, long)]
         file: PathBuf,
@@ -105,7 +105,7 @@ fn main() -> anyhow::Result<()> {
             );
         }
 
-        Commands::Start { file } => {
+        Commands::Session { file } => {
             let repo = H5iRepository::open(".")?;
             println!(
                 "{} {} for: {}",
