@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use console::style;
 use git2::{Blob, Repository};
 use git2::{Commit, ObjectType, Oid, Signature};
@@ -152,6 +153,7 @@ impl H5iRepository {
         // 1. Prepare optional features
         let mut ast_hashes = None;
         let mut test_metrics = None;
+        let mut crdt_states = HashMap::new();
 
         // Scan staged files
         for entry in index.iter() {
@@ -159,7 +161,7 @@ impl H5iRepository {
             let path_str = std::str::from_utf8(path_bytes).unwrap();
             let full_path = self.git_repo.workdir().unwrap().join(path_str);
 
-            // A. AST generation (optional)
+            // Harvest AST (Optional)
             if let Some(parser) = ast_parser {
                 let hashes = ast_hashes.get_or_insert_with(HashMap::new);
                 if let Some(sexp) = parser(&full_path) {
@@ -168,7 +170,12 @@ impl H5iRepository {
                 }
             }
 
-            // B. Extract test provenance (optional)
+            // HARVEST: Read the latest local CRDT state managed by the Watcher
+            if let Ok(state_b64) = self.load_local_crdt_state_as_base64(path_str) {
+                crdt_states.insert(path_str.to_string(), state_b64);
+            }
+
+            // Extract test provenance (optional)
             if enable_test_tracking && test_metrics.is_none() {
                 test_metrics = self.scan_test_block(&full_path);
             }
@@ -194,14 +201,35 @@ impl H5iRepository {
             ai_metadata: ai_meta,
             test_metrics,
             ast_hashes,
-            crdt_delta: None,
+            crdt_states: if crdt_states.is_empty() {
+                None
+            } else {
+                Some(crdt_states)
+            },
             timestamp: chrono::Utc::now(),
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
-            .note(author, committer, None, commit_oid, &metadata_json, false)?;
+            .note(author, committer, None, commit_oid, &metadata_json, true)?;
 
         Ok(commit_oid)
+    }
+
+    /// Reads local binary deltas from .git/h5i/delta and encodes them for the Note.
+    fn load_local_crdt_state_as_base64(&self, file_path: &str) -> Result<String, H5iError> {
+        let file_hash = crate::delta_store::sha256_hash(file_path);
+        let delta_path = self
+            .h5i_root
+            .join("delta")
+            .join(format!("{}.bin", file_hash));
+
+        if !delta_path.exists() {
+            return Err(H5iError::RecordNotFound(file_path.to_string()));
+        }
+
+        let binary_data = fs::read(&delta_path)?;
+        // Use standard base64 encoding (requires base64 crate)
+        Ok(BASE64_STANDARD.encode(binary_data))
     }
 
     fn count_tokens_internal(&self, text: &str, model: &str) -> usize {
@@ -734,21 +762,38 @@ impl H5iRepository {
         their_oid: Oid,
         file_path: &str,
     ) -> Result<String, H5iError> {
-        let base_oid = self.git_repo.merge_base(our_oid, their_oid)?;
+        // 1. Load mathematical context from Git Notes
+        let our_record = self.load_h5i_record(our_oid)?;
+        let their_record = self.load_h5i_record(their_oid)?;
 
-        // 1. Reconstruct the full state of the common ancestor (base)
-        // by replaying all updates from the beginning up to the merge base.
-        let mut doc = yrs::Doc::new();
+        // 2. Initialize a clean CRDT document
+        let doc = yrs::Doc::new();
         let text_ref = doc.get_or_insert_text("code");
 
-        // Apply the entire history up to the base commit
-        self.apply_all_updates_up_to(base_oid, file_path, &mut doc)?;
+        // 3. Apply state from OURS
+        if let Some(states) = our_record.crdt_states {
+            if let Some(b64) = states.get(file_path) {
+                let data = BASE64_STANDARD
+                    .decode(b64)
+                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
+                let mut txn = doc.transact_mut();
+                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
+            }
+        }
 
-        // 2. Retrieve and merge updates from OURS and THEIRS
-        // Apply only the incremental updates from each branch to the same document.
-        self.apply_updates_between(base_oid, our_oid, file_path, &mut doc)?;
-        self.apply_updates_between(base_oid, their_oid, file_path, &mut doc)?;
+        // 4. Apply state from THEIRS (The "Magic" automatic merge)
+        if let Some(states) = their_record.crdt_states {
+            if let Some(b64) = states.get(file_path) {
+                let data = BASE64_STANDARD
+                    .decode(b64)
+                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
+                let mut txn = doc.transact_mut();
+                // CRDT math ensures this is conflict-free and commutative
+                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
+            }
+        }
 
+        // 5. Extract and return the unified text
         let txn = doc.transact();
         Ok(text_ref.get_string(&txn))
     }

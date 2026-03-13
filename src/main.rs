@@ -272,6 +272,11 @@ fn main() -> anyhow::Result<()> {
                 style("💡").yellow(),
                 style(format!("git add {}", file)).bold()
             );
+            println!(
+                "{} {}",
+                style("ℹ").blue(),
+                style("Note: Resolution was derived mathematically from Git Notes metadata.").dim()
+            );
         }
     }
 
