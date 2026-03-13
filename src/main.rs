@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use git2::Oid;
 use h5i_core::blame::BlameMode;
-use h5i_core::metadata::AiMetadata;
+use h5i_core::metadata::{AiMetadata, IntegrityLevel};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::watcher::start_h5i_watcher;
@@ -54,7 +54,10 @@ enum Commands {
         ast: bool,
 
         #[arg(long)]
-        bypass_audit: bool,
+        audit: bool,
+
+        #[arg(long)]
+        force: bool,
     },
 
     /// Display the enriched 5D commit history
@@ -122,10 +125,36 @@ fn main() -> anyhow::Result<()> {
             agent,
             tests,
             ast,
-            bypass_audit: _,
+            audit,
+            force,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            if audit {
+                let report = repo.verify_integrity(prompt.as_deref(), &message)?;
+                match report.level {
+                    IntegrityLevel::Violation => {
+                        println!("❌ INTEGRITY VIOLATION (Score: {:.2})", report.score);
+                        for f in report.findings {
+                            println!("  - {}", f);
+                        }
+                        if !force {
+                            println!("\nCommit aborted. Use --force to override.");
+                            return Ok(());
+                        }
+                    }
+                    IntegrityLevel::Warning => {
+                        println!("⚠️ INTEGRITY WARNING (Score: {:.2})", report.score);
+                        for f in report.findings {
+                            println!("  - {}", f);
+                        }
+                    }
+                    IntegrityLevel::Valid => {
+                        println!("✅ Integrity check passed.");
+                    }
+                }
+            }
 
             let ai_meta = if prompt.is_some() || model.is_some() || agent.is_some() {
                 Some(AiMetadata {
