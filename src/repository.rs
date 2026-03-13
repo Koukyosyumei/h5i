@@ -193,13 +193,12 @@ impl H5iRepository {
             ai_metadata: ai_meta,
             test_metrics,
             ast_hashes,
+            crdt_delta: None,
             timestamp: chrono::Utc::now(),
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
             .note(author, committer, None, commit_oid, &metadata_json, false)?;
-
-        //self.persist_h5i_record(record)?;
 
         Ok(commit_oid)
     }
@@ -593,9 +592,7 @@ impl H5iRepository {
 impl H5iRepository {
     /// Loads the `h5i` metadata record associated with a specific commit OID.
     ///
-    /// This method reads the corresponding JSON file stored in the
-    /// `.h5i/metadata` directory and deserializes it into an
-    /// [`H5iCommitRecord`].
+    /// This method reads the corresponding Note it into an [`H5iCommitRecord`].
     ///
     /// The function is primarily used by higher-level APIs such as
     /// `log`, `blame`, and other history inspection tools.
@@ -613,8 +610,7 @@ impl H5iRepository {
     /// Returns an error if:
     ///
     /// - the metadata file does not exist
-    /// - the file cannot be read
-    /// - the JSON data cannot be deserialized
+    /// - Note is not found
     pub fn load_h5i_record(&self, oid: git2::Oid) -> Result<H5iCommitRecord, H5iError> {
         // Attempt to find the note attached to the commit OID.
         // Passing None uses the default notes reference (refs/notes/commits).
