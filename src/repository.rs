@@ -1089,14 +1089,11 @@ impl H5iRepository {
     pub fn get_content_at_head(&self, file_path: &str) -> Result<String, H5iError> {
         let repo = &self.git_repo;
 
-        // 1. HEAD を取得してコミットまで解決
         let head = repo.head()?;
         let head_commit = head.peel_to_commit()?;
 
-        // 2. コミットからツリー（ファイル構造の木）を取得
         let tree = head_commit.tree()?;
 
-        // 3. ツリー内からパスを辿って Blob (データの塊) を取得
         let entry = tree.get_path(Path::new(file_path))?;
         let object = entry.to_object(repo)?;
         let blob = object.as_blob().ok_or_else(|| {
