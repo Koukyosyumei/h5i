@@ -1750,12 +1750,34 @@ mod integration_tests {
         let full_path = dir.path().join(file_path);
         let sig = git2::Signature::now("h5i-tester", "test@h5i.io")?;
 
+        // Helper to bundle and attach CRDT state to a commit via Git Notes
+        let attach_h5i_note = |oid: git2::Oid, doc: &yrs::Doc| -> crate::error::Result<()> {
+            let mut crdt_states = std::collections::HashMap::new();
+            // Capture the FULL state at the time of commit
+            let state = doc
+                .transact()
+                .encode_state_as_update_v1(&yrs::StateVector::default());
+            crdt_states.insert(file_path.to_string(), base64::encode(state));
+
+            let record = crate::metadata::H5iCommitRecord {
+                git_oid: oid.to_string(),
+                parent_oid: None,
+                ai_metadata: None,
+                test_metrics: None,
+                ast_hashes: None,
+                crdt_states: Some(crdt_states),
+                timestamp: chrono::Utc::now(),
+            };
+
+            let metadata_json = serde_json::to_string(&record).unwrap();
+            git_repo.note(&sig, &sig, None, oid, &metadata_json, true)?;
+            Ok(())
+        };
+
         // --- PHASE 1: Base Commit ---
-        // Start from an empty state to ensure the first insertion is recorded as a delta
         fs::write(&full_path, "")?;
         let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
 
-        // Initial code: 20 characters long
         let base_content = "def main():\n    pass";
         session_ours.apply_local_edit(0, base_content)?;
 
@@ -1764,68 +1786,72 @@ mod integration_tests {
         let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
         let base_commit = git_repo.find_commit(base_oid)?;
 
-        // Capture BASE state for later diffing
-        let base_delta = yrs::merge_updates_v1(&session_ours.delta_store.read_all_updates()?)
-            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
-        let base_sv = session_ours.doc.transact().state_vector();
-        h5i_repo.persist_delta_for_commit(base_oid, file_path, &base_delta)?;
+        // Attach mathematical state to the BASE commit note
+        attach_h5i_note(base_oid, &session_ours.doc)?;
 
         // --- PHASE 2: Branch OURS ---
-        // OURS adds a header at the very beginning (Index 0)
         session_ours.apply_local_edit(0, "# Header\n")?;
 
-        // Save incremental delta for OURS
-        // For testing, we use encode_state_as_update or diff to get ONLY the new parts
         let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
-        let ours_diff: Vec<u8> = session_ours.doc.transact().encode_diff_v1(&base_sv);
-        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_diff)?;
+        // Attach mathematical state to the OURS commit note
+        attach_h5i_note(our_oid, &session_ours.doc)?;
 
         // --- PHASE 3: Branch THEIRS ---
-        // Switch "context" back to base
+        // Move back to base and simulate a different user/client
         git_repo.set_head_detached(base_oid)?;
 
-        // CRITICAL: We create a new doc and APPLY the base_delta
-        // to ensure character IDs match exactly.
         let doc_theirs = yrs::Doc::with_options(yrs::Options {
             client_id: 2,
             ..Default::default()
         });
         let text_theirs = doc_theirs.get_or_insert_text("code");
+
+        // Initialize THEIRS with the BASE state to ensure ID continuity
         {
+            let base_record = h5i_repo.load_h5i_record(base_oid)?;
+            let base_state_b64 = base_record
+                .crdt_states
+                .unwrap()
+                .get(file_path)
+                .unwrap()
+                .clone();
+            let base_state = base64::decode(base_state_b64).unwrap();
             let mut txn = doc_theirs.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_delta)?)
-                .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+            txn.apply_update(yrs::Update::decode_v1(&base_state)?)?;
         }
 
-        // Simulate a second session branching from the SAME state
         let mut session_theirs = LocalSession {
             doc: doc_theirs,
             text_ref: text_theirs,
-            delta_store: DeltaStore::new(dir.path().to_path_buf(), "theirs_temp"),
+            delta_store: crate::delta_store::DeltaStore::new(
+                dir.path().to_path_buf(),
+                "theirs_temp",
+            ),
             target_fs_path: full_path.clone(),
             update_count: 0,
             last_read_offset: 0,
         };
 
-        // THEIRS adds print at the end of "def main():\n    pass" (index 18)
         session_theirs.apply_local_edit(20, "\nprint('end')")?;
 
         let tree = git_repo.find_tree(git_repo.index()?.write_tree()?)?;
         let their_oid =
             git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
 
-        let theirs_diff = session_theirs.doc.transact().encode_diff_v1(&base_sv);
-        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_diff)?;
+        // Attach mathematical state to the THEIRS commit note
+        attach_h5i_note(their_oid, &session_theirs.doc)?;
 
         // --- PHASE 4: Semantic Merge ---
+        // merge_h5i_logic now fetches the notes for our_oid and their_oid
         let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
 
         // Final Assertions
-        assert!(merged_text.contains("# Header"), "OURS missing");
-        assert!(merged_text.contains("print('end')"), "THEIRS missing");
-        assert!(merged_text.contains("def main():"), "BASE missing");
-
-        // Ensure no weird interleaving
+        assert!(merged_text.contains("# Header"), "OURS content missing");
+        assert!(
+            merged_text.contains("print('end')"),
+            "THEIRS content missing"
+        );
+        assert!(merged_text.contains("def main():"), "BASE content missing");
         assert!(merged_text.contains("def main():\n    pass\nprint('end')"));
 
         Ok(())
