@@ -1264,6 +1264,14 @@ impl H5iRepository {
                 ));
                 penalty += 0.1;
             }
+
+            if path.ends_with("Cargo.toml") && !primary_intent.contains("dependency") {
+                findings.push(format!(
+                    "Scope Warning: File '{}' modified but dependency update is not explicitly mentioned in intent.",
+                    path
+                ));
+                penalty += 0.2;
+            }
         }
 
         // Check C: "Refactor" Hallucination
