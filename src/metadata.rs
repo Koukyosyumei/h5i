@@ -13,6 +13,7 @@ pub struct H5iCommitRecord {
     pub test_metrics: Option<TestMetrics>,
     /// File path -> hash of the externally provided AST (S-expression)
     pub ast_hashes: Option<HashMap<String, String>>,
+    pub crdt_delta: Option<String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -116,6 +117,7 @@ impl H5iCommitRecord {
             ai_metadata: None,  // Standard Git commits do not contain AI metadata
             test_metrics: None, // Standard Git commits do not contain testing metrics
             ast_hashes: None,   // Standard Git commits do not contain AST hashes
+            crdt_delta: None,
             timestamp,
         }
     }

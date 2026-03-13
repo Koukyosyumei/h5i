@@ -15,6 +15,7 @@ use crate::error::H5iError;
 use crate::metadata::{
     AiMetadata, H5iCommitRecord, IntegrityLevel, IntegrityReport, TestMetrics, TokenUsage,
 };
+use crate::LocalSession;
 
 pub struct H5iRepository {
     git_repo: Repository,
@@ -67,7 +68,7 @@ impl H5iRepository {
                     "Could not find the parent directory of the repository".to_string(),
                 )
             })?
-            .join(".h5i");
+            .join(".git/.h5i");
 
         if !h5i_root.exists() {
             fs::create_dir_all(&h5i_root)?;
@@ -193,13 +194,12 @@ impl H5iRepository {
             ai_metadata: ai_meta,
             test_metrics,
             ast_hashes,
+            crdt_delta: None,
             timestamp: chrono::Utc::now(),
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
             .note(author, committer, None, commit_oid, &metadata_json, false)?;
-
-        //self.persist_h5i_record(record)?;
 
         Ok(commit_oid)
     }
@@ -213,6 +213,7 @@ impl H5iRepository {
         }
     }
 
+    /*
     pub fn commit_with_stats(
         &self,
         prompt: &str,
@@ -251,7 +252,7 @@ impl H5iRepository {
         self.save_ai_metadata(commit_oid, &ai_meta)?;
 
         Ok(commit_oid)
-    }
+    }*/
 }
 
 // ============================================================
@@ -593,9 +594,7 @@ impl H5iRepository {
 impl H5iRepository {
     /// Loads the `h5i` metadata record associated with a specific commit OID.
     ///
-    /// This method reads the corresponding JSON file stored in the
-    /// `.h5i/metadata` directory and deserializes it into an
-    /// [`H5iCommitRecord`].
+    /// This method reads the corresponding Note it into an [`H5iCommitRecord`].
     ///
     /// The function is primarily used by higher-level APIs such as
     /// `log`, `blame`, and other history inspection tools.
@@ -613,8 +612,7 @@ impl H5iRepository {
     /// Returns an error if:
     ///
     /// - the metadata file does not exist
-    /// - the file cannot be read
-    /// - the JSON data cannot be deserialized
+    /// - Note is not found
     pub fn load_h5i_record(&self, oid: git2::Oid) -> Result<H5iCommitRecord, H5iError> {
         // Attempt to find the note attached to the commit OID.
         // Passing None uses the default notes reference (refs/notes/commits).
@@ -637,6 +635,7 @@ impl H5iRepository {
         Ok(record)
     }
 
+    /*
     /// Saves commit provenance metadata associated with a Git commit.
     ///
     /// This method stores a [`CommitProvenance`] structure as a JSON file
@@ -685,7 +684,7 @@ impl H5iRepository {
         file.write_all(json_data.as_bytes())?;
 
         Ok(())
-    }
+    }*/
 }
 
 // ============================================================
@@ -1093,14 +1092,11 @@ impl H5iRepository {
     pub fn get_content_at_head(&self, file_path: &str) -> Result<String, H5iError> {
         let repo = &self.git_repo;
 
-        // 1. HEAD を取得してコミットまで解決
         let head = repo.head()?;
         let head_commit = head.peel_to_commit()?;
 
-        // 2. コミットからツリー（ファイル構造の木）を取得
         let tree = head_commit.tree()?;
 
-        // 3. ツリー内からパスを辿って Blob (データの塊) を取得
         let entry = tree.get_path(Path::new(file_path))?;
         let object = entry.to_object(repo)?;
         let blob = object.as_blob().ok_or_else(|| {
