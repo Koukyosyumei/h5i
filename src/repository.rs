@@ -1594,7 +1594,6 @@ mod tests {
         let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
 
         // --- 5. Verify ---
-        println!("Final Merged Text:\n{}", merged_text);
         assert!(merged_text.contains("# OURS COMMENT"));
         assert!(merged_text.contains("print('done')"));
         assert!(merged_text.contains("def main():"));

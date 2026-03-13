@@ -22,7 +22,7 @@ pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
     for res in rx {
         match res {
             Ok(event) => {
-                println!("event: {:?}", event);
+                eprintln!("event: {:?}", event);
                 if let EventKind::Modify(_) = event.kind {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     let mut sess = session.lock().unwrap();
@@ -54,7 +54,6 @@ mod watcher_tests {
         let start = Instant::now();
         while start.elapsed() < timeout {
             if let Ok(s) = session.try_lock() {
-                println!("s: {}", s.get_current_text());
                 if s.get_current_text() == expected {
                     return true;
                 }
