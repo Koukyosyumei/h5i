@@ -46,6 +46,23 @@ pub struct CommitProvenance {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum IntegrityLevel {
+    /// No significant mismatch detected.
+    Valid,
+    /// Minor deviations found. Human review suggested.
+    Warning,
+    /// Critical mismatch. Action significantly differs from intent.
+    Violation,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IntegrityReport {
+    pub level: IntegrityLevel,
+    pub score: f32,            // 0.0 to 1.0
+    pub findings: Vec<String>, // Detailed list of issues found
+}
+
 impl H5iCommitRecord {
     /// Constructs a minimal [`H5iCommitRecord`] from standard Git commit metadata.
     ///

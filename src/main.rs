@@ -52,6 +52,9 @@ enum Commands {
         /// Enable AST-based structural tracking for the commit
         #[arg(long)]
         ast: bool,
+
+        #[arg(long)]
+        bypass_audit: bool,
     },
 
     /// Display the enriched 5D commit history
@@ -80,6 +83,16 @@ enum Commands {
         /// Relative path to the file to resolve
         file: String,
     },
+    /*
+    Audit {
+        /// Target OID or branch to audit
+        #[arg(default_value = "HEAD")]
+        target: String,
+
+        /// Severity level to report (warning, violation)
+        #[arg(short, long, default_value = "warning")]
+        level: String,
+    },*/
 }
 
 fn main() -> anyhow::Result<()> {
@@ -109,6 +122,7 @@ fn main() -> anyhow::Result<()> {
             agent,
             tests,
             ast,
+            bypass_audit: _,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
