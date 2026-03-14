@@ -91,6 +91,20 @@ enum Commands {
         file: String,
     },
 
+    /// Show the AST-level structural diff for a file
+    Diff {
+        /// Path to the file to analyse (must be a supported language, e.g. .py)
+        file: PathBuf,
+
+        /// Compare from this commit OID (default: HEAD)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Compare to this commit OID (default: working-tree file)
+        #[arg(long)]
+        to: Option<String>,
+    },
+
     /// Revert the AI-generated commit whose intent best matches a description
     Rollback {
         /// Natural-language description of the change to undo (e.g. "OAuth login")
@@ -237,12 +251,10 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
-            // Simple demo AST parser hook
-            let ast_parser = if ast {
-                Some(
-                    &(|_p: &std::path::Path| Some("(ast-node-root)".to_string()))
-                        as &dyn Fn(&std::path::Path) -> Option<String>,
-                )
+            // Build a real language-aware AST parser closure.
+            let parser_box = repo.make_ast_parser();
+            let ast_parser: Option<&dyn Fn(&std::path::Path) -> Option<String>> = if ast {
+                Some(parser_box.as_ref())
             } else {
                 None
             };
@@ -298,6 +310,31 @@ fn main() -> anyhow::Result<()> {
                     r.line_content
                 );
             }
+        }
+
+        Commands::Diff { file, from, to } => {
+            let repo = H5iRepository::open(".")?;
+
+            let from_oid = from.map(|s| Oid::from_str(&s)).transpose()?;
+            let to_oid = to.map(|s| Oid::from_str(&s)).transpose()?;
+
+            let label = match (&from_oid, &to_oid) {
+                (None, None) => "HEAD → working tree".to_string(),
+                (Some(f), None) => format!("{}… → working tree", &f.to_string()[..8]),
+                (None, Some(t)) => format!("HEAD → {}…", &t.to_string()[..8]),
+                (Some(f), Some(t)) => format!("{}… → {}…", &f.to_string()[..8], &t.to_string()[..8]),
+            };
+
+            println!(
+                "{} {} {} {}",
+                LOOKING,
+                style("Computing structural diff for").cyan().bold(),
+                style(file.display()).yellow(),
+                style(format!("({label})")).dim(),
+            );
+
+            let ast_diff = repo.diff_ast(&file, from_oid, to_oid)?;
+            ast_diff.print_stylish(&file.to_string_lossy());
         }
 
         Commands::Rollback {

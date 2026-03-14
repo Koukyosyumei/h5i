@@ -1016,6 +1016,137 @@ impl H5iRepository {
     /// Reads the pending AI context written by a Claude Code hook.
     ///
     /// Returns `None` if no pending context file exists.
+    /// Returns a closure that parses a source file into an s-expression string.
+    ///
+    /// Language detection is based on file extension. The appropriate parser
+    /// script is discovered by searching, in order:
+    ///   1. `$H5I_PARSER_DIR`
+    ///   2. `<repo_workdir>/script/`
+    ///   3. Directory containing the current executable (`../script/`)
+    ///
+    /// Currently supported extensions: `.py` (via `h5i-py-parser.py`).
+    pub fn make_ast_parser(&self) -> Box<dyn Fn(&std::path::Path) -> Option<String>> {
+        let workdir = self.git_repo.workdir().map(|p| p.to_path_buf());
+
+        Box::new(move |path: &std::path::Path| {
+            let ext = path.extension()?.to_str()?;
+
+            // Resolve the script path for the detected language.
+            let script_name = match ext {
+                "py" => "h5i-py-parser.py",
+                _ => return None,
+            };
+
+            let script_path = find_parser_script(script_name, workdir.as_deref())?;
+
+            let output = std::process::Command::new("python3")
+                .arg(&script_path)
+                .arg(path)
+                .output()
+                .ok()?;
+
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Computes the structural (AST-level) diff for `path` between two versions.
+    ///
+    /// - `from_oid`: the "old" commit (defaults to `HEAD`).
+    /// - `to_oid`:   the "new" commit (defaults to the working-tree file).
+    ///
+    /// For each version, the method first tries the stored AST sidecar, then
+    /// falls back to parsing the file content on-the-fly via `make_ast_parser`.
+    pub fn diff_ast(
+        &self,
+        path: &std::path::Path,
+        from_oid: Option<Oid>,
+        to_oid: Option<Oid>,
+    ) -> Result<crate::ast::AstDiff, H5iError> {
+        use crate::ast::SemanticAst;
+
+        let parser = self.make_ast_parser();
+
+        let from_sexp = {
+            let oid = match from_oid {
+                Some(o) => o,
+                None => self.get_head_commit()?.id(),
+            };
+            self.load_ast_at_commit(oid, path, &*parser)?
+        };
+
+        let to_sexp = match to_oid {
+            Some(oid) => self.load_ast_at_commit(oid, path, &*parser)?,
+            None => {
+                // Parse the working-tree file directly.
+                let abs = self
+                    .git_repo
+                    .workdir()
+                    .ok_or_else(|| H5iError::InvalidPath("bare repository".into()))?
+                    .join(path);
+                parser(&abs).ok_or_else(|| {
+                    H5iError::Ast(format!(
+                        "No parser available for '{}'. \
+                         Ensure python3 and the parser script are accessible.",
+                        path.display()
+                    ))
+                })?
+            }
+        };
+
+        let base = SemanticAst::from_sexp(&from_sexp);
+        let head = SemanticAst::from_sexp(&to_sexp);
+        Ok(base.diff(&head))
+    }
+
+    /// Retrieves the s-expression for `path` at `oid`.
+    ///
+    /// Lookup order:
+    ///   1. Stored AST sidecar (if the commit was made with `--ast`)
+    ///   2. On-the-fly parse of the blob content via `parser`
+    fn load_ast_at_commit(
+        &self,
+        oid: Oid,
+        path: &std::path::Path,
+        parser: &dyn Fn(&std::path::Path) -> Option<String>,
+    ) -> Result<String, H5iError> {
+        let path_str = path.to_str().unwrap_or("");
+
+        // Fast path: use the stored sidecar if available.
+        if let Ok(record) = self.load_h5i_record(oid) {
+            if let Some(hashes) = &record.ast_hashes {
+                if let Some(hash) = hashes.get(path_str) {
+                    let sidecar = self.h5i_root.join("ast").join(format!("{}.sexp", hash));
+                    if let Ok(sexp) = fs::read_to_string(&sidecar) {
+                        return Ok(sexp);
+                    }
+                }
+            }
+        }
+
+        // Slow path: extract blob content and parse on-the-fly.
+        let content = self.get_content_at_oid(oid, path)?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("txt");
+        let tmp = self.h5i_root.join(format!("_tmp_ast.{}", ext));
+        fs::write(&tmp, &content)?;
+        let result = parser(&tmp);
+        let _ = fs::remove_file(&tmp);
+
+        result.ok_or_else(|| {
+            H5iError::Ast(format!(
+                "No parser available for '{}' at commit {}",
+                path.display(),
+                oid
+            ))
+        })
+    }
+
     pub fn read_pending_context(&self) -> Result<Option<PendingContext>, H5iError> {
         let path = self.h5i_root.join("pending_context.json");
         if !path.exists() {
@@ -1396,6 +1527,45 @@ impl H5iRepository {
                 .diff_tree_to_index(Some(&head_tree), Some(&index), Some(&mut opts))?;
         Ok(diff)
     }
+}
+
+// ── Parser script discovery ───────────────────────────────────────────────────
+
+/// Searches for `script_name` in the standard locations and returns the first
+/// path that exists.
+fn find_parser_script(script_name: &str, workdir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    // 1. Explicit override via environment variable.
+    if let Ok(dir) = std::env::var("H5I_PARSER_DIR") {
+        let p = std::path::Path::new(&dir).join(script_name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. `script/` inside the repository working directory.
+    if let Some(wd) = workdir {
+        let p = wd.join("script").join(script_name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 3. Relative to the h5i binary (`<bin_dir>/../script/` for development builds,
+    //    `<bin_dir>/script/` for flat installs).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            for candidate in &[
+                bin_dir.join("script").join(script_name),
+                bin_dir.join("..").join("script").join(script_name),
+            ] {
+                if candidate.exists() {
+                    return Some(candidate.clone());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
