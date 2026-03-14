@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
-use h5i_core::metadata::{AiMetadata, IntegrityLevel};
+use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
@@ -177,40 +177,52 @@ fn main() -> anyhow::Result<()> {
 
             if audit {
                 let report = repo.verify_integrity(prompt.as_deref(), &message)?;
+
+                // Print a header line based on the overall level.
                 match report.level {
-                    IntegrityLevel::Violation => {
-                        println!(
-                            "{} {} {}",
-                            ERROR,
-                            style("INTEGRITY VIOLATION").red().bold(),
-                            style(format!("(Score: {:.2})", report.score)).dim()
-                        );
-                        for f in report.findings {
-                            println!("  {} {}", style("-").red(), f);
-                        }
-                        if !force {
-                            println!(
-                                "\n{} Commit aborted. Use {} to override.",
-                                style("!").red(),
-                                style("--force").bold()
-                            );
-                            return Ok(());
-                        }
-                    }
-                    IntegrityLevel::Warning => {
-                        println!(
-                            "{} {} {}",
-                            WARN,
-                            style("INTEGRITY WARNING").yellow().bold(),
-                            style(format!("(Score: {:.2})", report.score)).dim()
-                        );
-                        for f in report.findings {
-                            println!("  {} {}", style("-").yellow(), f);
-                        }
-                    }
+                    IntegrityLevel::Violation => println!(
+                        "{} {} {}",
+                        ERROR,
+                        style("INTEGRITY VIOLATION").red().bold(),
+                        style(format!("(score: {:.2})", report.score)).dim()
+                    ),
+                    IntegrityLevel::Warning => println!(
+                        "{} {} {}",
+                        WARN,
+                        style("INTEGRITY WARNING").yellow().bold(),
+                        style(format!("(score: {:.2})", report.score)).dim()
+                    ),
                     IntegrityLevel::Valid => {
                         println!("{} {}", SUCCESS, style("Integrity check passed.").green());
                     }
+                }
+
+                // Print each finding with its rule ID and severity colour.
+                for f in &report.findings {
+                    let (bullet, label) = match f.severity {
+                        Severity::Violation => (
+                            style("✖").red().bold(),
+                            style(format!("[{}]", f.rule_id)).red().bold(),
+                        ),
+                        Severity::Warning => (
+                            style("⚠").yellow().bold(),
+                            style(format!("[{}]", f.rule_id)).yellow().bold(),
+                        ),
+                        Severity::Info => (
+                            style("ℹ").cyan(),
+                            style(format!("[{}]", f.rule_id)).cyan(),
+                        ),
+                    };
+                    println!("  {} {} {}", bullet, label, f.detail);
+                }
+
+                if matches!(report.level, IntegrityLevel::Violation) && !force {
+                    println!(
+                        "\n{} Commit aborted. Use {} to override.",
+                        style("!").red(),
+                        style("--force").bold()
+                    );
+                    return Ok(());
                 }
             }
 

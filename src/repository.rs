@@ -1348,125 +1348,53 @@ impl H5iRepository {
     }
 }
 
-// src/repository.rs
-
 impl H5iRepository {
-    /// Detailed integrity check comparing intent (prompt/message) vs actual diff.
-    /// Priority: Prompt > Commit Message.
+    /// Runs all integrity rules against the staged diff and returns a report.
+    ///
+    /// Priority for "intent": prompt (if supplied) > commit message.
+    /// Scoring: each Violation costs −0.4, each Warning −0.15; score is clamped to [0, 1].
     pub fn verify_integrity(
         &self,
         prompt: Option<&str>,
         message: &str,
     ) -> Result<IntegrityReport, H5iError> {
-        let mut findings = Vec::new();
-        let mut penalty: f32 = 0.0;
+        use crate::metadata::Severity;
+        use crate::rules::DiffContext;
+        use crate::rules::run_all_rules;
 
-        // 1. Identify Primary Intent
-        // If a prompt exists, it's our "contract". Otherwise, use the message.
-        let primary_intent = prompt.unwrap_or(message).to_lowercase();
+        let primary_intent = prompt.unwrap_or(message).to_string();
 
-        // 2. Extract staged diff statistics
         let diff = self.get_staged_diff()?;
         let stats = diff.stats()?;
-        let deletions = stats.deletions();
-        let insertions = stats.insertions();
+        let ctx = DiffContext::from_diff(&diff, primary_intent, stats.insertions(), stats.deletions())?;
 
-        // Check A: Unintended Deletions
-        // High penalty if the AI deletes significant code without "delete/remove/cleanup" keywords.
-        let deletion_keywords = ["delete", "remove", "cleanup", "rm", "drop", "refactor"];
-        let has_deletion_intent = deletion_keywords
-            .iter()
-            .any(|&k| primary_intent.contains(k));
+        let findings = run_all_rules(&ctx);
 
-        if deletions > 5 && !has_deletion_intent {
-            findings.push(format!(
-                "High Risk: {} lines deleted, but no deletion intent found in prompt/message.",
-                deletions
-            ));
-            penalty += 0.5;
-        }
+        let violations = findings.iter().filter(|f| f.severity == Severity::Violation).count();
+        let warnings   = findings.iter().filter(|f| f.severity == Severity::Warning).count();
 
-        // Check B: Scope Mismatch (File Path check)
-        // If the prompt mentions a specific file, check if changes leaked into other files.
-        let changed_files = self.get_changed_file_names(&diff)?;
-        for path in &changed_files {
-            let file_name = Path::new(path)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
+        let penalty = (violations as f32 * 0.4 + warnings as f32 * 0.15).min(1.0);
+        let score = 1.0 - penalty;
 
-            // Heuristic: If prompt mentions "main.rs" but we see changes in "auth.rs"
-            if changed_files.len() > 1 && !primary_intent.contains(&file_name) {
-                // Low penalty per file to account for shared headers/imports
-                findings.push(format!(
-                    "Scope Warning: File '{}' modified but not explicitly mentioned in intent.",
-                    path
-                ));
-                penalty += 0.1;
-            }
-
-            if path.ends_with("Cargo.toml") && !primary_intent.contains("dependency") {
-                findings.push(format!(
-                    "Scope Warning: File '{}' modified but dependency update is not explicitly mentioned in intent.",
-                    path
-                ));
-                penalty += 0.2;
-            }
-        }
-
-        // Check C: "Refactor" Hallucination
-        // "Refactor" or "Comment" should generally have a balanced Ins/Del ratio.
-        if (primary_intent.contains("refactor") || primary_intent.contains("comment"))
-            && insertions > 100
-            && deletions < 10
-        {
-            findings.push(
-                "Anomaly: Large insertion detected for a 'refactor' or 'comment' task.".to_string(),
-            );
-            penalty += 0.3;
-        }
-
-        // --- Scoring ---
-        let score = (1.0 - penalty).max(0.0);
-        let level = if score < 0.4 {
+        let level = if violations > 0 {
             IntegrityLevel::Violation
-        } else if score < 0.8 {
+        } else if warnings > 0 {
             IntegrityLevel::Warning
         } else {
             IntegrityLevel::Valid
         };
 
-        Ok(IntegrityReport {
-            level,
-            score,
-            findings,
-        })
+        Ok(IntegrityReport { level, score, findings })
     }
 
-    /// Helper to get diff between Git index and HEAD.
     fn get_staged_diff(&'_ self) -> Result<git2::Diff<'_>, H5iError> {
         let head_tree = self.get_head_commit()?.tree()?;
         let index = self.git_repo.index()?;
         let mut opts = git2::DiffOptions::new();
-
         let diff =
             self.git_repo
                 .diff_tree_to_index(Some(&head_tree), Some(&index), Some(&mut opts))?;
         Ok(diff)
-    }
-
-    /// Helper to extract file names from a diff object
-    fn get_changed_file_names(&self, diff: &git2::Diff) -> Result<Vec<String>, H5iError> {
-        let mut files = Vec::new();
-        diff.print(git2::DiffFormat::NameOnly, |_delta, _hunk, line| {
-            let path = std::str::from_utf8(line.content()).unwrap_or("").trim();
-            if !path.is_empty() {
-                files.push(path.to_string());
-            }
-            true
-        })?;
-        Ok(files)
     }
 }
 

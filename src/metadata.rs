@@ -48,6 +48,27 @@ pub struct CommitProvenance {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Severity of a single rule finding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Severity {
+    /// Commit should be blocked unless `--force` is used.
+    Violation,
+    /// Human review strongly recommended.
+    Warning,
+    /// Informational — no action required.
+    Info,
+}
+
+/// A single rule trigger produced by the integrity checker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleFinding {
+    /// Short machine-readable identifier (e.g. `"CREDENTIAL_LEAK"`).
+    pub rule_id: String,
+    pub severity: Severity,
+    /// Human-readable explanation of what was detected.
+    pub detail: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum IntegrityLevel {
     /// No significant mismatch detected.
@@ -61,8 +82,9 @@ pub enum IntegrityLevel {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IntegrityReport {
     pub level: IntegrityLevel,
-    pub score: f32,            // 0.0 to 1.0
-    pub findings: Vec<String>, // Detailed list of issues found
+    /// 1.0 = clean, 0.0 = maximum penalty.
+    pub score: f32,
+    pub findings: Vec<RuleFinding>,
 }
 
 impl H5iCommitRecord {
