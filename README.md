@@ -8,7 +8,7 @@ Built for teams where AI agents write production code alongside humans.
 
 ---
 
-## The Problem
+## 1. The Problem
 
 Modern AI coding agents — Claude, Copilot, Cursor — generate tens of thousands of lines of code per day. Git was designed for humans. It has no concept of:
 
@@ -22,32 +22,16 @@ h5i is the missing infrastructure layer.
 
 ---
 
-## Five Dimensions of Software Truth
-
-Traditional Git tracks code as a one-dimensional stream of text through time. h5i operates across five dimensions simultaneously:
-
-```
-① Temporal    ──  Git history, commit lineage, parent chains
-② Structural  ──  AST-level change tracking (S-expression hashes)
-③ Intentional ──  AI prompt, model, agent ID, token usage
-④ Empirical   ──  Test suite hashes, coverage metrics
-⑤ Associative ──  CRDT-based collaborative editing (Yjs/Yrs)
-```
-
-Every commit carries metadata across all five axes. The result is a commit log that answers not just *what* changed but *how* and *why* — machine-readable, auditable, and rollback-able by intent.
-
----
-
-## Features
+## 2. Features
 
 **AI Provenance Tracking**
-Captures the prompt, model name, agent ID, and token usage alongside every commit. The prompt is captured automatically from Claude Code via a hook — no manual `--prompt` flag required.
+Captures the prompt, model name, agent ID, and token usage alongside every commit. The prompt can also be captured automatically from major AI coding tooks like Claude Code via a hook.
 
 **Rule-Based Integrity Engine**
-Twelve deterministic, human-auditable rules that run before every `--audit` commit. No AI involvement in the audit path. Rules detect credential leaks, dangerous execution patterns, CI/CD tampering, scope creep, and more.
+Human-auditable rules that run before every `--audit` commit. No AI involvement in the audit path. Rules detect credential leaks, dangerous execution patterns, CI/CD tampering, scope creep, and more.
 
 **Intent-Based Rollback**
-Describe what you want to undo in plain English. h5i uses Claude to semantically match your description against stored prompts and commit messages, then reverts the right commit — no commit hash needed.
+Describe what you want to undo in plain English. h5i can use AI agent like Claude to semantically match your description against stored prompts and commit messages, then reverts the right commit — no commit hash needed.
 
 **CRDT Collaborative Sessions**
 File-level Yjs documents allow multiple AI agents to edit concurrently with strong eventual consistency. Conflicts resolve mathematically, not by coin flip.
@@ -57,7 +41,7 @@ Line-level and AST-level blame that surfaces the original AI prompt and test sta
 
 ---
 
-## Installation
+## 3. Installation
 
 Requires Rust 1.70+ and an existing Git repository.
 
@@ -78,9 +62,9 @@ h5i init
 
 ---
 
-## Usage
+## 4. Usage
 
-### Committing with AI Provenance
+### 4.1. Committing with AI Provenance
 
 ```bash
 # Explicit flags
@@ -97,7 +81,7 @@ h5i commit -m "implement rate limiting"
 
 With the Claude Code hook installed (see below), `--prompt` is captured automatically from your conversation — zero friction.
 
-### Auditing Before Commit
+### 4.2. Auditing Before Commit
 
 ```bash
 h5i commit -m "refactor auth module" --audit
@@ -111,7 +95,7 @@ h5i commit -m "refactor auth module" --audit
 
 Use `--force` to commit despite warnings. Violations block the commit by default.
 
-### Enriched Commit Log
+### 4.3. Enriched Commit Log
 
 ```bash
 h5i log --limit 5
@@ -129,7 +113,7 @@ Tests:    ✔ 94.2%
 ────────────────────────────────────────────────────────────
 ```
 
-### Semantic Blame
+### 4.4. Semantic Blame
 
 ```bash
 h5i blame src/auth.rs
@@ -143,7 +127,7 @@ STAT COMMIT   AUTHOR/AGENT    | CONTENT
       9eff001  alice           | }
 ```
 
-### Intent-Based Rollback
+### 4.5. Intent-Based Rollback
 
 ```bash
 h5i rollback "the OAuth login changes"
@@ -173,7 +157,7 @@ h5i rollback "the broken migration" --yes
 
 Falls back to keyword search if `ANTHROPIC_API_KEY` is not set.
 
-### CRDT Collaborative Sessions
+### 4.6. CRDT Collaborative Sessions
 
 Start a real-time recording session for a file. Each agent gets its own session; changes are merged via CRDT automatically.
 
@@ -182,7 +166,7 @@ h5i session --file src/auth.rs
 # → Watching for changes... (Press Ctrl+C to stop)
 ```
 
-### CRDT Merge Resolution
+### 4.7. CRDT Merge Resolution
 
 ```bash
 h5i resolve <ours-oid> <theirs-oid> src/auth.rs
@@ -192,7 +176,7 @@ Resolves conflicts using the mathematical CRDT state stored in Git Notes — no 
 
 ---
 
-## Integrity Engine
+## 5. Integrity Engine
 
 The `--audit` flag runs twelve deterministic rules against the staged diff before committing. Rules are pure string/stat checks — no AI, no network, no false trust.
 
@@ -217,7 +201,7 @@ To extend the engine: add a `pub const` to `rule_id`, write one pure `fn check_*
 
 ---
 
-## Claude Code Integration
+## 6. Claude Code Integration
 
 h5i can capture your prompt automatically every time you submit a message to Claude Code, with zero manual intervention.
 
@@ -244,7 +228,7 @@ Resolution order at commit time: CLI flag → env var → pending context file.
 
 ---
 
-## How It Works
+## 7. How It Works
 
 h5i stores all metadata as a Git sidecar — nothing lives outside your repository.
 
@@ -262,6 +246,6 @@ Extended commit metadata is stored in Git Notes (`refs/notes/commits`) as JSON, 
 
 ---
 
-## License
+## 8. License
 
 Apache 2.0 — see [LICENSE](LICENSE).
