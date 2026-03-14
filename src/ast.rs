@@ -332,25 +332,42 @@ impl SemanticAst {
 
         // ── Named block matching (by identifier) ─────────────────────────────
 
+        // Maps name → (named-only index, block ref)
         let mut base_named: HashMap<String, (usize, &NamedBlock)> = HashMap::new();
         let mut head_named: HashMap<String, (usize, &NamedBlock)> = HashMap::new();
         let mut base_unnamed: Vec<(usize, &NamedBlock)> = Vec::new();
         let mut head_unnamed: Vec<(usize, &NamedBlock)> = Vec::new();
 
-        for (i, b) in base_blocks.iter().enumerate() {
-            match &b.name {
-                Some(n) => {
-                    base_named.insert(n.clone(), (i, b));
+        {
+            let mut named_idx = 0usize;
+            let mut unnamed_idx = 0usize;
+            for b in base_blocks.iter() {
+                match &b.name {
+                    Some(n) => {
+                        base_named.insert(n.clone(), (named_idx, b));
+                        named_idx += 1;
+                    }
+                    None => {
+                        base_unnamed.push((unnamed_idx, b));
+                        unnamed_idx += 1;
+                    }
                 }
-                None => base_unnamed.push((i, b)),
             }
         }
-        for (i, b) in head_blocks.iter().enumerate() {
-            match &b.name {
-                Some(n) => {
-                    head_named.insert(n.clone(), (i, b));
+        {
+            let mut named_idx = 0usize;
+            let mut unnamed_idx = 0usize;
+            for b in head_blocks.iter() {
+                match &b.name {
+                    Some(n) => {
+                        head_named.insert(n.clone(), (named_idx, b));
+                        named_idx += 1;
+                    }
+                    None => {
+                        head_unnamed.push((unnamed_idx, b));
+                        unnamed_idx += 1;
+                    }
                 }
-                None => head_unnamed.push((i, b)),
             }
         }
 
