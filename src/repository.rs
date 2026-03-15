@@ -707,57 +707,6 @@ impl H5iRepository {
 
         Ok(record)
     }
-
-    /*
-    /// Saves commit provenance metadata associated with a Git commit.
-    ///
-    /// This method stores a [`CommitProvenance`] structure as a JSON file
-    /// under `.h5i/metadata/`. The filename corresponds to the commit OID
-    /// contained in the provenance record.
-    ///
-    /// Compared to [`persist_h5i_record`], this function focuses specifically
-    /// on provenance metadata and may be used by external tools that only
-    /// need to record commit provenance information.
-    ///
-    /// # Parameters
-    ///
-    /// - `provenance` – A [`CommitProvenance`] object containing metadata
-    ///   describing the origin and context of the commit.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the metadata cannot be serialized or written.
-    pub fn save_metadata(
-        &self,
-        provenance: crate::metadata::CommitProvenance,
-    ) -> Result<(), H5iError> {
-        let path = self
-            .h5i_path()
-            .join("metadata")
-            .join(format!("{}.json", provenance.commit_oid));
-        let data = serde_json::to_string_pretty(&provenance)?;
-        fs::write(path, data)?;
-        Ok(())
-    }
-
-    pub fn save_ai_metadata(&self, commit_oid: Oid, metadata: &AiMetadata) -> Result<(), H5iError> {
-        // 1. 保存先ディレクトリの準備 (.h5i/metadata)
-        let metadata_dir = self.h5i_root.join("metadata");
-        if !metadata_dir.exists() {
-            fs::create_dir_all(&metadata_dir)?;
-        }
-
-        // 2. JSON シリアライズ
-        let json_data = serde_json::to_string_pretty(metadata)
-            .map_err(|e| H5iError::Metadata(format!("Failed to serialize metadata: {}", e)))?;
-
-        // 3. コミットOIDをファイル名にして書き出し
-        let file_path = metadata_dir.join(format!("{}.json", commit_oid));
-        let mut file = fs::File::create(file_path)?;
-        file.write_all(json_data.as_bytes())?;
-
-        Ok(())
-    }*/
 }
 
 // ============================================================
@@ -1658,19 +1607,13 @@ impl H5iRepository {
         } else {
             None
         };
-        let diff = self.git_repo.diff_tree_to_tree(
-            parent_tree.as_ref(),
-            Some(&commit_tree),
-            None,
-        )?;
+        let diff =
+            self.git_repo
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
 
         let stats = diff.stats()?;
-        let ctx = DiffContext::from_diff(
-            &diff,
-            primary_intent,
-            stats.insertions(),
-            stats.deletions(),
-        )?;
+        let ctx =
+            DiffContext::from_diff(&diff, primary_intent, stats.insertions(), stats.deletions())?;
 
         let findings = run_all_rules(&ctx);
 

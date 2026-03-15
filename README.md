@@ -6,7 +6,7 @@
   <a href="https://github.com/Koukyosyumei/h5i" target="_blank">
       <img src="./assets/logo.svg" alt="h5i Logo" height="126">
   </a>
-</p
+</p>
 
 `h5i` (pronounced *high-five*) is a Git sidecar that extends version control beyond text history. Where Git answers *what changed*, h5i answers *who changed it, why, whether it was safe, and how to undo it semantically*.
 
@@ -22,6 +22,7 @@ Modern AI coding agents — Claude, Copilot, Cursor — generate tens of thousan
 - **Intent alignment** — did the agent actually do what was asked?
 - **Semantic rollback** — "undo the AI change that broke authentication" not "revert commit `a3f9c2b`"
 - **Integrity** — did the agent quietly touch CI/CD files, leak credentials, or remove safety checks?
+- **Test traceability** — what was the test pass rate at every commit, regardless of the tool used?
 - **Concurrent agents** — how do two AI agents edit the same file without corrupting each other's work?
 
 h5i is the missing infrastructure layer.
@@ -31,19 +32,25 @@ h5i is the missing infrastructure layer.
 ## 2. Features
 
 **AI Provenance Tracking**
-Captures the prompt, model name, agent ID, and token usage alongside every commit. The prompt can also be captured automatically from major AI coding tooks like Claude Code via a hook.
+Captures the prompt, model name, agent ID, and token usage alongside every commit. The prompt can also be captured automatically from Claude Code via a hook — zero friction.
+
+**Universal Test Metrics**
+Attach structured test results from any tool (pytest, cargo test, Jest, Go test, …) to every commit via a neutral JSON adapter format. h5i stores passed/failed/skipped counts, duration, coverage, and a human-readable summary alongside the commit note.
 
 **Rule-Based Integrity Engine**
-Human-auditable rules that run before every `--audit` commit. No AI involvement in the audit path. Rules detect credential leaks, dangerous execution patterns, CI/CD tampering, scope creep, and more.
+Twelve deterministic rules run before every `--audit` commit. No AI in the audit path. Rules detect credential leaks, dangerous execution patterns, CI/CD tampering, scope creep, and more.
 
 **Intent-Based Rollback**
-Describe what you want to undo in plain English. h5i can use AI agent like Claude to semantically match your description against stored prompts and commit messages, then reverts the right commit — no commit hash needed.
+Describe what you want to undo in plain English. h5i semantically matches your description against stored prompts and commit messages, then reverts the right commit — no commit hash needed.
 
 **CRDT Collaborative Sessions**
 File-level Yjs documents allow multiple AI agents to edit concurrently with strong eventual consistency. Conflicts resolve mathematically, not by coin flip.
 
 **Semantic Blame**
 Line-level and AST-level blame that surfaces the original AI prompt and test status alongside authorship — not just a commit hash.
+
+**Web Dashboard**
+`h5i serve` launches a local dashboard with rich commit history, test health sparklines, per-commit GitHub links, inline integrity auditing, agent leaderboards, and a full rules reference.
 
 <img src="./assets/screenshot_h5i_server.png" alt="h5i server">
 
@@ -58,6 +65,12 @@ git clone https://github.com/koukyosyumei/h5i
 cd h5i
 cargo build --release
 cp target/release/h5i /usr/local/bin/
+```
+
+Or install directly with Cargo:
+
+```bash
+cargo install --path .
 ```
 
 Initialize h5i in any Git repository:
@@ -87,9 +100,75 @@ export H5I_AGENT_ID=claude-code
 h5i commit -m "implement rate limiting"
 ```
 
-With the Claude Code hook installed (see below), `--prompt` is captured automatically from your conversation — zero friction.
+With the Claude Code hook installed (see §6), `--prompt` is captured automatically from your conversation.
 
-### 4.2. Auditing Before Commit
+Resolution order: CLI flag → env var (`H5I_PROMPT`, `H5I_MODEL`, `H5I_AGENT_ID`) → pending context file (written by the hook).
+
+### 4.2. Attaching Test Results
+
+h5i supports three ways to attach test results to a commit. All three write the same structured data to the commit note.
+
+**Option A — pass a results file** (most common in CI):
+
+```bash
+# Run your adapter, then commit
+python script/h5i-pytest-adapter.py > /tmp/results.json
+h5i commit -m "add login tests" --test-results /tmp/results.json
+
+# Or set via environment variable
+export H5I_TEST_RESULTS=/tmp/results.json
+h5i commit -m "add login tests"
+```
+
+**Option B — let h5i run the test command inline**:
+
+```bash
+h5i commit -m "add login tests" \
+  --test-cmd "python script/h5i-pytest-adapter.py"
+```
+
+**Option C — scan staged files for `H5I_TEST_PASS` / `H5I_TEST_FAIL` markers** (language-agnostic fallback):
+
+```bash
+h5i commit -m "add login tests" --tests
+```
+
+#### Adapters
+
+`script/h5i-pytest-adapter.py` — runs pytest, uses `pytest-json-report` when available, falls back to text parsing:
+
+```bash
+pip install pytest pytest-json-report   # one-time
+python script/h5i-pytest-adapter.py     # prints JSON to stdout
+```
+
+`script/h5i-cargo-test-adapter.sh` — runs `cargo test` and accumulates counts across lib / integration / doc test sections:
+
+```bash
+bash script/h5i-cargo-test-adapter.sh   # prints JSON to stdout
+```
+
+#### JSON adapter schema
+
+Any tool can produce compatible output. Write a file matching this schema and pass it via `--test-results`:
+
+```json
+{
+  "tool":         "pytest",
+  "passed":       42,
+  "failed":       1,
+  "skipped":      3,
+  "total":        46,
+  "duration_secs": 4.7,
+  "coverage":     0.87,
+  "exit_code":    1,
+  "summary":      "42 passed, 1 failed, 3 skipped in 4.70s"
+}
+```
+
+All fields are optional. `exit_code` takes precedence over counts when determining pass/fail status.
+
+### 4.3. Auditing Before Commit
 
 ```bash
 h5i commit -m "refactor auth module" --audit
@@ -103,7 +182,18 @@ h5i commit -m "refactor auth module" --audit
 
 Use `--force` to commit despite warnings. Violations block the commit by default.
 
-### 4.3. Enriched Commit Log
+Flags can be combined:
+
+```bash
+h5i commit -m "add rate limiter" \
+  --prompt "add per-IP rate limiting" \
+  --model claude-sonnet-4-6 \
+  --agent claude-code \
+  --test-results /tmp/results.json \
+  --audit
+```
+
+### 4.4. Enriched Commit Log
 
 ```bash
 h5i log --limit 5
@@ -114,14 +204,14 @@ commit a3f9c2b14...
 Author:   Alice <alice@example.com>
 Agent:    claude-code (claude-sonnet-4-6) 󱐋
 Prompt:   "implement per-IP rate limiting on the auth endpoint"
-Tests:    ✔ 94.2%
+Tests:    ✔ 42 passed, 0 failed, 1.23s [pytest]
 
     implement rate limiting
 
 ────────────────────────────────────────────────────────────
 ```
 
-### 4.4. Semantic Blame
+### 4.5. Semantic Blame
 
 ```bash
 h5i blame src/auth.rs
@@ -135,7 +225,7 @@ STAT COMMIT   AUTHOR/AGENT    | CONTENT
       9eff001  alice           | }
 ```
 
-### 4.5. Intent-Based Rollback
+### 4.6. Intent-Based Rollback
 
 ```bash
 h5i rollback "the OAuth login changes"
@@ -156,16 +246,13 @@ Revert this commit? [y/N]
 ```
 
 ```bash
-# Dry run to preview without reverting
-h5i rollback "rate limiting" --dry-run
-
-# Skip confirmation in CI
-h5i rollback "the broken migration" --yes
+h5i rollback "rate limiting" --dry-run   # preview without reverting
+h5i rollback "the broken migration" --yes  # skip confirmation in CI
 ```
 
 Falls back to keyword search if `ANTHROPIC_API_KEY` is not set.
 
-### 4.6. CRDT Collaborative Sessions
+### 4.7. CRDT Collaborative Sessions
 
 Start a real-time recording session for a file. Each agent gets its own session; changes are merged via CRDT automatically.
 
@@ -174,7 +261,7 @@ h5i session --file src/auth.rs
 # → Watching for changes... (Press Ctrl+C to stop)
 ```
 
-### 4.7. CRDT Merge Resolution
+### 4.8. CRDT Merge Resolution
 
 ```bash
 h5i resolve <ours-oid> <theirs-oid> src/auth.rs
@@ -182,11 +269,26 @@ h5i resolve <ours-oid> <theirs-oid> src/auth.rs
 
 Resolves conflicts using the mathematical CRDT state stored in Git Notes — no interactive merge editor required.
 
+### 4.9. Web Dashboard
+
+```bash
+h5i serve            # opens on http://localhost:7150
+h5i serve --port 8080
+```
+
+The dashboard provides:
+
+- **Timeline tab** — full commit history with colored test-status borders, rich test badges (`🧪 ✔42 ✖0 ⊘1`), per-commit GitHub links, and expandable detail panels showing AI prompt, model, and test breakdown tables.
+- **Inline audit** — every commit card shows a `🛡 Audit` button. Click it to run the twelve integrity rules against that commit's diff and see results inline, with a collapsible panel listing every rule checked and its outcome.
+- **Summary tab** — aggregate stats, agent leaderboard, and a list of commits with failing tests.
+- **Integrity tab** — manually audit any commit message + prompt against the rule engine without committing.
+- **Sidebar** — test health sparkline across all commits; links to the GitHub repository auto-detected from the `origin` remote.
+
 ---
 
 ## 5. Integrity Engine
 
-The `--audit` flag runs twelve deterministic rules against the staged diff before committing. Rules are pure string/stat checks — no AI, no network, no false trust.
+The `--audit` flag (and the dashboard's per-commit audit) runs twelve deterministic rules against the diff. Rules are pure string/stat checks — no AI, no network, no false trust.
 
 | Rule | Severity | Trigger |
 |------|----------|---------|
@@ -205,7 +307,7 @@ The `--audit` flag runs twelve deterministic rules against the staged diff befor
 
 **Why rule-based?** AI-generated code should be audited by deterministic rules that humans can read and reason about. A fuzzy ML classifier would itself be a trust problem.
 
-To extend the engine: add a `pub const` to `rule_id`, write one pure `fn check_*(ctx: &DiffContext) -> Vec<RuleFinding>` function, and register it in `run_all_rules`. No other changes needed.
+To add a rule: add a `pub const` to `rule_id` in `src/rules.rs`, write one pure `fn check_*(ctx: &DiffContext) -> Vec<RuleFinding>` function, and register it in `run_all_rules`. No other changes needed.
 
 ---
 
@@ -232,11 +334,31 @@ export H5I_AGENT_ID="claude-code"
 h5i commit -m "add rate limiting"
 ```
 
-Resolution order at commit time: CLI flag → env var → pending context file.
+---
+
+## 7. Demo Repository
+
+`examples/dnn-from-scratch` (also at [github.com/Koukyosyumei/dnn-from-scratch](https://github.com/Koukyosyumei/dnn-from-scratch)) is a self-contained Python project — a fully-connected neural network trained from scratch with NumPy — built entirely with Claude Code and version-controlled with h5i.
+
+It demonstrates the full workflow:
+
+```
+git init → h5i init → (write code → pytest → h5i commit --test-results …) × N
+```
+
+The repo has eight h5i commits with full AI provenance (agent: `claude-code`, model: `claude-sonnet-4-6`), test metrics from `h5i-pytest-adapter.py`, and a `demo.sh` script that replays the entire session from scratch in a temp directory.
+
+```bash
+# Inspect the h5i history of the already-built repo
+bash examples/dnn-from-scratch/demo.sh --inspect
+
+# Replay the full build from scratch in a temp directory
+bash examples/dnn-from-scratch/demo.sh
+```
 
 ---
 
-## 7. How It Works
+## 8. How It Works
 
 h5i stores all metadata as a Git sidecar — nothing lives outside your repository.
 
@@ -244,16 +366,19 @@ h5i stores all metadata as a Git sidecar — nothing lives outside your reposito
 .git/
 └── .h5i/
     ├── ast/                  # SHA-256-keyed S-expression AST snapshots
-    ├── metadata/             # Per-commit JSON records (legacy)
     ├── crdt/                 # Yjs CRDT document state
     ├── delta/                # Append-only CRDT update logs (per file)
     └── pending_context.json  # Transient: consumed at next commit
 ```
 
-Extended commit metadata is stored in Git Notes (`refs/notes/commits`) as JSON, so it travels with the repository on push/fetch and is visible via standard Git tooling.
+Extended commit metadata — AI provenance, test metrics, integrity reports — is stored in Git Notes (`refs/notes/commits`) as JSON. Notes travel with the repository on push/fetch and are visible via standard Git tooling:
+
+```bash
+git notes show <commit-oid>
+```
 
 ---
 
-## 8. License
+## 9. License
 
 Apache 2.0 — see [LICENSE](LICENSE).

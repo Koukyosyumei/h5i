@@ -123,19 +123,15 @@ mod watcher_tests {
             let session = LocalSession::new(repo_root, file_path.clone(), cid)?;
             let session_arc = Arc::new(Mutex::new(session));
 
-            // Watcherを別スレッドで起動 (Arcを渡す)
             let watcher_session = Arc::clone(&session_arc);
             std::thread::spawn(move || {
                 let _ = start_h5i_watcher(watcher_session);
             });
 
-            // 監視が開始されるのを待機
             std::thread::sleep(Duration::from_millis(100));
 
-            // 外部エディタによる書き込みをシミュレート
             fs::write(&file_path, "updated content")?;
 
-            // 検証: メインスレッドでロックを取得できるようになる！
             let success = wait_for_content(
                 Arc::clone(&session_arc),
                 "updated content",
