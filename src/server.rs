@@ -408,8 +408,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .oid-chip{font-family:monospace;font-size:11px;padding:1px 7px;border-radius:4px;font-weight:600;white-space:nowrap}
 .oid-ai{background:#bc8cff22;color:#bc8cff}.oid-human{background:#58a6ff22;color:#58a6ff}
 .commit-msg{font-size:13px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gh-commit-link{margin-left:auto;color:#484f58;text-decoration:none;font-size:11px;padding:2px 7px;border:1px solid transparent;border-radius:4px;white-space:nowrap;transition:all .15s;flex-shrink:0}
-.gh-commit-link:hover{color:#58a6ff;border-color:#58a6ff33;background:#58a6ff11}
+.gh-commit-link{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:#58a6ff;text-decoration:none;font-size:11px;font-weight:600;padding:3px 9px;border:1px solid #58a6ff44;border-radius:4px;background:#58a6ff11;white-space:nowrap;transition:all .15s;flex-shrink:0}
+.gh-commit-link:hover{color:#fff;border-color:#58a6ff;background:#58a6ff33}
 .byline{font-size:12px;color:#8b949e;margin-bottom:7px}
 .byline .author{color:#58a6ff}
 .badges{display:flex;flex-wrap:wrap;gap:4px}
@@ -438,11 +438,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .test-table th{color:#8b949e;font-weight:500;text-align:left;padding:3px 8px;border-bottom:1px solid #30363d}
 .test-table td{padding:4px 8px;border-bottom:1px solid #21262d}
 .td-pass{color:#3fb950;font-weight:600}.td-fail{color:#f85149;font-weight:600}.td-skip{color:#d29922}.td-tot{color:#e6edf3}
-.audit-section{margin-top:10px}
+.audit-section{margin-top:8px;border-top:1px solid #21262d;padding-top:8px}
 .audit-btn{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
 .audit-btn:hover{color:#bc8cff;border-color:#bc8cff44;background:#bc8cff11}
 .audit-btn:disabled{opacity:.5;cursor:not-allowed}
 .audit-result-box{margin-top:8px;border:1px solid #30363d;border-radius:6px;padding:10px;background:#0d1117}
+.rules-detail-toggle{background:none;border:none;color:#58a6ff;font-size:11px;cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:4px;margin-top:8px;text-decoration:underline;text-underline-offset:2px}
+.rules-detail-toggle:hover{color:#79c0ff}
+.rules-detail-panel{display:none;margin-top:8px;border:1px solid #21262d;border-radius:6px;padding:8px 10px;background:#0d1117}
+.rules-detail-panel.open{display:block}
+.rule-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px}
+.rule-pass{color:#3fb950}.rule-fail{color:#f85149}.rule-warn{color:#d29922}
+.rule-id-label{font-family:monospace;font-size:10px;color:#8b949e;flex:1}
 
 /* Integrity panel */
 .int-form{display:flex;flex-direction:column;gap:10px;max-width:680px}
@@ -617,6 +624,7 @@ let githubUrl = null;
 const id = s => document.getElementById(s);
 const setText = (s, v) => { const el = id(s); if (el) el.textContent = v; };
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const escId = s => String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
 
 function timeAgo(iso) {
   const d = Math.floor((Date.now() - new Date(iso)) / 1000);
@@ -805,15 +813,6 @@ function commitHTML(c, i) {
       </div>`;
   }
 
-  // Inline audit section
-  const auditSection = `
-    <div class="audit-section">
-      <button class="audit-btn" id="audit-btn-${i}" onclick="runCommitAudit('${esc(c.git_oid)}', ${i})">
-        🛡 Audit this commit
-      </button>
-      <div id="audit-result-${i}"></div>
-    </div>`;
-
   return `
 <div class="commit-entry" style="${delay}">
   <div class="commit-dot ${dotCls}">${dotInner}</div>
@@ -825,10 +824,15 @@ function commitHTML(c, i) {
     </div>
     <div class="byline"><span class="author">${esc(c.author)}</span> · ${timeAgo(c.timestamp)} · <span style="color:#484f58">${new Date(c.timestamp).toLocaleDateString()}</span></div>
     <div class="badges">${badges}</div>
+    <div class="audit-section" onclick="event.stopPropagation()">
+      <button class="audit-btn" id="audit-btn-${i}" onclick="runCommitAudit('${esc(c.git_oid)}', ${i})">
+        🛡 Audit
+      </button>
+      <div id="audit-result-${i}"></div>
+    </div>
     <div class="commit-detail" id="${detailId}">
       <div class="detail-grid">${rows.join('')}</div>
       ${testTable}
-      ${auditSection}
     </div>
   </div>
 </div>`;
@@ -847,17 +851,25 @@ async function runCommitAudit(oid, idx) {
   const out = id('audit-result-' + idx);
   btn.disabled = true;
   btn.textContent = '🛡 Auditing…';
-  out.innerHTML = '<div style="margin-top:8px;color:#8b949e;font-size:12px"><span class="spinner"></span> Running integrity rules against commit diff…</div>';
+  out.innerHTML = '<div style="margin-top:8px;color:#8b949e;font-size:12px"><span class="spinner"></span> Running integrity rules…</div>';
 
   try {
     const data = await fetch(`/api/integrity/commit?oid=${encodeURIComponent(oid)}`).then(r => r.json());
-    out.innerHTML = `<div class="audit-result-box">${renderIntegrityHTML(data)}</div>`;
+    out.innerHTML = `<div class="audit-result-box">${renderIntegrityHTML(data, 'ar-' + idx)}</div>`;
+    btn.textContent = '🛡 Re-audit';
   } catch(e) {
     out.innerHTML = `<div class="audit-result-box" style="color:#f85149;font-size:12px">⚠ Audit failed: ${esc(String(e))}</div>`;
+    btn.textContent = '🛡 Retry';
   } finally {
     btn.disabled = false;
-    btn.textContent = '🛡 Re-audit';
   }
+}
+
+function toggleRulesDetail(panelId, toggleId) {
+  const panel = id(panelId);
+  const toggle = id(toggleId);
+  const open = panel.classList.toggle('open');
+  toggle.textContent = open ? '▾ Hide rule details' : '▸ Show all rules checked';
 }
 
 // ── Integrity panel ────────────────────────────────────────────────────────
@@ -876,7 +888,7 @@ async function runIntegrity() {
     const p = new URLSearchParams({ message: msg });
     if (prmt) p.set('prompt', prmt);
     const data = await fetch('/api/integrity?' + p).then(r => r.json());
-    out.innerHTML = `<div class="int-report">${renderIntegrityHTML(data)}</div>`;
+    out.innerHTML = `<div class="int-report">${renderIntegrityHTML(data, 'int-panel')}</div>`;
   } catch(e) {
     out.innerHTML = `<div style="color:#f85149;font-size:12px">⚠ Request failed: ${esc(String(e))}</div>`;
   } finally {
@@ -885,12 +897,28 @@ async function runIntegrity() {
   }
 }
 
-function renderIntegrityHTML(data) {
+const ALL_RULES = [
+  { id: 'CREDENTIAL_LEAK',       sev: 'Violation', desc: 'Hardcoded secrets, API keys, or PEM private-key headers' },
+  { id: 'CODE_EXECUTION',        sev: 'Violation', desc: 'Shell exec, eval, subprocess, or dynamic code execution patterns' },
+  { id: 'CI_CD_MODIFIED',        sev: 'Warning',   desc: 'CI/CD pipeline or workflow file changed' },
+  { id: 'SENSITIVE_FILE_MODIFIED',sev: 'Warning',   desc: 'Security-sensitive file modified (.env, auth config, secrets)' },
+  { id: 'LOCKFILE_MODIFIED',     sev: 'Warning',   desc: 'Dependency lockfile changed (supply-chain risk)' },
+  { id: 'UNDECLARED_DELETION',   sev: 'Warning',   desc: 'Files deleted without mention in commit message' },
+  { id: 'SCOPE_EXPANSION',       sev: 'Warning',   desc: 'Diff touches many more files than message scope implies' },
+  { id: 'LARGE_DIFF',            sev: 'Warning',   desc: 'Diff is unusually large (>500 lines changed)' },
+  { id: 'REFACTOR_ANOMALY',      sev: 'Warning',   desc: 'High churn with no test changes detected' },
+  { id: 'PERMISSION_CHANGE',     sev: 'Warning',   desc: 'File permission or ownership changes detected' },
+  { id: 'BINARY_FILE_CHANGED',   sev: 'Warning',   desc: 'Binary file added or modified' },
+  { id: 'CONFIG_FILE_MODIFIED',  sev: 'Warning',   desc: 'Configuration file modified' },
+];
+
+function renderIntegrityHTML(data, uid) {
   const lvClass = { Valid: 'lv-valid', Warning: 'lv-warning', Violation: 'lv-violation' }[data.level] || 'lv-valid';
   const score = Math.round((data.score || 0) * 100);
   const color = scoreColor(data.score || 0);
+  const findings = data.findings || [];
 
-  const findingsHTML = (data.findings || []).map(f => {
+  const findingsHTML = findings.map(f => {
     const [cls, icon] = f.severity === 'Violation' ? ['rv','✖'] : f.severity === 'Warning' ? ['rw','⚠'] : ['ri','ℹ'];
     return `<div class="finding ${cls}">
       <span class="finding-icon">${icon}</span>
@@ -903,13 +931,30 @@ function renderIntegrityHTML(data) {
     ? `<div class="ir-findings">${findingsHTML}</div>`
     : `<div class="success-msg">✓ All rules passed — no issues detected.</div>`;
 
+  // Rules detail panel
+  const triggeredIds = new Set(findings.map(f => f.rule_id));
+  const panelId   = (uid || 'global') + '-rules-panel';
+  const toggleId  = (uid || 'global') + '-rules-toggle';
+  const rulesRows = ALL_RULES.map(r => {
+    const hit = triggeredIds.has(r.id);
+    const hitSev = hit ? findings.find(f => f.rule_id === r.id)?.severity : null;
+    const [icon, cls] = hitSev === 'Violation' ? ['✖','rule-fail'] : hitSev === 'Warning' ? ['⚠','rule-warn'] : ['✔','rule-pass'];
+    return `<div class="rule-row">
+      <span class="${cls}" style="font-size:12px;width:14px;text-align:center">${icon}</span>
+      <span class="rule-id-label">${esc(r.id)}</span>
+      <span style="font-size:10px;color:#484f58">${esc(r.desc)}</span>
+    </div>`;
+  }).join('');
+
   return `
     <div class="ir-header">
       <span class="${lvClass}">${data.level}</span>
       <span class="ir-score" style="color:${color}">${score}<span style="font-size:16px;color:#8b949e">%</span></span>
       <span class="ir-label">Integrity score</span>
     </div>
-    ${body}`;
+    ${body}
+    <button class="rules-detail-toggle" id="${escId(toggleId)}" onclick="toggleRulesDetail('${escId(panelId)}','${escId(toggleId)}')">▸ Show all rules checked</button>
+    <div class="rules-detail-panel" id="${escId(panelId)}">${rulesRows}</div>`;
 }
 
 // ── Summary tab ────────────────────────────────────────────────────────────
