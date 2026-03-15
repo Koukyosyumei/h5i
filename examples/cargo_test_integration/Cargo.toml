@@ -1,0 +1,11 @@
+[package]
+name = "cargo-test-integration-example"
+version = "0.1.0"
+edition = "2021"
+# Standalone example — not a member of the h5i workspace.
+# Build and test it from this directory:
+#   cd examples/cargo_test_integration && cargo test
+
+[lib]
+name = "math_utils"
+path = "src/lib.rs"
