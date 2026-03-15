@@ -49,6 +49,8 @@ pub struct EnrichedCommit {
     // Structural / collaborative
     pub ast_file_count: usize,
     pub has_crdt: bool,
+    // Causal chain
+    pub caused_by: Vec<String>,
 }
 
 // ── Query params ──────────────────────────────────────────────────────────────
@@ -226,6 +228,7 @@ async fn api_commits(
                 .as_ref()
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
+            let caused_by = record.caused_by.clone();
 
             enriched.push(EnrichedCommit {
                 git_oid: record.git_oid,
@@ -249,6 +252,7 @@ async fn api_commits(
                 test_is_passing,
                 ast_file_count,
                 has_crdt,
+                caused_by,
             });
         }
 
@@ -425,6 +429,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .b-crdt{background:#1f3a5f;color:#58a6ff}
 .b-tok{background:#21262d;color:#8b949e}
 .b-cov{background:#2d1f4f;color:#bc8cff}
+.b-cause{background:#1f2d3d;color:#58a6ff;border:1px solid #1f4070}
 
 /* Commit detail (expanded) */
 .commit-detail{display:none;margin-top:12px;border-top:1px solid #30363d;padding-top:12px}
@@ -779,6 +784,7 @@ function commitHTML(c, i) {
     c.ast_file_count > 0 ? badge('b-ast', '🌳', c.ast_file_count + ' AST') : '',
     c.has_crdt ? badge('b-crdt', '🔗', 'CRDT') : '',
     c.ai_tokens ? badge('b-tok', '◦', fmt(c.ai_tokens) + ' tok') : '',
+    c.caused_by && c.caused_by.length > 0 ? badge('b-cause', '⛓', c.caused_by.length === 1 ? 'caused by 1' : `caused by ${c.caused_by.length}`) : '',
   ].filter(Boolean).join('');
 
   // Detail rows
@@ -789,6 +795,9 @@ function commitHTML(c, i) {
   if (c.ai_agent && c.ai_agent !== 'unknown') rows.push(`<div class="dk">agent</div><div class="dv">${esc(c.ai_agent)}</div>`);
   if (c.ai_tokens) rows.push(`<div class="dk">tokens</div><div class="dv">${fmt(c.ai_tokens)}</div>`);
   rows.push(`<div class="dk">commit</div><div class="dv mono">${esc(c.git_oid)}</div>`);
+  if (c.caused_by && c.caused_by.length > 0) {
+    rows.push(`<div class="dk">caused by</div><div class="dv">${c.caused_by.map(o => `<span class="oid-chip oid-human" style="font-size:10px">${esc(o.slice(0,8))}</span>`).join(' ')}</div>`);
+  }
 
   // Test breakdown table
   let testTable = '';

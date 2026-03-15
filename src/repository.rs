@@ -150,6 +150,7 @@ impl H5iRepository {
         ai_meta: Option<AiMetadata>,
         test_source: TestSource,
         ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
+        caused_by: Vec<String>,
     ) -> Result<Oid, H5iError> {
         let mut index = self.git_repo.index()?;
 
@@ -193,6 +194,22 @@ impl H5iRepository {
             TestSource::Provided(metrics) => Some(metrics),
         };
 
+        // Validate and resolve caused_by OIDs (supports abbreviated OIDs)
+        let mut resolved_caused_by = Vec::with_capacity(caused_by.len());
+        for oid_str in &caused_by {
+            let commit = self
+                .git_repo
+                .revparse_single(oid_str)
+                .and_then(|o| o.peel_to_commit())
+                .map_err(|_| {
+                    H5iError::Git(git2::Error::from_str(&format!(
+                        "caused_by OID not found in repository: {}",
+                        oid_str
+                    )))
+                })?;
+            resolved_caused_by.push(commit.id().to_string());
+        }
+
         // 2. Create the standard Git commit (using the git2-rs API)
         let tree_id = index.write_tree()?;
         let tree = self.git_repo.find_tree(tree_id)?;
@@ -219,6 +236,7 @@ impl H5iRepository {
                 Some(crdt_states)
             },
             timestamp: chrono::Utc::now(),
+            caused_by: resolved_caused_by,
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
@@ -511,11 +529,105 @@ impl H5iRepository {
                         ast_count
                     );
                 }
+
+                if !r.caused_by.is_empty() {
+                    for cause_oid_str in &r.caused_by {
+                        // Try to get the short message of the cause commit
+                        let cause_msg = git2::Oid::from_str(cause_oid_str)
+                            .ok()
+                            .and_then(|o| self.git_repo.find_commit(o).ok())
+                            .and_then(|c| c.summary().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        let short = &cause_oid_str[..8.min(cause_oid_str.len())];
+                        println!(
+                            "{:<10} {} {}",
+                            style("Caused by:").dim(),
+                            style(short).magenta(),
+                            style(format!("\"{}\"", cause_msg)).dim().italic()
+                        );
+                    }
+                }
             }
             println!("\n    {}\n", style(commit.message().unwrap_or("")).bold());
             println!("{}", style("─".repeat(60)).dim());
         }
         Ok(())
+    }
+}
+
+// ============================================================
+// Causal chain API
+// ============================================================
+
+impl H5iRepository {
+    /// Follows `caused_by` links backward from `start_oid`, returning
+    /// `(oid, short_message)` pairs in traversal order (BFS).
+    pub fn causal_ancestors(&self, start_oid: git2::Oid) -> Vec<(git2::Oid, String)> {
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut result = Vec::new();
+
+        if let Ok(record) = self.load_h5i_record(start_oid) {
+            for oid_str in record.caused_by {
+                if let Ok(oid) = git2::Oid::from_str(&oid_str) {
+                    if visited.insert(oid) {
+                        queue.push_back(oid);
+                    }
+                }
+            }
+        }
+
+        while let Some(oid) = queue.pop_front() {
+            let msg = self.git_repo.find_commit(oid)
+                .ok()
+                .and_then(|c| c.summary().map(|s| s.to_string()))
+                .unwrap_or_default();
+            result.push((oid, msg));
+
+            if let Ok(record) = self.load_h5i_record(oid) {
+                for oid_str in record.caused_by {
+                    if let Ok(o) = git2::Oid::from_str(&oid_str) {
+                        if visited.insert(o) {
+                            queue.push_back(o);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Scans up to `limit` recent commits for any whose `caused_by` list
+    /// includes `target_oid`. Returns `(oid, short_message)` pairs.
+    pub fn causal_dependents(
+        &self,
+        target_oid: git2::Oid,
+        limit: usize,
+    ) -> Vec<(git2::Oid, String)> {
+        let target_str = target_oid.to_string();
+        let mut result = Vec::new();
+        let mut revwalk = match self.git_repo.revwalk() {
+            Ok(r) => r,
+            Err(_) => return result,
+        };
+        if revwalk.push_head().is_err() {
+            return result;
+        }
+        for oid in revwalk.take(limit).flatten() {
+            if oid == target_oid {
+                continue;
+            }
+            if let Ok(record) = self.load_h5i_record(oid) {
+                if record.caused_by.iter().any(|s| s.starts_with(&target_str[..8.min(target_str.len())]) || *s == target_str) {
+                    let msg = self.git_repo.find_commit(oid)
+                        .ok()
+                        .and_then(|c| c.summary().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    result.push((oid, msg));
+                }
+            }
+        }
+        result
     }
 }
 
@@ -1773,6 +1885,7 @@ mod tests {
             ai_meta,
             TestSource::None,
             None, // ast_parser
+            vec![],
         )?;
 
         // Verify standard git commit
@@ -1910,6 +2023,7 @@ mod tests {
                     ast_hashes: None,
                     crdt_states: Some(crdt_states),
                     timestamp: chrono::Utc::now(),
+                    caused_by: vec![],
                 };
 
                 let json = serde_json::to_string(&record)?;
@@ -2043,6 +2157,7 @@ mod integration_tests {
             None, // ai_meta
             TestSource::None,
             None, // ast
+            vec![],
         )?;
 
         // 5. BRIDGE: Transition Active Delta -> Committed Delta
@@ -2089,6 +2204,7 @@ mod integration_tests {
                 ast_hashes: None,
                 crdt_states: Some(crdt_states),
                 timestamp: chrono::Utc::now(),
+                caused_by: vec![],
             };
 
             let metadata_json = serde_json::to_string(&record).unwrap();
@@ -2105,7 +2221,7 @@ mod integration_tests {
 
         let mut index = git_repo.index()?;
         index.add_path(std::path::Path::new(file_path))?;
-        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None)?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None, vec![])?;
         let base_commit = git_repo.find_commit(base_oid)?;
 
         // Attach mathematical state to the BASE commit note
@@ -2114,7 +2230,7 @@ mod integration_tests {
         // --- PHASE 2: Branch OURS ---
         session_ours.apply_local_edit(0, "# Header\n")?;
 
-        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None)?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None, vec![])?;
         // Attach mathematical state to the OURS commit note
         attach_h5i_note(our_oid, &session_ours.doc)?;
 

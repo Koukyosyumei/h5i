@@ -16,6 +16,10 @@ pub struct H5iCommitRecord {
     /// Maps file path -> Base64 encoded CRDT state (v1 update)
     pub crdt_states: Option<HashMap<String, String>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// OIDs of commits that causally triggered this commit.
+    /// e.g. this commit fixes a bug introduced by `caused_by[0]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caused_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -257,6 +261,7 @@ impl H5iCommitRecord {
             ast_hashes: None,   // Standard Git commits do not contain AST hashes
             crdt_states: None,
             timestamp,
+            caused_by: vec![],
         }
     }
 }

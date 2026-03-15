@@ -75,6 +75,11 @@ enum Commands {
 
         #[arg(long)]
         force: bool,
+
+        /// OID(s) of commits that causally triggered this one.
+        /// Can be specified multiple times: --caused-by abc123 --caused-by def456
+        #[arg(long, value_name = "OID", action = clap::ArgAction::Append)]
+        caused_by: Option<Vec<String>>,
     },
 
     /// Display the enriched 5D commit history
@@ -195,6 +200,7 @@ fn main() -> anyhow::Result<()> {
             ast,
             audit,
             force,
+            caused_by,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
@@ -317,7 +323,8 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser)?;
+            let caused_by = caused_by.unwrap_or_default();
+            let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser, caused_by)?;
             repo.clear_pending_context()?;
             println!(
                 "{} {} {}",
@@ -496,6 +503,37 @@ fn main() -> anyhow::Result<()> {
                     style("No changes made.").dim()
                 );
                 return Ok(());
+            }
+
+            // Warn if later commits causally depend on this one
+            let dependents = repo.causal_dependents(oid, 200);
+            if !dependents.is_empty() {
+                println!(
+                    "\n{} {} later commit{} causally depend{} on this one:",
+                    style("⚠ Warning:").yellow().bold(),
+                    dependents.len(),
+                    if dependents.len() == 1 { "" } else { "s" },
+                    if dependents.len() == 1 { "s" } else { "" },
+                );
+                for (dep_oid, dep_msg) in &dependents {
+                    println!(
+                        "  {} {} {}",
+                        style("→").yellow(),
+                        style(&dep_oid.to_string()[..8]).magenta(),
+                        style(format!("\"{}\"", dep_msg)).dim().italic()
+                    );
+                }
+                if !yes {
+                    print!("\nContinue anyway? [y/N] ");
+                    use std::io::Write as _;
+                    std::io::stdout().flush()?;
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("{} Aborted.", style("!").dim());
+                        return Ok(());
+                    }
+                }
             }
 
             if !yes {
