@@ -1631,6 +1631,76 @@ impl H5iRepository {
         })
     }
 
+    /// Run integrity rules against a *historical* commit's own diff (parent→commit).
+    ///
+    /// Unlike [`verify_integrity`], this does not touch the staging area; it
+    /// reconstructs the diff from Git objects so it works on any committed OID.
+    pub fn verify_commit_integrity(&self, oid: git2::Oid) -> Result<IntegrityReport, H5iError> {
+        use crate::metadata::{IntegrityLevel, Severity};
+        use crate::rules::{run_all_rules, DiffContext};
+
+        let commit = self.git_repo.find_commit(oid)?;
+        let message = commit.message().unwrap_or("").to_string();
+
+        // Prefer the stored h5i prompt; fall back to commit message as intent.
+        let record = self.load_h5i_record(oid).ok();
+        let prompt_owned: Option<String> = record
+            .as_ref()
+            .and_then(|r| r.ai_metadata.as_ref())
+            .map(|a| a.prompt.clone())
+            .filter(|p| !p.is_empty());
+        let primary_intent = prompt_owned.clone().unwrap_or_else(|| message.clone());
+
+        // Build the diff: parent tree → commit tree (root commits diff to empty).
+        let commit_tree = commit.tree()?;
+        let parent_tree = if commit.parent_count() > 0 {
+            Some(commit.parent(0)?.tree()?)
+        } else {
+            None
+        };
+        let diff = self.git_repo.diff_tree_to_tree(
+            parent_tree.as_ref(),
+            Some(&commit_tree),
+            None,
+        )?;
+
+        let stats = diff.stats()?;
+        let ctx = DiffContext::from_diff(
+            &diff,
+            primary_intent,
+            stats.insertions(),
+            stats.deletions(),
+        )?;
+
+        let findings = run_all_rules(&ctx);
+
+        let violations = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Violation)
+            .count();
+        let warnings = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .count();
+
+        let penalty = (violations as f32 * 0.4 + warnings as f32 * 0.15).min(1.0);
+        let score = 1.0 - penalty;
+
+        let level = if violations > 0 {
+            IntegrityLevel::Violation
+        } else if warnings > 0 {
+            IntegrityLevel::Warning
+        } else {
+            IntegrityLevel::Valid
+        };
+
+        Ok(IntegrityReport {
+            level,
+            score,
+            findings,
+        })
+    }
+
     fn get_staged_diff(&'_ self) -> Result<git2::Diff<'_>, H5iError> {
         let head_tree = self.get_head_commit()?.tree()?;
         let index = self.git_repo.index()?;
