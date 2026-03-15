@@ -2,6 +2,12 @@
 
 > **The version control layer for the age of AI-generated code.**
 
+<p align="center">
+  <a href="https://github.com/Koukyosyumei/h5i" target="_blank">
+      <img src="./assets/logo.svg" alt="h5i Logo" height="126">
+  </a>
+</p
+
 `h5i` (pronounced *high-five*) is a Git sidecar that extends version control beyond text history. Where Git answers *what changed*, h5i answers *who changed it, why, whether it was safe, and how to undo it semantically*.
 
 Built for teams where AI agents write production code alongside humans.

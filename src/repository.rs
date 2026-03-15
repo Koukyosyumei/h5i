@@ -17,7 +17,7 @@ use chrono::{TimeZone, Utc};
 
 use crate::metadata::{
     AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext,
-    TestMetrics, TokenUsage,
+    TestMetrics, TestSource, TokenUsage,
 };
 use crate::LocalSession;
 
@@ -148,15 +148,17 @@ impl H5iRepository {
         author: &Signature,
         committer: &Signature,
         ai_meta: Option<AiMetadata>,
-        enable_test_tracking: bool,
+        test_source: TestSource,
         ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
     ) -> Result<Oid, H5iError> {
         let mut index = self.git_repo.index()?;
 
         // 1. Prepare optional features
         let mut ast_hashes = None;
-        let mut test_metrics = None;
         let mut crdt_states = HashMap::new();
+
+        // For ScanMarkers we look for the marker block in staged files (first hit wins).
+        let mut scanned_metrics: Option<TestMetrics> = None;
 
         // Scan staged files
         for entry in index.iter() {
@@ -178,11 +180,18 @@ impl H5iRepository {
                 crdt_states.insert(path_str.to_string(), state_b64);
             }
 
-            // Extract test provenance (optional)
-            if enable_test_tracking && test_metrics.is_none() {
-                test_metrics = self.scan_test_block(&full_path);
+            // Scan for test markers only when requested and not yet found
+            if matches!(test_source, TestSource::ScanMarkers) && scanned_metrics.is_none() {
+                scanned_metrics = self.scan_test_block(&full_path);
             }
         }
+
+        // Resolve final test_metrics from the chosen source
+        let test_metrics = match test_source {
+            TestSource::None => None,
+            TestSource::ScanMarkers => scanned_metrics,
+            TestSource::Provided(metrics) => Some(metrics),
+        };
 
         // 2. Create the standard Git commit (using the git2-rs API)
         let tree_id = index.write_tree()?;
@@ -277,7 +286,7 @@ impl H5iRepository {
 
         // 3. 通常の Git コミットを実行
         // コミットメッセージにはプロンプトの要約などを使う運用が一般的です
-        let commit_oid = self.commit(prompt, sig, sig, None, false, None)?;
+        let commit_oid = self.commit(prompt, sig, sig, None, TestSource::None, None)?;
 
         // 4. メタデータを .h5i/metadata/{oid}.json に保存
         self.save_ai_metadata(commit_oid, &ai_meta)?;
@@ -447,16 +456,49 @@ impl H5iRepository {
                 }
 
                 if let Some(tm) = r.test_metrics {
-                    let color = if tm.coverage > 80.0 {
+                    let passing = tm.is_passing();
+                    let color = if passing {
                         console::Color::Green
                     } else {
-                        console::Color::Yellow
+                        console::Color::Red
                     };
+                    let icon = if passing { "✔" } else { "✖" };
+
+                    // Prefer an explicit summary; fall back to building one from counts.
+                    let detail = if let Some(ref s) = tm.summary {
+                        s.clone()
+                    } else if tm.total > 0 {
+                        let mut parts = vec![format!("{} passed", tm.passed)];
+                        if tm.failed > 0 {
+                            parts.push(format!("{} failed", tm.failed));
+                        }
+                        if tm.skipped > 0 {
+                            parts.push(format!("{} skipped", tm.skipped));
+                        }
+                        if tm.duration_secs > 0.0 {
+                            parts.push(format!("{:.2}s", tm.duration_secs));
+                        }
+                        if tm.coverage > 0.0 {
+                            parts.push(format!("{:.1}% cov", tm.coverage));
+                        }
+                        parts.join(", ")
+                    } else {
+                        // Legacy record with only coverage
+                        format!("{:.1}% coverage", tm.coverage)
+                    };
+
+                    let tool_label = tm
+                        .tool
+                        .as_deref()
+                        .map(|t| format!(" [{}]", t))
+                        .unwrap_or_default();
+
                     println!(
-                        "{:<10} {} {}%",
+                        "{:<10} {} {}{}",
                         style("Tests:").dim(),
-                        style("✔").fg(color),
-                        style(format!("{:.1}", tm.coverage)).fg(color)
+                        style(icon).fg(color),
+                        style(detail).fg(color),
+                        style(tool_label).dim()
                     );
                 }
 
@@ -541,7 +583,7 @@ impl H5iRepository {
             let test_passed = record
                 .as_ref()
                 .and_then(|r| r.test_metrics.as_ref())
-                .map(|tm| tm.coverage > 0.0);
+                .map(|tm| tm.is_passing());
 
             for i in 0..hunk.lines_in_hunk() {
                 let line_idx = hunk.final_start_line() + i - 1;
@@ -1153,8 +1195,9 @@ impl H5iRepository {
             return Ok(None);
         }
         let raw = fs::read_to_string(&path)?;
-        let ctx: PendingContext = serde_json::from_str(&raw)
-            .map_err(|e| H5iError::Metadata(format!("Failed to parse pending_context.json: {e}")))?;
+        let ctx: PendingContext = serde_json::from_str(&raw).map_err(|e| {
+            H5iError::Metadata(format!("Failed to parse pending_context.json: {e}"))
+        })?;
         Ok(Some(ctx))
     }
 
@@ -1182,22 +1225,21 @@ impl H5iRepository {
 
             let record = self.load_h5i_record(oid).ok();
 
-            let (prompt, model, agent_id) = match record.as_ref().and_then(|r| r.ai_metadata.as_ref()) {
-                Some(ai) => (
-                    Some(ai.prompt.clone()).filter(|p| !p.is_empty()),
-                    Some(ai.model_name.clone()).filter(|m| !m.is_empty()),
-                    Some(ai.agent_id.clone()).filter(|a| !a.is_empty()),
-                ),
-                None => (None, None, None),
-            };
+            let (prompt, model, agent_id) =
+                match record.as_ref().and_then(|r| r.ai_metadata.as_ref()) {
+                    Some(ai) => (
+                        Some(ai.prompt.clone()).filter(|p| !p.is_empty()),
+                        Some(ai.model_name.clone()).filter(|m| !m.is_empty()),
+                        Some(ai.agent_id.clone()).filter(|a| !a.is_empty()),
+                    ),
+                    None => (None, None, None),
+                };
 
-            let timestamp = record
-                .map(|r| r.timestamp)
-                .unwrap_or_else(|| {
-                    Utc.timestamp_opt(commit.time().seconds(), 0)
-                        .single()
-                        .unwrap_or_else(Utc::now)
-                });
+            let timestamp = record.map(|r| r.timestamp).unwrap_or_else(|| {
+                Utc.timestamp_opt(commit.time().seconds(), 0)
+                    .single()
+                    .unwrap_or_else(Utc::now)
+            });
 
             results.push(CommitSummary {
                 oid: oid.to_string(),
@@ -1398,10 +1440,18 @@ impl H5iRepository {
             let mut hasher = sha2::Sha256::new();
             use sha2::Digest;
             hasher.update(test_code.trim().as_bytes());
+            let suite_hash = format!("{:x}", hasher.finalize());
 
             Some(TestMetrics {
-                test_suite_hash: format!("{:x}", hasher.finalize()),
-                coverage: 0.0,
+                test_suite_hash: suite_hash,
+                tool: Some("marker-scan".into()),
+                summary: Some(format!(
+                    "marker block detected in {}",
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                )),
+                ..Default::default()
             })
         } else {
             None
@@ -1459,23 +1509,75 @@ impl H5iRepository {
     /// In production usage, coverage and runtime metrics may be
     /// integrated from external CI systems.
     pub fn scan_test_metrics(&self, path: &std::path::Path) -> Option<TestMetrics> {
-        let content = std::fs::read_to_string(path).ok()?;
-        let start_tag = "// h5_i_test_start";
-        let end_tag = "// h5_i_test_end";
+        self.scan_test_block(path)
+    }
 
-        if let (Some(s), Some(e)) = (content.find(start_tag), content.find(end_tag)) {
-            let test_code = &content[s + start_tag.len()..e];
-            let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-            hasher.update(test_code.trim());
-            let hash = format!("{:x}", hasher.finalize());
+    /// Load a [`TestMetrics`] record from a JSON file written by any test adapter.
+    ///
+    /// The file must contain a JSON object matching the [`TestResultInput`] schema.
+    /// Missing fields default to zero / `None`.
+    ///
+    /// # Example adapter output
+    /// ```json
+    /// { "tool": "pytest", "passed": 10, "failed": 0, "duration_secs": 1.23 }
+    /// ```
+    pub fn load_test_results_from_file(&self, path: &Path) -> Result<TestMetrics, H5iError> {
+        use crate::metadata::TestResultInput;
+        let raw = fs::read_to_string(path)
+            .map_err(|e| H5iError::Internal(format!("Cannot read test results file: {e}")))?;
+        let input: TestResultInput = serde_json::from_str(&raw)
+            .map_err(|e| H5iError::Internal(format!("Invalid test results JSON: {e}")))?;
+        Ok(input.into_metrics(String::new()))
+    }
 
-            Some(TestMetrics {
-                test_suite_hash: hash,
-                coverage: 0.0,
-            })
-        } else {
-            None
+    /// Run an arbitrary shell command and return [`TestMetrics`].
+    ///
+    /// The command's **stdout** is parsed as a [`TestResultInput`] JSON object
+    /// when it is valid JSON.  If parsing fails, only the exit code is captured,
+    /// making this useful even for test tools that produce no structured output.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let metrics = repo.run_test_command("cargo test 2>&1 | h5i-cargo-test-adapter")?;
+    /// ```
+    pub fn run_test_command(&self, cmd: &str) -> Result<TestMetrics, H5iError> {
+        use crate::metadata::TestResultInput;
+        use std::process::Command;
+
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .output()
+            .map_err(|e| H5iError::Internal(format!("Failed to run test command: {e}")))?;
+
+        let exit_code = output.status.code();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Try to parse stdout as TestResultInput JSON
+        if let Ok(input) = serde_json::from_str::<TestResultInput>(stdout.trim()) {
+            let mut metrics = input.into_metrics(String::new());
+            // The exit code from the actual process takes precedence
+            if exit_code.is_some() {
+                metrics.exit_code = exit_code;
+            }
+            return Ok(metrics);
         }
+
+        // Fallback: capture exit code and a brief summary from combined output
+        let combined = format!("{}{}", stdout, String::from_utf8_lossy(&output.stderr));
+        let summary_line = combined
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("(no output)")
+            .to_string();
+
+        Ok(TestMetrics {
+            exit_code,
+            summary: Some(summary_line),
+            tool: Some(cmd.split_whitespace().next().unwrap_or(cmd).to_string()),
+            ..Default::default()
+        })
     }
 }
 
@@ -1490,19 +1592,26 @@ impl H5iRepository {
         message: &str,
     ) -> Result<IntegrityReport, H5iError> {
         use crate::metadata::Severity;
-        use crate::rules::DiffContext;
         use crate::rules::run_all_rules;
+        use crate::rules::DiffContext;
 
         let primary_intent = prompt.unwrap_or(message).to_string();
 
         let diff = self.get_staged_diff()?;
         let stats = diff.stats()?;
-        let ctx = DiffContext::from_diff(&diff, primary_intent, stats.insertions(), stats.deletions())?;
+        let ctx =
+            DiffContext::from_diff(&diff, primary_intent, stats.insertions(), stats.deletions())?;
 
         let findings = run_all_rules(&ctx);
 
-        let violations = findings.iter().filter(|f| f.severity == Severity::Violation).count();
-        let warnings   = findings.iter().filter(|f| f.severity == Severity::Warning).count();
+        let violations = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Violation)
+            .count();
+        let warnings = findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .count();
 
         let penalty = (violations as f32 * 0.4 + warnings as f32 * 0.15).min(1.0);
         let score = 1.0 - penalty;
@@ -1515,7 +1624,11 @@ impl H5iRepository {
             IntegrityLevel::Valid
         };
 
-        Ok(IntegrityReport { level, score, findings })
+        Ok(IntegrityReport {
+            level,
+            score,
+            findings,
+        })
     }
 
     fn get_staged_diff(&'_ self) -> Result<git2::Diff<'_>, H5iError> {
@@ -1533,7 +1646,10 @@ impl H5iRepository {
 
 /// Searches for `script_name` in the standard locations and returns the first
 /// path that exists.
-fn find_parser_script(script_name: &str, workdir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+fn find_parser_script(
+    script_name: &str,
+    workdir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
     // 1. Explicit override via environment variable.
     if let Ok(dir) = std::env::var("H5I_PARSER_DIR") {
         let p = std::path::Path::new(&dir).join(script_name);
@@ -1642,8 +1758,8 @@ mod tests {
             &sig,
             &sig,
             ai_meta,
-            false, // enable_test_tracking
-            None,  // ast_parser
+            TestSource::None,
+            None, // ast_parser
         )?;
 
         // Verify standard git commit
@@ -1862,6 +1978,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use crate::delta_store::DeltaStore;
+    use crate::metadata::TestSource;
     use crate::repository::H5iRepository;
     use crate::session::LocalSession;
     use git2::{Repository, Signature};
@@ -1910,9 +2027,9 @@ mod integration_tests {
             "Integrated commit with CRDT",
             &sig,
             &sig,
-            None,  // ai_meta
-            false, // tests
-            None,  // ast
+            None, // ai_meta
+            TestSource::None,
+            None, // ast
         )?;
 
         // 5. BRIDGE: Transition Active Delta -> Committed Delta
@@ -1975,7 +2092,7 @@ mod integration_tests {
 
         let mut index = git_repo.index()?;
         index.add_path(std::path::Path::new(file_path))?;
-        let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None)?;
         let base_commit = git_repo.find_commit(base_oid)?;
 
         // Attach mathematical state to the BASE commit note
@@ -1984,7 +2101,7 @@ mod integration_tests {
         // --- PHASE 2: Branch OURS ---
         session_ours.apply_local_edit(0, "# Header\n")?;
 
-        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None)?;
         // Attach mathematical state to the OURS commit note
         attach_h5i_note(our_oid, &session_ours.doc)?;
 

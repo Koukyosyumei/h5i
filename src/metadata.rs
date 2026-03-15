@@ -34,10 +34,125 @@ pub struct AiMetadata {
     pub usage: Option<TokenUsage>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Rich test metrics stored in h5i commit notes.
+///
+/// All fields except `test_suite_hash` and `coverage` default to zero/None so
+/// that old records (which only contain those two fields) can still be read.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TestMetrics {
+    /// SHA-256 of the extracted test code block (from `// h5_i_test_start/end` markers).
+    /// Empty string when metrics come from an external adapter rather than marker scanning.
+    #[serde(default)]
     pub test_suite_hash: String,
+    /// Number of tests that passed.
+    #[serde(default)]
+    pub passed: u64,
+    /// Number of tests that failed.
+    #[serde(default)]
+    pub failed: u64,
+    /// Number of tests that were skipped / ignored.
+    #[serde(default)]
+    pub skipped: u64,
+    /// Total tests collected (may be > passed+failed+skipped when errors occurred).
+    #[serde(default)]
+    pub total: u64,
+    /// Wall-clock run time in seconds.
+    #[serde(default)]
+    pub duration_secs: f64,
+    /// Line / branch coverage percentage (0–100). 0.0 means unknown.
+    #[serde(default)]
     pub coverage: f64,
+    /// Name of the test tool that produced these metrics (e.g. "pytest", "cargo-test").
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Process exit code returned by the test runner. `Some(0)` means all passed.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    /// Human-readable one-line summary (e.g. "10 passed, 2 skipped in 1.23s").
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+impl TestMetrics {
+    /// Returns `true` when the test run is considered successful (no failures).
+    pub fn is_passing(&self) -> bool {
+        if let Some(code) = self.exit_code {
+            return code == 0;
+        }
+        if self.total > 0 {
+            return self.failed == 0;
+        }
+        // Legacy records: rely on coverage heuristic
+        self.coverage > 0.0
+    }
+}
+
+/// Universal input format produced by h5i test-tool adapters.
+///
+/// Write a JSON file matching this schema and pass it via
+/// `--test-results <file>` or the `H5I_TEST_RESULTS` environment variable.
+/// All fields are optional; h5i fills in defaults and computes missing totals.
+///
+/// # Minimal example
+/// ```json
+/// { "tool": "pytest", "passed": 42, "failed": 0, "duration_secs": 1.5 }
+/// ```
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TestResultInput {
+    /// Name of the test tool (e.g. `"pytest"`, `"cargo-test"`, `"jest"`).
+    pub tool: Option<String>,
+    /// Tests that passed.
+    pub passed: Option<u64>,
+    /// Tests that failed.
+    pub failed: Option<u64>,
+    /// Tests that were skipped.
+    pub skipped: Option<u64>,
+    /// Total tests collected (computed from passed+failed+skipped if absent).
+    pub total: Option<u64>,
+    /// Wall-clock run time in seconds.
+    pub duration_secs: Option<f64>,
+    /// Line/branch coverage percentage (0–100).
+    pub coverage: Option<f64>,
+    /// Exit code returned by the test runner.
+    pub exit_code: Option<i32>,
+    /// Human-readable summary line.
+    pub summary: Option<String>,
+}
+
+impl TestResultInput {
+    /// Convert into a `TestMetrics` record, optionally attaching a suite hash
+    /// (pass an empty string when no marker scanning was performed).
+    pub fn into_metrics(self, suite_hash: String) -> TestMetrics {
+        let passed = self.passed.unwrap_or(0);
+        let failed = self.failed.unwrap_or(0);
+        let skipped = self.skipped.unwrap_or(0);
+        let total = self.total.unwrap_or(passed + failed + skipped);
+        TestMetrics {
+            test_suite_hash: suite_hash,
+            passed,
+            failed,
+            skipped,
+            total,
+            duration_secs: self.duration_secs.unwrap_or(0.0),
+            coverage: self.coverage.unwrap_or(0.0),
+            tool: self.tool,
+            exit_code: self.exit_code,
+            summary: self.summary,
+        }
+    }
+}
+
+/// Describes how `h5i commit` should collect test metrics.
+#[derive(Debug, Clone)]
+pub enum TestSource {
+    /// Do not record any test metrics.
+    None,
+    /// Scan staged source files for `// h5_i_test_start` / `// h5_i_test_end`
+    /// markers and hash the extracted code block.
+    ScanMarkers,
+    /// Use pre-computed metrics — e.g. loaded from a `--test-results` JSON file
+    /// or produced by running `--test-cmd`.
+    Provided(TestMetrics),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

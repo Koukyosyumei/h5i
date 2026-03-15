@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
-use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity};
+use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity, TestSource};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
@@ -49,9 +49,22 @@ enum Commands {
         #[arg(long)]
         agent: Option<String>,
 
-        /// Enable automatic test provenance detection
+        /// Scan staged source files for `// h5_i_test_start` / `// h5_i_test_end` markers
         #[arg(long)]
         tests: bool,
+
+        /// Path to a JSON file produced by a test adapter (any tool, any language).
+        /// Takes precedence over --tests and H5I_TEST_RESULTS.
+        /// Schema: { "tool", "passed", "failed", "skipped", "total",
+        ///           "duration_secs", "coverage", "exit_code", "summary" }
+        #[arg(long, value_name = "FILE")]
+        test_results: Option<std::path::PathBuf>,
+
+        /// Shell command to run as the test suite.
+        /// h5i captures its exit code and tries to parse stdout as h5i JSON.
+        /// Used when no --test-results file is provided.
+        #[arg(long, value_name = "CMD")]
+        test_cmd: Option<String>,
 
         /// Enable AST-based structural tracking for the commit
         #[arg(long)]
@@ -177,6 +190,8 @@ fn main() -> anyhow::Result<()> {
             model,
             agent,
             tests,
+            test_results,
+            test_cmd,
             ast,
             audit,
             force,
@@ -258,6 +273,42 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
+            // Resolve TestSource — priority:
+            //   1. --test-results <file>
+            //   2. H5I_TEST_RESULTS env var (path to a JSON file)
+            //   3. --test-cmd <cmd>
+            //   4. --tests flag (scan staged files for markers)
+            //   5. Nothing
+            let env_results = std::env::var("H5I_TEST_RESULTS").ok();
+            let test_source = if let Some(ref path) = test_results {
+                let metrics = repo.load_test_results_from_file(path)?;
+                TestSource::Provided(metrics)
+            } else if let Some(ref env_path) = env_results {
+                let metrics = repo.load_test_results_from_file(std::path::Path::new(env_path))?;
+                TestSource::Provided(metrics)
+            } else if let Some(ref cmd) = test_cmd {
+                println!(
+                    "{} Running test command: {}",
+                    style("▶").cyan(),
+                    style(cmd).yellow()
+                );
+                let metrics = repo.run_test_command(cmd)?;
+                let passing = metrics.is_passing();
+                let icon = if passing {
+                    style("✔").green()
+                } else {
+                    style("✖").red()
+                };
+                if let Some(ref s) = metrics.summary {
+                    println!("  {} {}", icon, style(s).dim());
+                }
+                TestSource::Provided(metrics)
+            } else if tests {
+                TestSource::ScanMarkers
+            } else {
+                TestSource::None
+            };
+
             // Build a real language-aware AST parser closure.
             let parser_box = repo.make_ast_parser();
             let ast_parser: Option<&dyn Fn(&std::path::Path) -> Option<String>> = if ast {
@@ -266,7 +317,7 @@ fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let oid = repo.commit(&message, &sig, &sig, ai_meta, tests, ast_parser)?;
+            let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser)?;
             repo.clear_pending_context()?;
             println!(
                 "{} {} {}",
