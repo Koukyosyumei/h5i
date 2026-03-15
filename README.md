@@ -185,6 +185,13 @@ h5i resolve <ours-oid> <theirs-oid> src/auth.rs
 
 Resolves conflicts using the mathematical CRDT state stored in Git Notes — no interactive merge editor required.
 
+### 4.8. Web Dashboard
+
+```bash
+h5i serve            # opens on http://localhost:7150
+h5i serve --port 8080
+```
+
 ---
 
 ## 5. Integrity Engine
