@@ -10,6 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
+use crate::memory;
 use crate::metadata::{IntegrityReport, IntentGraph};
 use crate::repository::H5iRepository;
 use crate::review::{ReviewPoint, REVIEW_THRESHOLD};
@@ -82,6 +83,51 @@ pub struct IntentGraphQuery {
 pub struct ReviewQuery {
     pub limit: Option<usize>,
     pub min_score: Option<f32>,
+}
+
+#[derive(Deserialize)]
+pub struct MemoryDiffQuery {
+    pub from: String,
+    /// OID of the second snapshot; omit to diff against live memory.
+    pub to: Option<String>,
+}
+
+// ── Memory API response types ─────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct MemoryFileEntry {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct MemorySnapshotResponse {
+    pub commit_oid: String,
+    pub short_oid: String,
+    pub timestamp: String,
+    pub file_count: usize,
+    pub files: Vec<MemoryFileEntry>,
+}
+
+#[derive(Serialize)]
+pub struct DiffLineResponse {
+    pub kind: String, // "context" | "added" | "removed"
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct ModifiedFileResponse {
+    pub name: String,
+    pub hunks: Vec<DiffLineResponse>,
+}
+
+#[derive(Serialize, Default)]
+pub struct MemoryDiffResponse {
+    pub from_label: String,
+    pub to_label: String,
+    pub added_files: Vec<MemoryFileEntry>,
+    pub removed_files: Vec<String>,
+    pub modified_files: Vec<ModifiedFileResponse>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -354,6 +400,100 @@ async fn api_review_points(
     )
 }
 
+// ── Memory handlers ───────────────────────────────────────────────────────────
+
+async fn api_memory_snapshots(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<MemorySnapshotResponse>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<MemorySnapshotResponse>> {
+        let repo = H5iRepository::open(&path)?;
+        let snapshots = memory::list_snapshots(&repo.h5i_root)?;
+        let mut out = Vec::new();
+        for snap in snapshots.iter().rev() {
+            let snap_dir = repo.h5i_root.join("memory").join(&snap.commit_oid);
+            let mut files: Vec<MemoryFileEntry> = std::fs::read_dir(&snap_dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.path().is_file()
+                                && e.file_name() != "_meta.json"
+                        })
+                        .map(|e| MemoryFileEntry {
+                            name: e.file_name().to_string_lossy().into_owned(),
+                            content: std::fs::read_to_string(e.path()).unwrap_or_default(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            files.sort_by(|a, b| a.name.cmp(&b.name));
+            out.push(MemorySnapshotResponse {
+                short_oid: snap.commit_oid[..8.min(snap.commit_oid.len())].to_string(),
+                commit_oid: snap.commit_oid.clone(),
+                timestamp: snap.timestamp.to_rfc3339(),
+                file_count: snap.file_count,
+                files,
+            });
+        }
+        Ok(out)
+    })
+    .await;
+    Json(result.unwrap_or_else(|_| Ok(vec![])).unwrap_or_default())
+}
+
+async fn api_memory_diff(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<MemoryDiffQuery>,
+) -> Json<MemoryDiffResponse> {
+    let path = state.repo_path.clone();
+    let from = params.from.clone();
+    let to = params.to.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<MemoryDiffResponse> {
+        let repo = H5iRepository::open(&path)?;
+        let workdir = repo
+            .git()
+            .workdir()
+            .ok_or_else(|| anyhow::anyhow!("bare repository"))?
+            .to_path_buf();
+        let diff =
+            memory::diff_snapshots(&repo.h5i_root, &workdir, &from, to.as_deref())?;
+        Ok(MemoryDiffResponse {
+            from_label: diff.from_label,
+            to_label: diff.to_label,
+            added_files: diff
+                .added_files
+                .into_iter()
+                .map(|(name, content)| MemoryFileEntry { name, content })
+                .collect(),
+            removed_files: diff.removed_files.into_iter().map(|(name, _)| name).collect(),
+            modified_files: diff
+                .modified_files
+                .into_iter()
+                .map(|f| ModifiedFileResponse {
+                    name: f.name,
+                    hunks: f
+                        .hunks
+                        .into_iter()
+                        .map(|l| match l {
+                            memory::DiffLine::Context(t) => {
+                                DiffLineResponse { kind: "context".into(), text: t }
+                            }
+                            memory::DiffLine::Added(t) => {
+                                DiffLineResponse { kind: "added".into(), text: t }
+                            }
+                            memory::DiffLine::Removed(t) => {
+                                DiffLineResponse { kind: "removed".into(), text: t }
+                            }
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+    })
+    .await;
+    Json(result.unwrap_or_else(|_| Ok(MemoryDiffResponse::default())).unwrap_or_default())
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -367,6 +507,8 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/integrity/commit", get(api_integrity_commit))
         .route("/api/intent-graph", get(api_intent_graph))
         .route("/api/review-points", get(api_review_points))
+        .route("/api/memory/snapshots", get(api_memory_snapshots))
+        .route("/api/memory/diff", get(api_memory_diff))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -625,6 +767,69 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .ig-modal-intent{font-size:14px;color:#e6edf3;line-height:1.55;white-space:pre-wrap;word-break:break-word}
 .ig-modal-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .ig-modal-badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500}
+
+/* ── Memory tab ────────────────────────────────────────────────────────────── */
+.mem-layout{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
+.mem-snap-list{display:flex;flex-direction:column;gap:7px}
+.mem-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:11px 13px;cursor:pointer;transition:all .15s;position:relative}
+.mem-snap-card:hover{border-color:#484f58;background:#1c2128}
+.mem-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33}
+.mem-snap-card.sel-to{border-color:#3fb950;box-shadow:0 0 0 1px #3fb95033}
+.mem-snap-head{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.mem-oid{font-family:monospace;font-size:11px;font-weight:700;background:#bc8cff22;color:#bc8cff;padding:1px 7px;border-radius:4px}
+.mem-ts{font-size:11px;color:#484f58}
+.mem-nfiles{font-size:12px;color:#8b949e}
+.mem-sel-badge{position:absolute;top:8px;right:8px;font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px}
+.mem-sel-from-badge{background:#1f3a5f;color:#58a6ff}
+.mem-sel-to-badge{background:#1a3a2a;color:#3fb950}
+
+.mem-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:420px}
+.mem-viewer-empty{color:#484f58;text-align:center;padding:60px 20px;font-size:13px;line-height:1.8}
+
+.mem-file-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid #30363d;padding-bottom:8px}
+.mem-ftab{background:none;border:1px solid transparent;border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;color:#8b949e;transition:all .15s}
+.mem-ftab:hover{color:#e6edf3;background:#21262d}
+.mem-ftab.active{background:#bc8cff22;border-color:#bc8cff44;color:#bc8cff}
+.mem-file-content{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;font-size:12px;font-family:monospace;white-space:pre-wrap;color:#8b949e;max-height:480px;overflow-y:auto;line-height:1.6}
+
+.mem-frontmatter{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px 14px;margin-bottom:10px}
+.mem-fm-row{display:flex;gap:10px;font-size:12px;margin-bottom:5px;align-items:baseline}
+.mem-fm-key{color:#484f58;min-width:72px;font-family:monospace;font-size:11px}
+.mem-fm-val{color:#e6edf3}
+.mem-fm-desc{color:#8b949e;font-style:italic}
+.mem-type-user{background:#1f3a5f;color:#58a6ff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
+.mem-type-feedback{background:#2d1f4f;color:#bc8cff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
+.mem-type-project{background:#1a3a2a;color:#3fb950;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
+.mem-type-reference{background:#3a2a1a;color:#d29922;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
+.mem-body{font-size:12px;color:#e6edf3;white-space:pre-wrap;line-height:1.7;font-family:inherit;padding:2px 0}
+
+.mem-diff-file{margin-bottom:18px}
+.mem-diff-hdr{display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12px;font-weight:600;font-family:monospace}
+.mem-diff-hdr-add{color:#3fb950}.mem-diff-hdr-rm{color:#f85149}.mem-diff-hdr-mod{color:#d29922}
+.mem-diff-lines{background:#0d1117;border:1px solid #21262d;border-radius:6px;overflow:hidden;font-family:monospace;font-size:11px;max-height:320px;overflow-y:auto}
+.mem-dl{display:flex;line-height:1.55}
+.mem-dl-add{background:#12261e;color:#3fb950}
+.mem-dl-rm{background:#270d0d;color:#f85149}
+.mem-dl-ctx{color:#484f58}
+.mem-dl-sep{color:#30363d;font-style:italic;background:#0d1117;justify-content:center}
+.mem-gutter{width:18px;text-align:center;flex-shrink:0;padding:0 3px;font-size:10px;user-select:none;border-right:1px solid #21262d;color:inherit;opacity:.7}
+.mem-text{padding:1px 8px;white-space:pre-wrap;word-break:break-all;flex:1}
+
+.mem-diff-summary{display:flex;gap:14px;margin-bottom:14px;font-size:12px;flex-wrap:wrap}
+.mem-diff-stat-add{color:#3fb950;display:flex;align-items:center;gap:4px}
+.mem-diff-stat-rm{color:#f85149;display:flex;align-items:center;gap:4px}
+.mem-diff-stat-mod{color:#d29922;display:flex;align-items:center;gap:4px}
+
+.mem-controls{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.mem-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.mem-btn:hover{opacity:.85}
+.mem-btn:disabled{opacity:.4;cursor:not-allowed}
+.mem-btn-ghost{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:6px 14px;font-size:12px;cursor:pointer;transition:all .15s}
+.mem-btn-ghost:hover{color:#e6edf3;border-color:#8b949e}
+.mem-hint{font-size:11px;color:#484f58}
+.mem-snap-count{font-size:11px;color:#484f58;margin-bottom:8px}
+.mem-insp-hdr{font-size:13px;font-weight:600;margin-bottom:12px;color:#e6edf3;display:flex;align-items:center;gap:10px}
+.mem-diff-hdr-row{font-size:13px;font-weight:600;margin-bottom:14px;color:#e6edf3;display:flex;align-items:center;gap:8px}
 </style>
 </head>
 <body>
@@ -701,6 +906,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <button class="tab" onclick="switchTab('integrity')">🛡 Integrity</button>
       <button class="tab" onclick="switchTab('intentgraph')">🔗 Intent Graph</button>
       <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
+      <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">🧠 Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
@@ -781,6 +987,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
         <button class="run-btn" id="btn-run" onclick="runIntegrity()">🛡 Run Integrity Check</button>
       </div>
       <div class="int-result" id="int-result"></div>
+    </div>
+
+    <!-- Memory panel -->
+    <div id="panel-memory" style="display:none">
+      <div class="mem-controls">
+        <button class="mem-btn" id="mem-diff-btn" onclick="diffMemory()" disabled>⊕ Diff Selected</button>
+        <button class="mem-btn-ghost" onclick="clearMemSel()">Clear</button>
+        <span class="mem-hint" id="mem-hint">Click a snapshot to inspect · click two to diff</span>
+      </div>
+      <div class="mem-layout">
+        <div>
+          <div class="mem-snap-count" id="mem-snap-count"></div>
+          <div class="mem-snap-list" id="mem-snap-list">
+            <div class="empty-state"><span class="spinner"></span> Loading…</div>
+          </div>
+        </div>
+        <div class="mem-viewer" id="mem-viewer">
+          <div class="mem-viewer-empty">
+            Select a snapshot to inspect its files,<br>
+            or select two snapshots to compare them.
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Review Points panel -->
@@ -1282,7 +1511,7 @@ function renderSparkline() {
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['timeline','summary','integrity','intentgraph','review'].forEach(t => {
+  ['timeline','summary','integrity','intentgraph','review','memory'].forEach(t => {
     const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`);
     const panel = id('panel-' + t);
     const active = t === tab;
@@ -1632,6 +1861,192 @@ function closeNodeModal() {
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNodeModal(); });
+
+// ── Memory ────────────────────────────────────────────────────────────────
+let memSnapshots = [];
+let memSelFrom = null;
+let memSelTo = null;
+let _memFiles = [];
+
+async function loadMemorySnapshots() {
+  if (memSnapshots.length) return; // already loaded
+  id('mem-snap-list').innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading…</div>';
+  try {
+    memSnapshots = await fetch('/api/memory/snapshots').then(r => r.json());
+    setText('tab-mem-count', memSnapshots.length);
+    setText('mem-snap-count', memSnapshots.length + ' snapshot' + (memSnapshots.length === 1 ? '' : 's'));
+    renderMemList();
+  } catch(e) {
+    id('mem-snap-list').innerHTML = '<div class="empty-state">Failed to load snapshots.</div>';
+  }
+}
+
+function renderMemList() {
+  if (!memSnapshots.length) {
+    id('mem-snap-list').innerHTML = `<div class="empty-state" style="padding:30px 0;text-align:center">
+      No memory snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i memory snapshot</code> to create one.
+    </div>`;
+    return;
+  }
+  id('mem-snap-list').innerHTML = memSnapshots.map((s, i) => {
+    let cls = 'mem-snap-card';
+    let badge = '';
+    if (i === memSelFrom) { cls += ' sel-from'; badge = '<span class="mem-sel-badge mem-sel-from-badge">FROM</span>'; }
+    else if (i === memSelTo) { cls += ' sel-to'; badge = '<span class="mem-sel-badge mem-sel-to-badge">TO</span>'; }
+    const ts = new Date(s.timestamp);
+    const tsStr = isNaN(ts) ? s.timestamp : ts.toLocaleString();
+    return `<div class="${cls}" onclick="selectMemSnap(${i})">${badge}
+      <div class="mem-snap-head">
+        <span class="mem-oid">${esc(s.short_oid)}</span>
+        <span class="mem-ts">${esc(tsStr)}</span>
+      </div>
+      <div class="mem-nfiles">${s.file_count} file${s.file_count === 1 ? '' : 's'}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectMemSnap(i) {
+  if (memSelFrom === null) {
+    memSelFrom = i;
+  } else if (memSelTo === null && i !== memSelFrom) {
+    memSelTo = i;
+  } else {
+    memSelFrom = i; memSelTo = null;
+  }
+  renderMemList();
+  updateMemControls();
+  if (memSelTo === null && memSelFrom !== null) showMemInspect(memSnapshots[memSelFrom]);
+}
+
+function clearMemSel() {
+  memSelFrom = null; memSelTo = null;
+  renderMemList(); updateMemControls();
+  id('mem-viewer').innerHTML = '<div class="mem-viewer-empty">Select a snapshot to inspect its files,<br>or select two snapshots to compare them.</div>';
+}
+
+function updateMemControls() {
+  id('mem-diff-btn').disabled = !(memSelFrom !== null && memSelTo !== null);
+  const hint = memSelFrom === null
+    ? 'Click a snapshot to inspect · click two to diff'
+    : memSelTo === null
+    ? 'Click another snapshot to compare, or click again to reset'
+    : 'Ready — click ⊕ Diff Selected';
+  setText('mem-hint', hint);
+}
+
+function showMemInspect(snap) {
+  _memFiles = snap.files || [];
+  if (!_memFiles.length) {
+    id('mem-viewer').innerHTML = '<div class="mem-viewer-empty">No files in this snapshot.</div>';
+    return;
+  }
+  const ts = new Date(snap.timestamp);
+  const tsStr = isNaN(ts) ? snap.timestamp : ts.toLocaleString();
+  let html = `<div class="mem-insp-hdr">
+    <span>📸 Snapshot</span>
+    <span class="mem-oid">${esc(snap.short_oid)}</span>
+    <span style="font-size:11px;color:#484f58;font-weight:400">${esc(tsStr)}</span>
+  </div>`;
+  html += '<div class="mem-file-tabs">';
+  _memFiles.forEach((f, i) => {
+    html += `<button class="mem-ftab${i===0?' active':''}" onclick="showMemFile(${i},this)">${esc(f.name)}</button>`;
+  });
+  html += '</div><div id="mem-file-body">' + renderMemFile(_memFiles[0]) + '</div>';
+  id('mem-viewer').innerHTML = html;
+}
+
+function showMemFile(i, el) {
+  document.querySelectorAll('.mem-ftab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  id('mem-file-body').innerHTML = renderMemFile(_memFiles[i]);
+}
+
+function parseFrontmatter(content) {
+  const m = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!m) return null;
+  const fm = {};
+  m[1].split('\n').forEach(line => {
+    const idx = line.indexOf(':');
+    if (idx > 0) { fm[line.slice(0,idx).trim()] = line.slice(idx+1).trim(); }
+  });
+  fm.body = m[2].trim();
+  return fm;
+}
+
+function renderMemFile(f) {
+  const fm = parseFrontmatter(f.content);
+  if (!fm) return `<pre class="mem-file-content">${esc(f.content)}</pre>`;
+  const typeTag = fm.type
+    ? `<span class="mem-type-${esc(fm.type)}">${esc(fm.type)}</span>`
+    : '';
+  let html = '<div class="mem-frontmatter">';
+  if (fm.name) html += `<div class="mem-fm-row"><span class="mem-fm-key">name</span><span class="mem-fm-val">${esc(fm.name)}</span></div>`;
+  if (fm.description) html += `<div class="mem-fm-row"><span class="mem-fm-key">description</span><span class="mem-fm-val mem-fm-desc">${esc(fm.description)}</span></div>`;
+  if (fm.type) html += `<div class="mem-fm-row"><span class="mem-fm-key">type</span>${typeTag}</div>`;
+  html += '</div>';
+  if (fm.body) html += `<div class="mem-body">${esc(fm.body)}</div>`;
+  return html;
+}
+
+async function diffMemory() {
+  if (memSelFrom === null || memSelTo === null) return;
+  const from = memSnapshots[memSelFrom].commit_oid;
+  const to   = memSnapshots[memSelTo].commit_oid;
+  id('mem-viewer').innerHTML = '<div class="mem-viewer-empty"><span class="spinner"></span> Computing diff…</div>';
+  try {
+    const diff = await fetch(`/api/memory/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(r => r.json());
+    renderMemDiff(diff);
+  } catch(e) {
+    id('mem-viewer').innerHTML = `<div class="mem-viewer-empty">Error: ${esc(String(e))}</div>`;
+  }
+}
+
+function renderMemDiff(diff) {
+  const total = diff.added_files.length + diff.removed_files.length + diff.modified_files.length;
+  let html = `<div class="mem-diff-hdr-row">
+    Diff&nbsp;<span class="mem-oid" style="color:#58a6ff">${esc(diff.from_label)}</span>
+    <span style="color:#484f58">→</span>
+    <span class="mem-oid" style="background:#1a3a2a22;color:#3fb950">${esc(diff.to_label)}</span>
+  </div>`;
+
+  if (total === 0) {
+    html += '<div class="mem-viewer-empty" style="padding:40px 0">No differences found between these two snapshots.</div>';
+    id('mem-viewer').innerHTML = html;
+    return;
+  }
+
+  html += '<div class="mem-diff-summary">';
+  if (diff.added_files.length)   html += `<span class="mem-diff-stat-add">+${diff.added_files.length} added</span>`;
+  if (diff.removed_files.length) html += `<span class="mem-diff-stat-rm">−${diff.removed_files.length} removed</span>`;
+  if (diff.modified_files.length) html += `<span class="mem-diff-stat-mod">~${diff.modified_files.length} modified</span>`;
+  html += '</div>';
+
+  diff.added_files.forEach(f => {
+    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-add">+&nbsp;${esc(f.name)}</div><div class="mem-diff-lines">`;
+    f.content.split('\n').forEach(ln => {
+      html += `<div class="mem-dl mem-dl-add"><span class="mem-gutter">+</span><span class="mem-text">${esc(ln)}</span></div>`;
+    });
+    html += '</div></div>';
+  });
+
+  diff.removed_files.forEach(name => {
+    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-rm">−&nbsp;${esc(name)}</div>
+      <div class="mem-diff-lines"><div class="mem-dl mem-dl-rm"><span class="mem-gutter">−</span><span class="mem-text" style="opacity:.6;font-style:italic">(file removed)</span></div></div></div>`;
+  });
+
+  diff.modified_files.forEach(f => {
+    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-mod">~&nbsp;${esc(f.name)}</div><div class="mem-diff-lines">`;
+    f.hunks.forEach(line => {
+      const isSep = line.kind === 'context' && line.text === '···';
+      const cls   = line.kind === 'added' ? 'mem-dl-add' : line.kind === 'removed' ? 'mem-dl-rm' : isSep ? 'mem-dl-sep' : 'mem-dl-ctx';
+      const glyph = line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' ';
+      html += `<div class="mem-dl ${cls}"><span class="mem-gutter">${isSep?'':glyph}</span><span class="mem-text">${esc(line.text)}</span></div>`;
+    });
+    html += '</div></div>';
+  });
+
+  id('mem-viewer').innerHTML = html;
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 loadAll();
