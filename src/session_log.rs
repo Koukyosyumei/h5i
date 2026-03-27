@@ -686,6 +686,7 @@ pub fn print_causal_chain(analysis: &SessionAnalysis) {
 
 pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) {
     use console::style;
+
     let annotations: Vec<&UncertaintyAnnotation> = analysis
         .uncertainty
         .iter()
@@ -696,36 +697,238 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
         })
         .collect();
 
-    println!("{}", style("── Uncertainty Heatmap ─────────────────────────────────────").dim());
+    let session_short = &analysis.session_id[..8.min(analysis.session_id.len())];
+    let unique_files = annotations
+        .iter()
+        .map(|a| a.context_file.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    // ── Header ────────────────────────────────────────────────────────────────
+    println!(
+        "{}",
+        style("── Uncertainty Heatmap ─────────────────────────────────────────────").dim()
+    );
+
     if annotations.is_empty() {
         println!("  {} No uncertainty signals detected.", style("✔").green());
         return;
     }
 
+    let n = annotations.len();
+    println!(
+        "  {}  ·  session {}  ·  {} file{}",
+        style(format!("{n} signal{}", if n == 1 { "" } else { "s" })).bold(),
+        style(session_short).magenta(),
+        unique_files,
+        if unique_files == 1 { "" } else { "s" },
+    );
+    println!();
+
+    // ── Risk Map ──────────────────────────────────────────────────────────────
+    // Group annotations by file, collect confidence values
+    let mut file_map: std::collections::HashMap<&str, Vec<f32>> =
+        std::collections::HashMap::new();
+    for ann in &annotations {
+        file_map
+            .entry(ann.context_file.as_str())
+            .or_default()
+            .push(ann.confidence);
+    }
+    // Sort riskiest (lowest avg confidence) first
+    let mut file_list: Vec<(&str, Vec<f32>)> = file_map.into_iter().collect();
+    file_list.sort_by(|a, b| {
+        let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+        avg(&a.1).partial_cmp(&avg(&b.1)).unwrap()
+    });
+
+    const NAME_W: usize = 44;
+    const BAR_W: usize = 16;
+
+    println!("  {}", style("Risk Map").bold());
+    println!("  {}", style("─".repeat(74)).dim());
+    for (file, confs) in &file_list {
+        let count = confs.len();
+        let avg_conf = confs.iter().sum::<f32>() / count as f32;
+        let risk = 1.0_f32 - avg_conf;
+
+        // Heat bar: filled portion = risk fraction of BAR_W
+        let filled = (risk * BAR_W as f32).round() as usize;
+        let filled = filled.min(BAR_W);
+        let empty = BAR_W - filled;
+        let bar_filled = if avg_conf < 0.35 {
+            style("█".repeat(filled)).red().bold().to_string()
+        } else if avg_conf < 0.55 {
+            style("█".repeat(filled)).yellow().to_string()
+        } else {
+            style("█".repeat(filled)).cyan().to_string()
+        };
+        let bar = format!("{}{}", bar_filled, style("░".repeat(empty)).dim());
+
+        // One bullet per signal (capped at 6 to stay on one line)
+        let bullets: String = confs
+            .iter()
+            .take(6)
+            .map(|&c| {
+                if c < 0.35 {
+                    style("●").red().to_string()
+                } else if c < 0.55 {
+                    style("●").yellow().to_string()
+                } else {
+                    style("●").cyan().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let extra = if count > 6 {
+            style(format!("+{}", count - 6)).dim().to_string()
+        } else {
+            String::new()
+        };
+
+        let conf_pct = (avg_conf * 100.0).round() as u32;
+        let conf_styled = if avg_conf < 0.35 {
+            style(format!("{conf_pct:>3}%")).red().bold().to_string()
+        } else if avg_conf < 0.55 {
+            style(format!("{conf_pct:>3}%")).yellow().bold().to_string()
+        } else {
+            style(format!("{conf_pct:>3}%")).cyan().bold().to_string()
+        };
+
+        println!(
+            "  {:<name_w$}  {}  {}{}  {:<2} signal{}  avg {}",
+            style(shorten_path(file, NAME_W)).yellow(),
+            bar,
+            bullets,
+            extra,
+            count,
+            if count == 1 { " " } else { "s" },
+            conf_styled,
+            name_w = NAME_W,
+        );
+    }
+    println!();
+
+    // ── Timeline ──────────────────────────────────────────────────────────────
+    // Sparkline: each cell is one character; mark signals with colored blocks.
+    let min_t = annotations.iter().map(|a| a.turn).min().unwrap_or(0);
+    let max_t = annotations.iter().map(|a| a.turn).max().unwrap_or(1);
+    let t_range = (max_t - min_t).max(1) as f64;
+    const TL_W: usize = 68;
+
+    println!("  {}", style("Timeline").bold());
+    // header: "t:N ─── … ─── t:N"
+    let lbl_l = format!("t:{min_t}");
+    let lbl_r = format!("t:{max_t}");
+    let dashes = TL_W.saturating_sub(lbl_l.len() + lbl_r.len() + 2);
+    println!(
+        "  {} {} {}",
+        style(&lbl_l).dim(),
+        style("─".repeat(dashes)).dim(),
+        style(&lbl_r).dim()
+    );
+
+    // Build the sparkline: lowest confidence (most risky) wins each cell
+    let mut cells: Vec<Option<f32>> = vec![None; TL_W];
+    for ann in &annotations {
+        let pos = (((ann.turn - min_t) as f64 / t_range) * (TL_W - 1) as f64).round() as usize;
+        let pos = pos.min(TL_W - 1);
+        cells[pos] = Some(match cells[pos] {
+            None => ann.confidence,
+            Some(prev) => prev.min(ann.confidence),
+        });
+    }
+    let sparkline: String = cells
+        .iter()
+        .map(|c| match *c {
+            None => style("·".to_string()).dim().to_string(),
+            Some(c) if c < 0.35 => style("█".to_string()).red().bold().to_string(),
+            Some(c) if c < 0.55 => style("▓".to_string()).yellow().to_string(),
+            _ => style("░".to_string()).cyan().to_string(),
+        })
+        .collect();
+    println!("  {}", sparkline);
+
+    // Pointer row: ↑t:N labels under the top-4 riskiest signals
+    let mut top_signals: Vec<&UncertaintyAnnotation> = annotations.clone();
+    top_signals.sort_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap());
+    top_signals.dedup_by_key(|a| a.turn);
+    top_signals.truncate(4);
+    top_signals.sort_by_key(|a| a.turn);
+
+    let ptr_positions: Vec<(usize, String)> = top_signals
+        .iter()
+        .map(|ann| {
+            let pos = (((ann.turn - min_t) as f64 / t_range) * (TL_W - 1) as f64).round()
+                as usize;
+            (pos.min(TL_W - 1), format!("↑t:{}", ann.turn))
+        })
+        .collect();
+    // Remove overlaps left-to-right
+    let mut ptr_buf = String::new();
+    let mut cursor = 0usize;
+    for (pos, label) in &ptr_positions {
+        if *pos >= cursor {
+            ptr_buf.push_str(&" ".repeat(pos - cursor));
+            ptr_buf.push_str(label);
+            cursor = pos + label.len();
+        }
+    }
+    if !ptr_buf.trim().is_empty() {
+        println!("  {}", style(ptr_buf.trim_end()).dim());
+    }
+    println!();
+
+    // ── Individual Signals ────────────────────────────────────────────────────
+    println!("  {}", style("Signals").bold());
+    println!("  {}", style("─".repeat(74)).dim());
     for ann in &annotations {
         let conf_pct = (ann.confidence * 100.0).round() as u32;
-        let conf_str = format!("{conf_pct:>3}%");
-        let conf_styled = if ann.confidence < 0.35 {
-            style(conf_str).red().bold()
+        let (badge, conf_styled) = if ann.confidence < 0.35 {
+            (
+                style("██").red().bold().to_string(),
+                style(format!("{conf_pct:>3}%")).red().bold().to_string(),
+            )
         } else if ann.confidence < 0.55 {
-            style(conf_str).yellow().bold()
+            (
+                style("▓▓").yellow().to_string(),
+                style(format!("{conf_pct:>3}%")).yellow().bold().to_string(),
+            )
         } else {
-            style(conf_str).cyan().bold()
+            (
+                style("░░").cyan().to_string(),
+                style(format!("{conf_pct:>3}%")).cyan().bold().to_string(),
+            )
         };
+
         let ctx = if ann.context_file.is_empty() {
-            "(no file context)".to_string()
+            style("(no file)".to_string()).dim().to_string()
         } else {
-            ann.context_file.clone()
+            style(shorten_path(&ann.context_file, 34)).dim().to_string()
         };
+
         println!(
-            "  conf:{} t:{:>3}  {}  {}",
-            conf_styled,
+            "  {}  t:{:<4}  {:<18}  {}  [{}]",
+            badge,
             style(ann.turn).dim(),
             style(&ann.phrase).bold(),
-            style(&ctx).dim(),
+            ctx,
+            conf_styled,
         );
-        println!("    \"{}\"", style(&ann.snippet).dim().italic());
+        println!(
+            "       {}",
+            style(format!("\"{}\"", ann.snippet)).dim().italic()
+        );
+        println!();
     }
+
+    // ── Legend ────────────────────────────────────────────────────────────────
+    println!(
+        "  {} high risk (<35%)   {} moderate (35–55%)   {} low (>55%)",
+        style("██").red().bold(),
+        style("▓▓").yellow(),
+        style("░░").cyan(),
+    );
 }
 
 pub fn print_churn(churn: &[FileChurn]) {

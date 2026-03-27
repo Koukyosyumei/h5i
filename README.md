@@ -113,6 +113,37 @@ h5i notes footprint    # which files did Claude read vs. edit?
 
 ```bash
 h5i notes uncertainty  # where was Claude unsure?
+```
+
+```
+── Uncertainty Heatmap ─────────────────────────────────────────────────
+  7 signals  ·  session 90130372  ·  3 files
+
+  Risk Map
+  ──────────────────────────────────────────────────────────────────────
+  src/auth.rs                                   ████████████░░░░  ●●●  4 signals  avg  28%
+  src/main.rs                                   ██████░░░░░░░░░░  ●●   2 signals  avg  40%
+  src/server.rs                                 ██░░░░░░░░░░░░░░  ●    1 signal   avg  52%
+
+  Timeline  t:0 ─────────────────────────────────────────── t:503
+  ·········█····················▓·····················▓···················▓·····
+           ↑t:32                ↑t:220               ↑t:496
+
+  Signals
+  ──────────────────────────────────────────────────────────────────────
+  ██  t:32    not sure            src/auth.rs              [ 25%]
+       "…token validation might break if the token contains special chars…"
+
+  ▓▓  t:220   let me check        src/main.rs              [ 45%]
+       "…The LSP shows the match still isn't seeing the new arm. Let me check…"
+
+  ░░  t:496   perhaps             src/server.rs            [ 52%]
+       "…perhaps we should also handle the case where body is empty…"
+
+  ██ high risk (<35%)   ▓▓ moderate (35–55%)   ░░ low (>55%)
+```
+
+```bash
 h5i notes churn        # which files had the most back-and-forth?
 ```
 
