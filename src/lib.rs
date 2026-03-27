@@ -3,6 +3,7 @@ pub mod blame;
 pub mod claude;
 pub mod delta_store;
 pub mod error;
+pub mod memory;
 pub mod metadata;
 pub mod repository;
 pub mod review;

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
+use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity, TestSource};
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
@@ -177,6 +178,42 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value_t = 7150)]
         port: u16,
+    },
+
+    /// Version-control Claude's memory state alongside your code
+    Memory {
+        #[command(subcommand)]
+        action: MemoryCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Snapshot Claude's current memory into .git/.h5i/memory/<commit-oid>/
+    Snapshot {
+        /// Git commit OID to associate this snapshot with (default: HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+    },
+
+    /// Show how Claude's memory changed between two snapshots
+    Diff {
+        /// Snapshot to diff from (default: second-to-last snapshot)
+        from: Option<String>,
+        /// Snapshot to diff to; omit to compare against live memory (default: latest snapshot)
+        to: Option<String>,
+    },
+
+    /// List all memory snapshots
+    Log,
+
+    /// Restore Claude's memory to the state captured in a snapshot
+    Restore {
+        /// Commit OID whose snapshot to restore
+        commit: String,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
@@ -784,6 +821,150 @@ jq -c '{
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
+        }
+
+        Commands::Memory { action } => {
+            let repo = H5iRepository::open(".")?;
+            let workdir = repo
+                .git()
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("Bare repository not supported"))?
+                .to_path_buf();
+
+            match action {
+                MemoryCommands::Snapshot { commit } => {
+                    // Resolve commit OID: explicit arg or HEAD
+                    let oid_str = match commit {
+                        Some(ref s) => s.clone(),
+                        None => {
+                            let head = repo.git().head()?;
+                            head.peel_to_commit()?.id().to_string()
+                        }
+                    };
+
+                    println!(
+                        "{} {} for commit {}",
+                        STEP,
+                        style("Snapshotting Claude memory").cyan().bold(),
+                        style(&oid_str[..8.min(oid_str.len())]).magenta()
+                    );
+
+                    let count = memory::take_snapshot(&repo.h5i_root, &workdir, &oid_str)?;
+                    println!(
+                        "{} Saved {} file{} to {}",
+                        SUCCESS,
+                        style(count).cyan(),
+                        if count == 1 { "" } else { "s" },
+                        style(format!(
+                            ".git/.h5i/memory/{}/",
+                            &oid_str[..8.min(oid_str.len())]
+                        ))
+                        .dim()
+                    );
+                }
+
+                MemoryCommands::Diff { from, to } => {
+                    // Default: diff last two snapshots (or last snapshot vs. live)
+                    let snapshots = memory::list_snapshots(&repo.h5i_root)?;
+
+                    let (from_oid, to_oid_opt): (String, Option<String>) = match (from, to) {
+                        (Some(f), t) => (f, t),
+                        (None, Some(t)) => {
+                            // from = latest snapshot, to = specified
+                            let latest = snapshots.last().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "No snapshots found. Run `h5i memory snapshot` first."
+                                )
+                            })?;
+                            (latest.commit_oid.clone(), Some(t))
+                        }
+                        (None, None) => {
+                            // from = second-to-last, to = live
+                            if snapshots.is_empty() {
+                                println!(
+                                    "{} No snapshots yet. Run {} first.",
+                                    WARN,
+                                    style("h5i memory snapshot").bold()
+                                );
+                                return Ok(());
+                            }
+                            let from = snapshots.last().unwrap().commit_oid.clone();
+                            (from, None) // to=None means live
+                        }
+                    };
+
+                    let to_label = to_oid_opt.as_deref().unwrap_or("live");
+                    println!(
+                        "{} {} {}..{}",
+                        LOOKING,
+                        style("Computing memory diff").cyan().bold(),
+                        style(&from_oid[..8.min(from_oid.len())]).magenta(),
+                        style(to_label).magenta()
+                    );
+
+                    let diff = memory::diff_snapshots(
+                        &repo.h5i_root,
+                        &workdir,
+                        &from_oid,
+                        to_oid_opt.as_deref(),
+                    )?;
+                    memory::print_memory_diff(&diff);
+                }
+
+                MemoryCommands::Log => {
+                    println!(
+                        "{}\n",
+                        style("Claude Memory Snapshots").bold().underlined()
+                    );
+                    memory::print_memory_log(&repo.h5i_root)?;
+                }
+
+                MemoryCommands::Restore { commit, yes } => {
+                    let snap_meta = {
+                        let snaps = memory::list_snapshots(&repo.h5i_root)?;
+                        snaps
+                            .into_iter()
+                            .find(|s| s.commit_oid.starts_with(&commit))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("No snapshot found for commit {}", commit)
+                            })?
+                    };
+
+                    println!(
+                        "{} Restore memory snapshot from commit {} ({} file{})?",
+                        WARN,
+                        style(&snap_meta.commit_oid[..8]).magenta().bold(),
+                        snap_meta.file_count,
+                        if snap_meta.file_count == 1 { "" } else { "s" }
+                    );
+                    println!(
+                        "  {} This will overwrite your current Claude memory files.",
+                        style("!").yellow()
+                    );
+
+                    if !yes {
+                        print!("\nContinue? [y/N] ");
+                        use std::io::Write as _;
+                        std::io::stdout().flush()?;
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)?;
+                        if !input.trim().eq_ignore_ascii_case("y") {
+                            println!("{} Aborted.", style("!").dim());
+                            return Ok(());
+                        }
+                    }
+
+                    let count =
+                        memory::restore_snapshot(&repo.h5i_root, &workdir, &snap_meta.commit_oid)?;
+                    println!(
+                        "{} Restored {} file{} to {}",
+                        SUCCESS,
+                        style(count).cyan(),
+                        if count == 1 { "" } else { "s" },
+                        style(memory::claude_memory_dir(&workdir).display().to_string()).dim()
+                    );
+                }
+            }
         }
 
         Commands::Resolve { ours, theirs, file } => {
