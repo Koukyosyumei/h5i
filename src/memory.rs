@@ -65,24 +65,43 @@ fn snapshot_dir(h5i_root: &Path, commit_oid: &str) -> PathBuf {
 
 // ── Core operations ───────────────────────────────────────────────────────────
 
-/// Copy Claude's live memory files into `.git/.h5i/memory/<commit_oid>/`.
+/// Copy files from `source_dir` (or the default Claude memory dir) into
+/// `.git/.h5i/memory/<commit_oid>/`.
+///
+/// If `source_dir` is `None` the default path
+/// `~/.claude/projects/<encoded-workdir>/memory/` is used.  If that directory
+/// does not exist yet (Claude Code creates it lazily on first memory write),
+/// an empty snapshot is recorded so the commit is still tracked — the caller
+/// receives `Ok(0)` and should surface a hint to the user.
+///
 /// Returns the number of files snapshotted.
 pub fn take_snapshot(
     h5i_root: &Path,
     workdir: &Path,
     commit_oid: &str,
+    source_dir: Option<&Path>,
 ) -> Result<usize, H5iError> {
-    let mem_dir = claude_memory_dir(workdir);
-    if !mem_dir.exists() {
-        return Err(H5iError::InvalidPath(format!(
-            "Claude memory directory not found: {}\n\
-             Make sure Claude Code has been used in this project at least once.",
-            mem_dir.display()
-        )));
-    }
+    let mem_dir = match source_dir {
+        Some(p) => p.to_path_buf(),
+        None => claude_memory_dir(workdir),
+    };
 
     let snap_dir = snapshot_dir(h5i_root, commit_oid);
     fs::create_dir_all(&snap_dir)?;
+
+    // If the source directory does not exist yet, record an empty snapshot.
+    if !mem_dir.exists() {
+        let meta = SnapshotMeta {
+            commit_oid: commit_oid.to_string(),
+            timestamp: Utc::now(),
+            file_count: 0,
+        };
+        fs::write(
+            snap_dir.join("_meta.json"),
+            serde_json::to_string_pretty(&meta)?,
+        )?;
+        return Ok(0);
+    }
 
     let mut count = 0;
     for entry in fs::read_dir(&mem_dir)? {

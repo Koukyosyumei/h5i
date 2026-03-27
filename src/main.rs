@@ -201,6 +201,9 @@ enum MemoryCommands {
         /// Git commit OID to associate this snapshot with (default: HEAD)
         #[arg(long)]
         commit: Option<String>,
+        /// Override the source directory to snapshot (default: ~/.claude/projects/<repo>/memory/)
+        #[arg(long, value_name = "DIR")]
+        path: Option<PathBuf>,
     },
 
     /// Show how Claude's memory changed between two snapshots
@@ -951,7 +954,7 @@ jq -c '{
                 .to_path_buf();
 
             match action {
-                MemoryCommands::Snapshot { commit } => {
+                MemoryCommands::Snapshot { commit, path } => {
                     // Resolve commit OID: explicit arg or HEAD
                     let oid_str = match commit {
                         Some(ref s) => s.clone(),
@@ -961,25 +964,47 @@ jq -c '{
                         }
                     };
 
+                    let src = path.as_deref();
+                    let default_dir = memory::claude_memory_dir(&workdir);
+                    let display_src = src
+                        .unwrap_or(&default_dir)
+                        .display()
+                        .to_string();
+
                     println!(
-                        "{} {} for commit {}",
+                        "{} {} → commit {}",
                         STEP,
                         style("Snapshotting Claude memory").cyan().bold(),
                         style(&oid_str[..8.min(oid_str.len())]).magenta()
                     );
 
-                    let count = memory::take_snapshot(&repo.h5i_root, &workdir, &oid_str)?;
-                    println!(
-                        "{} Saved {} file{} to {}",
-                        SUCCESS,
-                        style(count).cyan(),
-                        if count == 1 { "" } else { "s" },
-                        style(format!(
-                            ".git/.h5i/memory/{}/",
-                            &oid_str[..8.min(oid_str.len())]
-                        ))
-                        .dim()
-                    );
+                    let count = memory::take_snapshot(&repo.h5i_root, &workdir, &oid_str, src)?;
+
+                    if count == 0 {
+                        println!(
+                            "{} {} at {}",
+                            WARN,
+                            style("No memory files found — empty snapshot recorded.").yellow(),
+                            style(&display_src).dim()
+                        );
+                        println!(
+                            "  {} Claude Code creates this directory the first time it saves a memory.",
+                            style("ℹ").blue()
+                        );
+                        println!(
+                            "  {} You can also snapshot any directory with {}",
+                            style("ℹ").blue(),
+                            style("h5i memory snapshot --path <dir>").bold()
+                        );
+                    } else {
+                        println!(
+                            "{} Saved {} file{} from {}",
+                            SUCCESS,
+                            style(count).cyan(),
+                            if count == 1 { "" } else { "s" },
+                            style(&display_src).dim()
+                        );
+                    }
                 }
 
                 MemoryCommands::Diff { from, to } => {
