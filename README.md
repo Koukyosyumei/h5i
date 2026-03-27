@@ -524,13 +524,13 @@ h5i stores its data in two git refs that are **not** included in a normal `git p
 | `refs/notes/commits` | AI provenance, test metrics, causal links, integrity reports | `git push origin refs/notes/commits` |
 | `refs/h5i/memory` | Claude memory snapshots | `git push origin refs/h5i/memory` |
 
-### One-shot sync
+### One-shot push
 
-The `h5i sync` command pushes both refs at once:
+The `h5i push` command pushes both refs at once:
 
 ```bash
-h5i sync                 # push to origin
-h5i sync --remote upstream
+h5i push                 # push to origin
+h5i push --remote upstream
 ```
 
 To pull both refs from a remote:
@@ -572,7 +572,7 @@ With these refspecs in place, a plain `git fetch origin` (or `git pull`) will al
 # — Alice —
 h5i commit -m "add rate limiting" --prompt "..." --agent claude-code
 h5i memory snapshot
-h5i sync                            # push code + notes + memory in one step
+h5i push                            # push code + notes + memory in one step
                                     # (git push origin is separate for code)
 git push origin main
 

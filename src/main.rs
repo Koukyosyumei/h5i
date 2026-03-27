@@ -181,7 +181,7 @@ enum Commands {
     },
 
     /// Push all h5i refs (notes + memory) to a remote in one shot
-    Sync {
+    Push {
         /// Remote to push to
         #[arg(short, long, default_value = "origin")]
         remote: String,
@@ -262,7 +262,7 @@ fn main() -> anyhow::Result<()> {
             );
             println!(
                 "    {}  push all h5i data to your remote",
-                style("h5i sync").cyan()
+                style("h5i push").cyan()
             );
             println!();
             println!(
@@ -279,7 +279,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "  {} Run {} (or see README §9) to share them with your team.",
                 style("     ").dim(),
-                style("h5i sync").bold()
+                style("h5i push").bold()
             );
         }
 
@@ -875,13 +875,13 @@ jq -c '{
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
         }
 
-        Commands::Sync { remote } => {
+        Commands::Push { remote } => {
             let workdir = std::env::current_dir()?;
 
             println!(
                 "{} {} to {}",
                 STEP,
-                style("Syncing all h5i refs").cyan().bold(),
+                style("Pushing all h5i refs").cyan().bold(),
                 style(&remote).yellow()
             );
 
