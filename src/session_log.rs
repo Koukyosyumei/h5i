@@ -684,6 +684,69 @@ pub fn print_causal_chain(analysis: &SessionAnalysis) {
     }
 }
 
+// ── Heatmap data helpers (pub(crate) for unit testing) ───────────────────────
+
+/// Group uncertainty annotations by file, sorted riskiest (lowest average
+/// confidence) first. Returns `(file_path, [confidence_values])` pairs.
+pub(crate) fn group_annotations_by_file(
+    annotations: &[&UncertaintyAnnotation],
+) -> Vec<(String, Vec<f32>)> {
+    let mut map: std::collections::HashMap<String, Vec<f32>> =
+        std::collections::HashMap::new();
+    for ann in annotations {
+        map.entry(ann.context_file.clone())
+            .or_default()
+            .push(ann.confidence);
+    }
+    let mut list: Vec<(String, Vec<f32>)> = map.into_iter().collect();
+    list.sort_by(|a, b| {
+        let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+        avg(&a.1).partial_cmp(&avg(&b.1)).unwrap()
+    });
+    list
+}
+
+/// Build a sparkline of `width` cells. Each cell holds the minimum (riskiest)
+/// confidence among all annotations whose turn maps to that position.
+/// Returns `None` for empty cells and `Some(confidence)` for occupied ones.
+pub(crate) fn build_timeline_cells(
+    annotations: &[&UncertaintyAnnotation],
+    width: usize,
+) -> Vec<Option<f32>> {
+    if annotations.is_empty() || width == 0 {
+        return vec![None; width];
+    }
+    let min_t = annotations.iter().map(|a| a.turn).min().unwrap_or(0);
+    let max_t = annotations.iter().map(|a| a.turn).max().unwrap_or(1);
+    let t_range = (max_t - min_t).max(1) as f64;
+    let mut cells: Vec<Option<f32>> = vec![None; width];
+    for ann in annotations {
+        let pos =
+            (((ann.turn - min_t) as f64 / t_range) * (width - 1) as f64).round() as usize;
+        let pos = pos.min(width - 1);
+        cells[pos] = Some(match cells[pos] {
+            None => ann.confidence,
+            Some(prev) => prev.min(ann.confidence),
+        });
+    }
+    cells
+}
+
+/// Build a non-overlapping pointer-label string from sorted `(column, label)` pairs.
+/// Labels that would overlap a preceding label are silently skipped.
+pub(crate) fn build_pointer_string(positions: &[(usize, String)]) -> String {
+    let mut buf = String::new();
+    let mut cursor = 0usize;
+    for (pos, label) in positions {
+        if *pos >= cursor {
+            buf.push_str(&" ".repeat(pos - cursor));
+            buf.push_str(label);
+            cursor = pos + label.len();
+        }
+    }
+    buf
+}
+
 pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) {
     use console::style;
 
@@ -726,21 +789,7 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
     println!();
 
     // ── Risk Map ──────────────────────────────────────────────────────────────
-    // Group annotations by file, collect confidence values
-    let mut file_map: std::collections::HashMap<&str, Vec<f32>> =
-        std::collections::HashMap::new();
-    for ann in &annotations {
-        file_map
-            .entry(ann.context_file.as_str())
-            .or_default()
-            .push(ann.confidence);
-    }
-    // Sort riskiest (lowest avg confidence) first
-    let mut file_list: Vec<(&str, Vec<f32>)> = file_map.into_iter().collect();
-    file_list.sort_by(|a, b| {
-        let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
-        avg(&a.1).partial_cmp(&avg(&b.1)).unwrap()
-    });
+    let file_list = group_annotations_by_file(&annotations);
 
     const NAME_W: usize = 44;
     const BAR_W: usize = 16;
@@ -829,15 +878,7 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
     );
 
     // Build the sparkline: lowest confidence (most risky) wins each cell
-    let mut cells: Vec<Option<f32>> = vec![None; TL_W];
-    for ann in &annotations {
-        let pos = (((ann.turn - min_t) as f64 / t_range) * (TL_W - 1) as f64).round() as usize;
-        let pos = pos.min(TL_W - 1);
-        cells[pos] = Some(match cells[pos] {
-            None => ann.confidence,
-            Some(prev) => prev.min(ann.confidence),
-        });
-    }
+    let cells: Vec<Option<f32>> = build_timeline_cells(&annotations, TL_W);
     let sparkline: String = cells
         .iter()
         .map(|c| match *c {
@@ -864,16 +905,7 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
             (pos.min(TL_W - 1), format!("↑t:{}", ann.turn))
         })
         .collect();
-    // Remove overlaps left-to-right
-    let mut ptr_buf = String::new();
-    let mut cursor = 0usize;
-    for (pos, label) in &ptr_positions {
-        if *pos >= cursor {
-            ptr_buf.push_str(&" ".repeat(pos - cursor));
-            ptr_buf.push_str(label);
-            cursor = pos + label.len();
-        }
-    }
+    let ptr_buf = build_pointer_string(&ptr_positions);
     if !ptr_buf.trim().is_empty() {
         println!("  {}", style(ptr_buf.trim_end()).dim());
     }
@@ -1065,5 +1097,566 @@ fn shorten_path(p: &str, max: usize) -> String {
         p.to_string()
     } else {
         format!("…{}", &p[p.len().saturating_sub(max - 1)..])
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Fixtures ──────────────────────────────────────────────────────────────
+
+    fn make_ann(file: &str, phrase: &str, confidence: f32, turn: usize) -> UncertaintyAnnotation {
+        UncertaintyAnnotation {
+            context_file: file.to_string(),
+            snippet: format!("surrounding {} context here", phrase),
+            phrase: phrase.to_string(),
+            confidence,
+            turn,
+        }
+    }
+
+    /// Write a JSONL string to a unique temp file whose name passes `is_uuid_filename`.
+    /// Uses an atomic counter so parallel tests never share the same path.
+    fn write_temp_jsonl(content: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CTR: AtomicUsize = AtomicUsize::new(0);
+        let n = CTR.fetch_add(1, Ordering::Relaxed);
+        let mut path = std::env::temp_dir();
+        path.push(format!("{:08x}-0000-0000-0000-000000000000.jsonl", n));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn join_lines(lines: &[&str]) -> String {
+        lines.join("\n")
+    }
+
+    // Minimal JSONL helpers — produce valid JSON the parser understands.
+    fn user_msg(text: &str) -> String {
+        let esc = text.replace('\\', "\\\\").replace('"', "\\\"");
+        format!(r#"{{"type":"user","message":{{"content":[{{"type":"text","text":"{esc}"}}]}}}}"#)
+    }
+
+    fn assistant_text(text: &str) -> String {
+        let esc = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+        format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{esc}"}}]}}}}"#
+        )
+    }
+
+    fn assistant_edit(file: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Edit","input":{{"file_path":"{file}","old_string":"x","new_string":"y"}}}}]}}}}"#
+        )
+    }
+
+    fn assistant_read(file: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Read","input":{{"file_path":"{file}"}}}}]}}}}"#
+        )
+    }
+
+    fn assistant_bash(cmd: &str) -> String {
+        let esc = cmd.replace('"', "\\\"");
+        format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"{esc}"}}}}]}}}}"#
+        )
+    }
+
+    // ── split_sentences ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_split_sentences_three_sentences() {
+        // Each sentence (after trim) must be > 20 chars to survive the length guard.
+        let text = "This is one complete sentence. And this is another complete one! Is this really a long question?";
+        let sentences = split_sentences(text);
+        assert_eq!(sentences.len(), 3, "sentences: {sentences:?}");
+        assert!(sentences[0].contains("complete sentence"));
+        assert!(sentences[1].contains("another"));
+        assert!(sentences[2].contains("question"));
+    }
+
+    #[test]
+    fn test_split_sentences_short_fragments_dropped() {
+        // "OK." is only 3 chars — below the 20-char threshold
+        let text = "OK. This is a proper sentence that should survive.";
+        let sentences = split_sentences(text);
+        assert!(sentences.iter().any(|s| s.contains("proper sentence")));
+        assert!(!sentences.iter().any(|s| s.trim() == "OK."));
+    }
+
+    #[test]
+    fn test_split_sentences_trailing_fragment_kept_if_long_enough() {
+        // A fragment without terminal punctuation should appear if > 20 chars
+        let text = "I'll implement the new handler for this endpoint";
+        let sentences = split_sentences(text);
+        assert_eq!(sentences.len(), 1);
+        assert!(sentences[0].contains("implement"));
+    }
+
+    // ── extract_snippet ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_snippet_contains_phrase() {
+        let text = "The code was fine. I'm not sure if the change will break things.";
+        let snippet = extract_snippet(text, "not sure", 200);
+        assert!(snippet.contains("not sure"));
+    }
+
+    #[test]
+    fn test_extract_snippet_respects_max_len() {
+        let long = "a".repeat(200) + " not sure " + &"b".repeat(200);
+        let snippet = extract_snippet(&long, "not sure", 50);
+        // The snippet is at most max_len ASCII chars + the "…" ellipsis (3 UTF-8 bytes).
+        // Check char count (visual width) rather than byte length.
+        assert!(
+            snippet.chars().count() <= 52,
+            "snippet too long: {} chars — '{snippet}'",
+            snippet.chars().count()
+        );
+    }
+
+    #[test]
+    fn test_extract_snippet_phrase_at_start() {
+        let text = "not sure what to do here because the code is complex";
+        let snippet = extract_snippet(text, "not sure", 200);
+        assert!(snippet.contains("not sure"));
+    }
+
+    // ── jaccard_similarity ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_jaccard_identical_strings() {
+        assert_eq!(jaccard_similarity("hello world", "hello world"), 1.0);
+    }
+
+    #[test]
+    fn test_jaccard_completely_disjoint() {
+        assert_eq!(jaccard_similarity("foo bar", "baz qux"), 0.0);
+    }
+
+    #[test]
+    fn test_jaccard_partial_overlap() {
+        // intersection = {foo, bar} = 2 / union = {foo, bar, baz, qux} = 4 → 0.5
+        let sim = jaccard_similarity("foo bar baz", "foo bar qux");
+        assert!((sim - 0.5).abs() < 1e-5, "expected 0.5, got {sim}");
+    }
+
+    #[test]
+    fn test_jaccard_empty_strings() {
+        // Both empty → union = 0 → returns 1.0 (identical)
+        assert_eq!(jaccard_similarity("", ""), 1.0);
+    }
+
+    // ── dedup_similar ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dedup_removes_exact_duplicates() {
+        let items = vec![
+            "I'll implement this in the auth module".to_string(),
+            "I'll implement this in the auth module".to_string(),
+            "I'll build something completely different here".to_string(),
+        ];
+        let result = dedup_similar(items, 0.65);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_dedup_keeps_distinct_items() {
+        let items = vec![
+            "I'll write the token refresh logic now".to_string(),
+            "Let me refactor the session store code".to_string(),
+            "The best approach is to use Redis for caching".to_string(),
+        ];
+        let result = dedup_similar(items, 0.65);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_dedup_empty_input() {
+        let result = dedup_similar(vec![], 0.65);
+        assert!(result.is_empty());
+    }
+
+    // ── shorten_path ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_shorten_path_fits() {
+        let p = "src/auth.rs";
+        assert_eq!(shorten_path(p, 44), "src/auth.rs");
+    }
+
+    #[test]
+    fn test_shorten_path_truncates_with_ellipsis() {
+        let p = "a/very/deeply/nested/path/that/exceeds/the/max/width/src/auth.rs";
+        let result = shorten_path(p, 20);
+        // "…" is 3 UTF-8 bytes; compare char count (visual width) not byte length.
+        assert!(
+            result.chars().count() <= 20,
+            "result too long: {} chars — '{result}'",
+            result.chars().count()
+        );
+        assert!(result.starts_with('…'), "expected leading ellipsis in '{result}'");
+        assert!(result.ends_with("auth.rs"));
+    }
+
+    #[test]
+    fn test_shorten_path_exact_length() {
+        let p = "src/auth.rs"; // 11 chars
+        assert_eq!(shorten_path(p, 11), "src/auth.rs");
+    }
+
+    // ── group_annotations_by_file ─────────────────────────────────────────────
+
+    #[test]
+    fn test_group_riskiest_file_first() {
+        let a1 = make_ann("src/auth.rs", "not sure", 0.25, 10);
+        let a2 = make_ann("src/main.rs", "perhaps", 0.45, 20);
+        let a3 = make_ann("src/auth.rs", "might break", 0.30, 30);
+        let refs = [&a1, &a2, &a3];
+        let groups = group_annotations_by_file(&refs);
+        // auth.rs avg = (0.25+0.30)/2 = 0.275 < main.rs avg = 0.45 → auth first
+        assert_eq!(groups[0].0, "src/auth.rs");
+        assert_eq!(groups[1].0, "src/main.rs");
+    }
+
+    #[test]
+    fn test_group_confidence_values_collected() {
+        let a1 = make_ann("src/auth.rs", "not sure", 0.25, 10);
+        let a2 = make_ann("src/auth.rs", "unclear", 0.30, 20);
+        let refs = [&a1, &a2];
+        let groups = group_annotations_by_file(&refs);
+        assert_eq!(groups.len(), 1);
+        let confs = &groups[0].1;
+        assert_eq!(confs.len(), 2);
+        assert!(confs.contains(&0.25));
+        assert!(confs.contains(&0.30));
+    }
+
+    #[test]
+    fn test_group_single_annotation() {
+        let a = make_ann("src/lib.rs", "unclear", 0.30, 5);
+        let refs = [&a];
+        let groups = group_annotations_by_file(&refs);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0, "src/lib.rs");
+    }
+
+    #[test]
+    fn test_group_empty_input() {
+        let groups = group_annotations_by_file(&[]);
+        assert!(groups.is_empty());
+    }
+
+    // ── build_timeline_cells ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_timeline_empty_annotations() {
+        let cells = build_timeline_cells(&[], 10);
+        assert_eq!(cells.len(), 10);
+        assert!(cells.iter().all(|c| c.is_none()));
+    }
+
+    #[test]
+    fn test_timeline_zero_width() {
+        let a = make_ann("src/auth.rs", "not sure", 0.25, 10);
+        let cells = build_timeline_cells(&[&a], 0);
+        assert!(cells.is_empty());
+    }
+
+    #[test]
+    fn test_timeline_single_annotation_lands_at_start() {
+        // When min_t == max_t the t_range becomes 1; pos = (0/1)*9 = 0
+        let a = make_ann("src/auth.rs", "not sure", 0.25, 50);
+        let cells = build_timeline_cells(&[&a], 10);
+        assert_eq!(cells[0], Some(0.25));
+        assert!(cells[1..].iter().all(|c| c.is_none()));
+    }
+
+    #[test]
+    fn test_timeline_two_annotations_at_endpoints() {
+        let a1 = make_ann("src/a.rs", "not sure", 0.25, 0);
+        let a2 = make_ann("src/b.rs", "perhaps", 0.45, 100);
+        let cells = build_timeline_cells(&[&a1, &a2], 11);
+        assert_eq!(cells[0], Some(0.25));
+        assert_eq!(cells[10], Some(0.45));
+        assert!(cells[1..10].iter().all(|c| c.is_none()));
+    }
+
+    #[test]
+    fn test_timeline_riskiest_wins_on_collision() {
+        // Two annotations at the same turn: lower confidence must survive
+        let a1 = make_ann("src/a.rs", "not sure", 0.20, 50);
+        let a2 = make_ann("src/b.rs", "perhaps", 0.50, 50);
+        let cells = build_timeline_cells(&[&a1, &a2], 10);
+        let occupied: Vec<_> = cells.iter().filter(|c| c.is_some()).collect();
+        assert_eq!(occupied.len(), 1);
+        assert_eq!(*occupied[0], Some(0.20));
+    }
+
+    #[test]
+    fn test_timeline_middle_annotation() {
+        // annotation at turn 50 out of 0–100 range → position 5 in a 11-cell grid
+        let a1 = make_ann("src/a.rs", "not sure", 0.30, 0);
+        let a2 = make_ann("src/b.rs", "unclear", 0.30, 50);
+        let a3 = make_ann("src/c.rs", "perhaps", 0.30, 100);
+        let cells = build_timeline_cells(&[&a1, &a2, &a3], 11);
+        assert!(cells[5].is_some(), "middle turn should map to cell 5");
+    }
+
+    // ── build_pointer_string ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_pointer_string_two_non_overlapping() {
+        let positions = vec![
+            (0, "↑t:0".to_string()),
+            (20, "↑t:100".to_string()),
+        ];
+        let result = build_pointer_string(&positions);
+        assert!(result.starts_with("↑t:0"), "got: {result:?}");
+        assert!(result.contains("↑t:100"), "got: {result:?}");
+    }
+
+    #[test]
+    fn test_pointer_string_overlap_skips_second() {
+        // "↑t:1" is 4 chars wide (starts at 0, ends at 3); second label at col 2
+        // is inside the first → should be skipped
+        let positions = vec![
+            (0, "↑t:1".to_string()),
+            (2, "↑t:2".to_string()),
+        ];
+        let result = build_pointer_string(&positions);
+        assert!(result.starts_with("↑t:1"), "first label missing: {result:?}");
+        assert!(!result.contains("↑t:2"), "overlapping label should be skipped: {result:?}");
+    }
+
+    #[test]
+    fn test_pointer_string_empty() {
+        assert_eq!(build_pointer_string(&[]), "");
+    }
+
+    #[test]
+    fn test_pointer_string_single() {
+        let positions = vec![(5, "↑t:42".to_string())];
+        let result = build_pointer_string(&positions);
+        assert!(result.starts_with("     ↑t:42"), "got: {result:?}");
+    }
+
+    // ── analyze_session — JSONL parsing ───────────────────────────────────────
+
+    #[test]
+    fn test_analyze_session_user_trigger() {
+        let jsonl = join_lines(&[
+            &user_msg("Add OAuth2 login with GitHub"),
+            &assistant_text("I'll start by reading the auth module."),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert_eq!(
+            analysis.causal_chain.user_trigger,
+            "Add OAuth2 login with GitHub"
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_detects_uncertainty_phrase() {
+        let jsonl = join_lines(&[
+            &user_msg("refactor the auth module"),
+            &assistant_text(
+                "I'll refactor this module carefully. I'm not sure if the change \
+                 will break the token validation logic — let me check the tests first.",
+            ),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        let phrases: Vec<&str> =
+            analysis.uncertainty.iter().map(|a| a.phrase.as_str()).collect();
+        assert!(
+            phrases.iter().any(|&p| p == "not sure" || p == "let me check" || p == "i'm not sure"),
+            "expected uncertainty signal, got phrases: {phrases:?}"
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_no_uncertainty_in_confident_text() {
+        let jsonl = join_lines(&[
+            &user_msg("add a constant"),
+            &assistant_text(
+                "I'll add the MAX_RETRIES constant with value 3 to the config module. \
+                 The value is clearly documented in the existing code.",
+            ),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert!(
+            analysis.uncertainty.is_empty(),
+            "unexpected signals: {:?}",
+            analysis.uncertainty.iter().map(|a| &a.phrase).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_footprint_edited_files() {
+        let jsonl = join_lines(&[
+            &user_msg("add rate limiting"),
+            &assistant_edit("/home/user/src/auth.rs"),
+            &assistant_edit("/home/user/src/main.rs"),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert_eq!(
+            analysis.footprint.edited.len(),
+            2,
+            "edited: {:?}",
+            analysis.footprint.edited
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_implicit_deps() {
+        // config.rs read-only → implicit dep; auth.rs edited → not an implicit dep
+        let jsonl = join_lines(&[
+            &user_msg("add rate limiting"),
+            &assistant_read("/home/user/src/config.rs"),
+            &assistant_edit("/home/user/src/auth.rs"),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert!(
+            analysis.footprint.implicit_deps.iter().any(|p| p.contains("config.rs")),
+            "config.rs should be an implicit dep: {:?}",
+            analysis.footprint.implicit_deps
+        );
+        assert!(
+            !analysis.footprint.implicit_deps.iter().any(|p| p.contains("auth.rs")),
+            "auth.rs was edited, should NOT be implicit dep"
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_tool_call_count() {
+        let jsonl = join_lines(&[
+            &user_msg("fix the bug"),
+            &assistant_read("/home/user/src/auth.rs"),
+            &assistant_read("/home/user/src/auth.rs"),
+            &assistant_edit("/home/user/src/auth.rs"),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert_eq!(analysis.tool_call_count, 3);
+    }
+
+    #[test]
+    fn test_analyze_session_replay_hash_is_stable() {
+        let jsonl = join_lines(&[&user_msg("do something")]);
+        let path = write_temp_jsonl(&jsonl);
+        let h1 = analyze_session(&path).unwrap().replay_hash;
+        let h2 = analyze_session(&path).unwrap().replay_hash;
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_analyze_session_replay_hash_differs_for_different_content() {
+        let p1 = write_temp_jsonl(&join_lines(&[&user_msg("task A")]));
+        let p2 = write_temp_jsonl(&join_lines(&[&user_msg("task B --- unique")]));
+        let h1 = analyze_session(&p1).unwrap().replay_hash;
+        let h2 = analyze_session(&p2).unwrap().replay_hash;
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_analyze_session_churn_score() {
+        // 2 edits + 1 read → churn = 2/(2+1) ≈ 0.667
+        let file = "/home/user/src/auth.rs";
+        let jsonl = join_lines(&[
+            &user_msg("fix auth"),
+            &assistant_read(file),
+            &assistant_edit(file),
+            &assistant_edit(file),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        let fc = analysis
+            .churn
+            .iter()
+            .find(|c| c.file.contains("auth.rs"))
+            .expect("auth.rs should have a churn entry");
+        assert_eq!(fc.edit_count, 2);
+        assert_eq!(fc.read_count, 1);
+        assert!(
+            (fc.churn_score - 2.0 / 3.0).abs() < 1e-4,
+            "expected churn ≈ 0.667, got {}",
+            fc.churn_score
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_key_decisions_extracted() {
+        let jsonl = join_lines(&[
+            &user_msg("refactor the module"),
+            &assistant_text(
+                "I'll start by reading the existing code. \
+                 I will then restructure the module into smaller functions. \
+                 Let me also add proper error handling throughout the codebase.",
+            ),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert!(
+            !analysis.causal_chain.key_decisions.is_empty(),
+            "expected key decisions to be extracted"
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_bash_commands_captured() {
+        let jsonl = join_lines(&[
+            &user_msg("run tests"),
+            &assistant_bash("cargo test --verbose"),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert!(
+            analysis.footprint.bash_commands.iter().any(|c| c.contains("cargo test")),
+            "bash commands: {:?}",
+            analysis.footprint.bash_commands
+        );
+    }
+
+    #[test]
+    fn test_analyze_session_message_count() {
+        let jsonl = join_lines(&[
+            &user_msg("first message"),
+            &assistant_text("I'll handle this for you now."),
+            &user_msg("second message"),
+            &assistant_text("I'll also handle this one here."),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        assert_eq!(analysis.message_count, 4);
+    }
+
+    #[test]
+    fn test_analyze_session_consulted_file_count() {
+        let file = "/home/user/src/auth.rs";
+        // Read the same file 3 times → count should be 3
+        let jsonl = join_lines(&[
+            &user_msg("investigate auth"),
+            &assistant_read(file),
+            &assistant_read(file),
+            &assistant_read(file),
+        ]);
+        let path = write_temp_jsonl(&jsonl);
+        let analysis = analyze_session(&path).unwrap();
+        let entry = analysis
+            .footprint
+            .consulted
+            .iter()
+            .find(|c| c.path.contains("auth.rs"))
+            .expect("auth.rs should appear in consulted");
+        assert_eq!(entry.count, 3);
     }
 }
