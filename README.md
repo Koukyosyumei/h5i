@@ -17,6 +17,27 @@ cd your-project && h5i init
 
 ---
 
+## Feature Overview
+
+| Feature | Command | What it does |
+|---------|---------|--------------|
+| **AI-tagged commits** | `h5i commit --prompt "…" --model claude-sonnet-4-6 --audit` | Stores the exact prompt, model, agent ID, and test results alongside every commit |
+| **AI-aware blame** | `h5i blame <file>` | Shows per-line authorship with agent name, model, and test status |
+| **Enriched log** | `h5i log` | Displays the full AI provenance inline — prompt, model, agent, test badge |
+| **Intent rollback** | `h5i rollback "the OAuth changes"` | Reverts a commit by matching your description against stored prompts — no hash needed |
+| **Integrity audit** | `h5i commit --audit` | Runs 12 deterministic rules before committing: credential leaks, CI/CD tampering, scope creep, `eval()` patterns, and more |
+| **Session footprint** | `h5i notes analyze && h5i notes footprint` | Maps which files the AI read vs. edited in a Claude Code session |
+| **Uncertainty heatmap** | `h5i notes uncertainty` | Surfaces every moment the AI hedged, with the exact quote and confidence score |
+| **File churn** | `h5i notes churn` | Quantifies the edit-to-read ratio per file so high-churn code gets extra review |
+| **Intent graph** | `h5i notes graph` | Visualises the causal chain across commits — which AI commit triggered which |
+| **Context workspace** | `h5i context init / trace / commit` | Gives the AI a version-controlled notepad (goal, OTA trace, milestones) that survives session resets |
+| **Session handoff** | `h5i resume` | Generates a ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — from local data, no API call |
+| **Memory tracking** | `h5i memory snapshot / diff` | Snapshots Claude's memory files at every commit and diffs them across versions |
+| **Team sharing** | `h5i push / pull` | Syncs all AI metadata (Git Notes, memory refs) to/from the remote in one command |
+| **Web dashboard** | `h5i serve` | Opens a browser UI with Timeline, Summary, Integrity, Intent Graph, Memory, and Sessions tabs |
+
+---
+
 ## Example Use Cases
 
 ### 1. Find out who wrote this — and with what prompt
