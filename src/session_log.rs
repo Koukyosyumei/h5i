@@ -159,7 +159,8 @@ pub struct SessionAnalysis {
 /// Return the path of the most recently modified JSONL session file for `workdir`.
 pub fn find_latest_session(workdir: &Path) -> Option<PathBuf> {
     let home = dirs_home()?;
-    let encoded = workdir.to_string_lossy().replace('/', "-");
+    let workdir = workdir.to_string_lossy();
+    let encoded = workdir.trim_end_matches('/').replace('/', "-");
     let dir = home.join(".claude/projects").join(&encoded);
 
     let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(&dir)

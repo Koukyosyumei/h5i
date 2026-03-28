@@ -49,3 +49,5 @@ h5i resolve <ours> <theirs> <file>
 - **tiktoken-rs** — Token counting for AI metadata
 - **notify** — File system watching
 - **clap** — CLI parsing
+
+@.claude/h5i.md
