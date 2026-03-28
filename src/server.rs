@@ -2351,14 +2351,322 @@ function shortPath(p, max) {
   return '…' + p.slice(-(max-1));
 }
 
-function esc(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
 // ── Boot ──────────────────────────────────────────────────────────────────
 loadAll();
 </script>
 </body>
 </html>
 "##;
+
+// ── Frontend tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod frontend_tests {
+    use super::FRONTEND_HTML;
+    use std::collections::{HashMap, HashSet};
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// Extract the single inline `<script>…</script>` block.
+    fn extract_js(html: &str) -> &str {
+        let tag = "<script>";
+        let start = html.find(tag).expect("no <script> tag") + tag.len();
+        let end = html.rfind("</script>").expect("no </script> tag");
+        &html[start..end]
+    }
+
+    /// Map every top-level `const NAME`, `let NAME`, `function NAME(`, or
+    /// `async function NAME(` to the line numbers (1-based, relative to the
+    /// script block) where it is declared.
+    /// Only lines with no leading whitespace are considered top-level.
+    fn top_level_declarations(js: &str) -> HashMap<String, Vec<usize>> {
+        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, line) in js.lines().enumerate() {
+            let lineno = i + 1;
+            let name: Option<String> =
+                if let Some(rest) = line.strip_prefix("const ").or_else(|| line.strip_prefix("let ")) {
+                    let n: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    if n.is_empty() { None } else { Some(n) }
+                } else if let Some(rest) = line
+                    .strip_prefix("async function ")
+                    .or_else(|| line.strip_prefix("function "))
+                {
+                    let n: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    if n.is_empty() { None } else { Some(n) }
+                } else {
+                    None
+                };
+            if let Some(name) = name {
+                map.entry(name).or_default().push(lineno);
+            }
+        }
+        map
+    }
+
+    /// Collect all static string arguments to `id('...')` and `setText('...',` calls.
+    /// Skips dynamic IDs that contain `+`, whitespace, or end with `-` (partial prefixes
+    /// used in concatenations like `id('card-' + idx)`).
+    fn collect_static_id_refs(js: &str) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        for call in &["id('", "setText('"] {
+            let mut rest = js;
+            while let Some(pos) = rest.find(call) {
+                rest = &rest[pos + call.len()..];
+                if let Some(end) = rest.find('\'') {
+                    let name = &rest[..end];
+                    if !name.contains('+')
+                        && !name.contains(' ')
+                        && !name.ends_with('-')
+                        && !name.is_empty()
+                    {
+                        ids.insert(name.to_string());
+                    }
+                    rest = &rest[end..];
+                }
+            }
+        }
+        ids
+    }
+
+    /// Collect all `id="..."` attribute values present in the HTML.
+    fn collect_html_ids(html: &str) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        let needle = "id=\"";
+        let mut rest = html;
+        while let Some(pos) = rest.find(needle) {
+            rest = &rest[pos + needle.len()..];
+            if let Some(end) = rest.find('"') {
+                ids.insert(rest[..end].to_string());
+                rest = &rest[end..];
+            }
+        }
+        ids
+    }
+
+    /// Collect all `fetch('/api/...')` path strings (without query params).
+    fn collect_fetch_paths(js: &str) -> Vec<String> {
+        let mut paths = Vec::new();
+        let needle = "fetch('/api/";
+        let mut rest = js;
+        while let Some(pos) = rest.find(needle) {
+            rest = &rest[pos + "fetch('".len()..];
+            let end = rest.find(|c| c == '\'' || c == '?').unwrap_or(rest.len());
+            paths.push(rest[..end].to_string());
+            rest = &rest[end..];
+        }
+        paths
+    }
+
+    // ── structure ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_html_has_exactly_one_script_block() {
+        let count = FRONTEND_HTML.matches("<script>").count();
+        assert_eq!(count, 1, "Expected exactly 1 <script> block, found {}", count);
+    }
+
+    #[test]
+    fn test_html_has_doctype_and_charset() {
+        assert!(FRONTEND_HTML.starts_with("<!DOCTYPE html>"), "Missing DOCTYPE");
+        assert!(FRONTEND_HTML.contains("charset=\"UTF-8\""), "Missing charset meta tag");
+    }
+
+    // ── JavaScript declarations ───────────────────────────────────────────────
+
+    #[test]
+    fn test_no_duplicate_top_level_js_declarations() {
+        let js = extract_js(FRONTEND_HTML);
+        let decls = top_level_declarations(js);
+        let mut dups: Vec<(String, Vec<usize>)> = decls
+            .into_iter()
+            .filter(|(_, lines)| lines.len() > 1)
+            .collect();
+        dups.sort_by_key(|(n, _)| n.clone());
+        assert!(
+            dups.is_empty(),
+            "Duplicate top-level JS declarations found:\n{}",
+            dups.iter()
+                .map(|(n, lns)| format!("  '{}' declared at script lines {:?}", n, lns))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    #[test]
+    fn test_required_js_functions_defined() {
+        let js = extract_js(FRONTEND_HTML);
+        let decls = top_level_declarations(js);
+        let required = [
+            "loadAll", "loadCommits", "loadRepo",
+            "filter", "render", "renderSummary", "renderSparkline",
+            "switchTab", "commitHTML", "testBadge", "agentChartHTML",
+            "toggleFilter", "loadSessionList", "loadMemorySnapshots",
+            "id", "setText", "esc",
+        ];
+        let missing: Vec<&str> = required.iter().filter(|&&f| !decls.contains_key(f)).copied().collect();
+        assert!(
+            missing.is_empty(),
+            "Required JS functions/variables not declared: {:?}",
+            missing
+        );
+    }
+
+    #[test]
+    fn test_boot_call_present() {
+        let js = extract_js(FRONTEND_HTML);
+        let last_non_empty = js.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        assert_eq!(
+            last_non_empty.trim(), "loadAll();",
+            "Expected last JS statement to be 'loadAll();', got: {:?}",
+            last_non_empty.trim()
+        );
+    }
+
+    // ── DOM elements ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_required_html_ids_exist() {
+        let ids = collect_html_ids(FRONTEND_HTML);
+        let required = [
+            // Timeline panel
+            "timeline-list", "search",
+            "tab-count", "pill-ai", "pill-test", "pill-fail",
+            // Stats bar
+            "s-loaded", "s-total", "s-ai", "s-tested", "s-passrate",
+            // Sidebar stats
+            "side-total", "side-ai", "side-human", "side-ratio",
+            // Header
+            "repo-name", "branch-badge",
+            // Sparkline
+            "sparkline-svg", "sparkline-label",
+            // Panels
+            "panel-timeline", "panel-summary", "panel-integrity",
+            "panel-intentgraph", "panel-review", "panel-memory", "panel-sessions",
+            // Summary panel
+            "sum-cards", "sum-charts",
+            // Sessions panel
+            "sl-list", "sl-detail",
+            // Memory panel
+            "mem-snap-list", "mem-snap-count", "mem-viewer",
+        ];
+        let missing: Vec<&str> = required.iter().filter(|&&id| !ids.contains(id)).copied().collect();
+        assert!(
+            missing.is_empty(),
+            "Required HTML id=\"...\" elements are missing: {:?}",
+            missing
+        );
+    }
+
+    #[test]
+    fn test_js_static_id_refs_exist_in_html() {
+        let js = extract_js(FRONTEND_HTML);
+        let html_ids = collect_html_ids(FRONTEND_HTML);
+        let js_refs = collect_static_id_refs(js);
+        // IDs that are created dynamically via innerHTML and won't be in the initial HTML.
+        let dynamic_ids: HashSet<&str> = [
+            "int-result", "audit-result",  // injected by integrity handlers
+        ]
+        .into_iter()
+        .collect();
+        let mut missing: Vec<String> = js_refs
+            .into_iter()
+            .filter(|id| !html_ids.contains(id.as_str()) && !dynamic_ids.contains(id.as_str()))
+            .collect();
+        missing.sort();
+        assert!(
+            missing.is_empty(),
+            "JS calls id('...') or setText('...') for IDs not present in the HTML:\n{}",
+            missing.iter().map(|s| format!("  '{}'", s)).collect::<Vec<_>>().join("\n")
+        );
+    }
+
+    #[test]
+    fn test_tab_panel_ids_match_switchtab_calls() {
+        let html_ids = collect_html_ids(FRONTEND_HTML);
+        let needle = "switchTab('";
+        let mut rest = FRONTEND_HTML;
+        let mut checked = 0usize;
+        while let Some(pos) = rest.find(needle) {
+            rest = &rest[pos + needle.len()..];
+            if let Some(end) = rest.find('\'') {
+                let tab = &rest[..end];
+                // Skip template-literal substitutions like switchTab('${t}')
+                // that appear inside the switchTab() function body itself.
+                if !tab.contains('$') && !tab.contains('{') {
+                    let panel_id = format!("panel-{}", tab);
+                    assert!(
+                        html_ids.contains(panel_id.as_str()),
+                        "switchTab('{}') referenced but id=\"{}\" not found in HTML",
+                        tab, panel_id
+                    );
+                    checked += 1;
+                }
+                rest = &rest[end..];
+            }
+        }
+        assert!(checked > 0, "No switchTab() calls found — test helper may be broken");
+    }
+
+    // ── API routes ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fetch_paths_are_registered_routes() {
+        let js = extract_js(FRONTEND_HTML);
+        let paths = collect_fetch_paths(js);
+        // Keep in sync with the .route() calls in serve() above.
+        let routes: HashSet<&str> = [
+            "/api/repo",
+            "/api/commits",
+            "/api/integrity",
+            "/api/integrity/commit",
+            "/api/intent-graph",
+            "/api/review-points",
+            "/api/memory/snapshots",
+            "/api/memory/diff",
+            "/api/session-log",
+            "/api/session-log/list",
+            "/api/session-log/churn",
+        ]
+        .into_iter()
+        .collect();
+        for path in &paths {
+            assert!(
+                routes.contains(path.as_str()),
+                "JS calls fetch('{}') but that path is not a registered route. \
+                 Registered routes: {:?}",
+                path,
+                {
+                    let mut v: Vec<&&str> = routes.iter().collect();
+                    v.sort();
+                    v
+                }
+            );
+        }
+        assert!(!paths.is_empty(), "No fetch('/api/...') calls found — test helper may be broken");
+    }
+
+    // ── Node.js syntax check ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_js_syntax_via_node() {
+        use std::io::Write;
+        let js = extract_js(FRONTEND_HTML);
+        let Ok(mut child) = std::process::Command::new("node")
+            .arg("--check")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        else {
+            eprintln!("node binary not found — skipping JS syntax check");
+            return;
+        };
+        child.stdin.as_mut().unwrap().write_all(js.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "node --check reported a JS syntax error:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
