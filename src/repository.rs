@@ -21,6 +21,12 @@ use crate::metadata::{
 };
 use crate::LocalSession;
 
+/// Git ref used to store all h5i commit metadata (AI provenance, test results,
+/// AST hashes, causal links). Using a custom `refs/h5i/` namespace keeps h5i
+/// data clearly separated from standard `refs/notes/commits` and lets a single
+/// `h5i push` sync everything under `refs/h5i/*` in one refspec.
+pub const H5I_NOTES_REF: &str = "refs/h5i/notes";
+
 pub struct H5iRepository {
     git_repo: Repository,
     pub h5i_root: PathBuf,
@@ -240,7 +246,7 @@ impl H5iRepository {
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
-            .note(author, committer, None, commit_oid, &metadata_json, true)?;
+            .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
         Ok(commit_oid)
     }
@@ -800,8 +806,7 @@ impl H5iRepository {
     /// - Note is not found
     pub fn load_h5i_record(&self, oid: git2::Oid) -> Result<H5iCommitRecord, H5iError> {
         // Attempt to find the note attached to the commit OID.
-        // Passing None uses the default notes reference (refs/notes/commits).
-        let note = match self.git_repo.find_note(None, oid) {
+        let note = match self.git_repo.find_note(Some(H5I_NOTES_REF), oid) {
             Ok(n) => n,
             Err(e) if e.code() == git2::ErrorCode::NotFound => {
                 return Err(H5iError::RecordNotFound(oid.to_string()));
@@ -2571,7 +2576,7 @@ mod tests {
                 };
 
                 let json = serde_json::to_string(&record)?;
-                git_repo.note(&sig, &sig, None, oid, &json, true)?;
+                git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &json, true)?;
                 Ok(())
             };
 
@@ -2650,7 +2655,7 @@ mod tests {
 mod integration_tests {
     use crate::delta_store::DeltaStore;
     use crate::metadata::TestSource;
-    use crate::repository::H5iRepository;
+    use crate::repository::{H5iRepository, H5I_NOTES_REF};
     use crate::session::LocalSession;
     use git2::{Repository, Signature};
     use std::fs;
@@ -2752,7 +2757,7 @@ mod integration_tests {
             };
 
             let metadata_json = serde_json::to_string(&record).unwrap();
-            git_repo.note(&sig, &sig, None, oid, &metadata_json, true)?;
+            git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &metadata_json, true)?;
             Ok(())
         };
 

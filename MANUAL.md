@@ -455,7 +455,7 @@ h5i stores its data in two git refs that are **not** included in a normal `git p
 
 | Ref | Contains |
 |-----|----------|
-| `refs/notes/commits` | AI provenance, test metrics, causal links, integrity reports |
+| `refs/h5i/notes` | AI provenance, test metrics, causal links, integrity reports |
 | `refs/h5i/memory` | Claude memory snapshots |
 
 ### Push and pull
@@ -465,7 +465,7 @@ h5i push                   # push both refs to origin
 h5i push --remote upstream
 
 # Pull manually
-git fetch origin refs/notes/commits:refs/notes/commits
+git fetch origin refs/h5i/notes:refs/h5i/notes
 git fetch origin refs/h5i/memory:refs/h5i/memory
 
 # Or use the memory subcommand
@@ -480,7 +480,7 @@ Add to your CI push step:
 # GitHub Actions
 - name: Push h5i metadata
   run: |
-    git push origin refs/notes/commits
+    git push origin refs/h5i/notes
     git push origin refs/h5i/memory
 ```
 
@@ -490,7 +490,7 @@ Add fetch refspecs to `.git/config` so `git pull` picks them up automatically:
 [remote "origin"]
     url = git@github.com:you/repo.git
     fetch = +refs/heads/*:refs/remotes/origin/*
-    fetch = +refs/notes/commits:refs/notes/commits
+    fetch = +refs/h5i/notes:refs/h5i/notes
     fetch = +refs/h5i/memory:refs/h5i/memory
 ```
 
@@ -541,15 +541,15 @@ h5i stores all metadata as a Git sidecar — nothing lives outside your reposito
         └── metadata.yaml
 ```
 
-**Git Notes** (`refs/notes/commits`) store extended commit metadata — AI provenance, test metrics, causal links, integrity reports — as JSON blobs readable with standard Git tooling:
+**`refs/h5i/notes`** stores extended commit metadata — AI provenance, test metrics, causal links, integrity reports — as JSON blobs attached to each commit. Inspect any entry with:
 
 ```bash
-git notes show <commit-oid>
+git notes --ref refs/h5i/notes show <commit-oid>
 ```
 
-**Memory ref** (`refs/h5i/memory`) stores Claude memory snapshots as a linear commit history of git tree objects. Each memory commit carries the linked code-commit OID in its message.
+**`refs/h5i/memory`** stores Claude memory snapshots as a linear commit history of git tree objects. Each memory commit carries the linked code-commit OID in its message.
 
-> Neither `refs/notes/commits` nor `refs/h5i/memory` is pushed or fetched by a plain `git push` / `git pull`. You must share them explicitly — see §14.
+> Neither `refs/h5i/notes` nor `refs/h5i/memory` is pushed or fetched by a plain `git push` / `git pull`. You must share them explicitly — see §14.
 
 ### Module overview
 

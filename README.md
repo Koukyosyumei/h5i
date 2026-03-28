@@ -33,7 +33,7 @@ cd your-project && h5i init
 | **Context workspace** | `h5i context init / trace / commit` | Gives the AI a version-controlled notepad (goal, OTA trace, milestones) that survives session resets |
 | **Session handoff** | `h5i resume` | Generates a ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — from local data, no API call |
 | **Memory tracking** | `h5i memory snapshot / diff` | Snapshots Claude's memory files at every commit and diffs them across versions |
-| **Team sharing** | `h5i push / pull` | Syncs all AI metadata (Git Notes, memory refs) to/from the remote in one command |
+| **Team sharing** | `h5i push / pull` | Syncs all AI metadata (`refs/h5i/notes`, `refs/h5i/memory`) to/from the remote in one command |
 | **Web dashboard** | `h5i serve` | Opens a browser UI with Timeline, Summary, Integrity, Intent Graph, Memory, and Sessions tabs |
 
 ---
@@ -274,7 +274,7 @@ No AI API call is needed — every field comes from locally stored h5i data: Git
 h5i metadata lives in Git refs that aren't pushed by default. Push everything at once:
 
 ```bash
-h5i push           # sends refs/notes/commits + refs/h5i/memory to origin
+h5i push           # sends refs/h5i/notes + refs/h5i/memory to origin
 git push origin main
 ```
 

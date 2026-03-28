@@ -408,7 +408,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "  {} h5i stores metadata in {} and {}.",
                 style("Note:").dim(),
-                style("refs/notes/commits").yellow(),
+                style("refs/h5i/notes").yellow(),
                 style("refs/h5i/memory").yellow()
             );
             println!(
@@ -1101,12 +1101,12 @@ jq -c '{
                 style(&remote).yellow()
             );
 
-            // Push git notes (AI provenance, test metrics, causal links)
-            let notes_refspec = "refs/notes/commits:refs/notes/commits";
+            // Push h5i notes (AI provenance, test metrics, causal links)
+            let notes_refspec = "refs/h5i/notes:refs/h5i/notes";
             print!(
                 "  {} {} … ",
                 style("→").dim(),
-                style("refs/notes/commits").yellow()
+                style("refs/h5i/notes").yellow()
             );
             use std::io::Write as _;
             std::io::stdout().flush()?;
@@ -1147,7 +1147,7 @@ jq -c '{
             if notes_status.success() {
                 println!(
                     "\n{} To receive these refs on another machine:\n\
-                    \n    git fetch {} refs/notes/commits:refs/notes/commits\
+                    \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
