@@ -26,6 +26,7 @@ use crate::LocalSession;
 /// data clearly separated from standard `refs/notes/commits` and lets a single
 /// `h5i push` sync everything under `refs/h5i/*` in one refspec.
 pub const H5I_NOTES_REF: &str = "refs/h5i/notes";
+pub const H5I_AST_REF: &str = "refs/h5i/ast";
 
 pub struct H5iRepository {
     git_repo: Repository,
@@ -82,7 +83,6 @@ impl H5iRepository {
 
         if !h5i_root.exists() {
             fs::create_dir_all(&h5i_root)?;
-            fs::create_dir_all(h5i_root.join("ast"))?;
             fs::create_dir_all(h5i_root.join("metadata"))?;
             fs::create_dir_all(h5i_root.join("crdt"))?;
         }
@@ -1226,10 +1226,15 @@ impl H5iRepository {
     ) -> Result<String, H5iError> {
         let path_str = path.to_str().unwrap_or("");
 
-        // Fast path: use the stored sidecar if available.
+        // Fast path: use the stored AST if available.
         if let Ok(record) = self.load_h5i_record(oid) {
             if let Some(hashes) = &record.ast_hashes {
                 if let Some(hash) = hashes.get(path_str) {
+                    // Primary: Git-object store (refs/h5i/ast)
+                    if let Some(sexp) = self.load_ast_blob(hash) {
+                        return Ok(sexp);
+                    }
+                    // Fallback: legacy filesystem sidecar (.git/.h5i/ast/)
                     let sidecar = self.h5i_root.join("ast").join(format!("{}.sexp", hash));
                     if let Ok(sexp) = fs::read_to_string(&sidecar) {
                         return Ok(sexp);
@@ -1780,20 +1785,58 @@ impl H5iRepository {
         hasher.update(sexp.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
 
-        // Determine the storage location (.h5i/ast/<hash>.sexp)
-        let ast_dir = self.h5i_root.join("ast");
-        if !ast_dir.exists() {
-            fs::create_dir_all(&ast_dir).map_err(|e| H5iError::Io(e))?;
+        let filename = format!("{}.sexp", hash);
+
+        // Check if already stored (dedup).
+        if let Ok(r) = self.git_repo.find_reference(H5I_AST_REF) {
+            if let Ok(commit) = r.peel_to_commit() {
+                if commit.tree().map(|t| t.get_name(&filename).is_some()).unwrap_or(false) {
+                    return Ok(hash);
+                }
+            }
         }
 
-        let target_path = ast_dir.join(format!("{}.sexp", hash));
+        // Create a blob for the S-expression content.
+        let blob_oid = self.git_repo.blob(sexp.as_bytes())?;
 
-        // Write the AST only if it does not already exist
-        if !target_path.exists() {
-            fs::write(&target_path, sexp).map_err(|e| H5iError::Io(e))?;
-        }
+        // Build a new tree: start from the existing tree (if any) and insert the new blob.
+        let parent_commit = self.git_repo
+            .find_reference(H5I_AST_REF)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok());
+
+        let base_tree = parent_commit.as_ref().and_then(|c| c.tree().ok());
+        let mut builder = self.git_repo.treebuilder(base_tree.as_ref())?;
+        builder.insert(&filename, blob_oid, 0o100644)?;
+        let tree_oid = builder.write()?;
+        let tree = self.git_repo.find_tree(tree_oid)?;
+
+        let sig = self.git_repo.signature().unwrap_or_else(|_| {
+            git2::Signature::now("h5i", "h5i@local").unwrap()
+        });
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        self.git_repo.commit(
+            Some(H5I_AST_REF),
+            &sig,
+            &sig,
+            &format!("ast: store {}", &hash[..12]),
+            &tree,
+            &parents,
+        )?;
 
         Ok(hash)
+    }
+
+    /// Load an AST s-expression by its content hash from `refs/h5i/ast`.
+    fn load_ast_blob(&self, hash: &str) -> Option<String> {
+        let filename = format!("{}.sexp", hash);
+        let r = self.git_repo.find_reference(H5I_AST_REF).ok()?;
+        let commit = r.peel_to_commit().ok()?;
+        let tree = commit.tree().ok()?;
+        let entry = tree.get_name(&filename)?;
+        let obj = entry.to_object(&self.git_repo).ok()?;
+        let blob = obj.as_blob()?;
+        std::str::from_utf8(blob.content()).ok().map(|s| s.to_string())
     }
 
     /// Extracts test code between
@@ -2400,7 +2443,6 @@ mod tests {
         let repo = setup_test_repo(dir.path());
 
         // Ensure .h5i subdirectories are created
-        assert!(repo.h5i_root.join("ast").exists());
         assert!(repo.h5i_root.join("metadata").exists());
         assert!(repo.h5i_root.join("crdt").exists());
         assert_eq!(repo.h5i_path(), &repo.h5i_root);
@@ -2495,10 +2537,15 @@ mod tests {
         let sexp = "(module (fn main))";
 
         let hash = h5i_repo.save_ast_to_sidecar("main.rs", sexp).unwrap();
-        let ast_file = h5i_repo.h5i_root.join("ast").join(format!("{}.sexp", hash));
 
-        assert!(ast_file.exists());
-        assert_eq!(fs::read_to_string(ast_file).unwrap(), sexp);
+        // Verify content is stored in refs/h5i/ast (Git object store).
+        let loaded = h5i_repo.load_ast_blob(&hash);
+        assert!(loaded.is_some(), "AST blob should be in refs/h5i/ast");
+        assert_eq!(loaded.unwrap(), sexp);
+
+        // Idempotent: storing the same content returns the same hash.
+        let hash2 = h5i_repo.save_ast_to_sidecar("other.rs", sexp).unwrap();
+        assert_eq!(hash, hash2);
     }
 
     // --- 4. Merge & CRDT Delta Logic ---
