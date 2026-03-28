@@ -1,0 +1,1 @@
+{"git_oid":"2495a02c7a7c38559622953625516b79e4d8777f","parent_oid":"81c563fdc49a46f5960d8c5b0f5e4382d34c6e5c","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"add those new features to manuals","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-03-28T22:06:36.190528218Z"}
