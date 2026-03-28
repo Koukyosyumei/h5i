@@ -1,0 +1,1 @@
+{"git_oid":"b22df379d6cbf4244e18d21961d3b4cb8fe99fcd","parent_oid":"398e9ba4788607a20afc1d611d7ad042a9120f53","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"fix P1 P2 P5 from XGBoost dogfooding findings","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-03-28T20:38:16.629081140Z"}
