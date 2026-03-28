@@ -331,6 +331,7 @@
       border-radius: var(--radius); padding: 1rem 1.2rem;
       font-family: var(--mono); font-size: 0.8rem; line-height: 1.8;
       color: var(--text-dim); overflow-x: auto;
+      white-space: pre-wrap;
     }
     .code-block .hl { color: var(--text); }
     .code-block .kw { color: var(--red); }
@@ -578,8 +579,8 @@
       <div class="usecase-header">
         <div class="usecase-num">02</div>
         <div>
-          <div class="usecase-title">Undo an AI change — by describing it, not by hash</div>
-          <div class="usecase-sub">Intent-based rollback matches your description against stored prompts.</div>
+          <div class="usecase-title">Keep Claude's context alive across sessions</div>
+          <div class="usecase-sub">A version-controlled notepad in <code style="font-family:var(--mono);color:var(--red)">refs/h5i/context</code> that survives session resets.</div>
         </div>
       </div>
       <div class="terminal">
@@ -587,16 +588,31 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">~/my-project</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i rollback "the OAuth login changes"</span>
+        <div class="terminal-body"><pre><span class="t-cmt"># Project start — run once</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context init --goal "Build an OAuth2 login system"</span>
 
-<span class="t-bold">Matched commit:</span>
-  <span class="t-ai">a3f9c2b</span>  add OAuth login with GitHub provider
-  <span class="t-out">Agent:   claude-code  ·  Prompt: "implement OAuth login flow with GitHub"</span>
-  <span class="t-out">Date:    2026-03-10 14:22 UTC</span>
+<span class="t-cmt"># During the session — record reasoning</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind THINK   "40 MB overhead is acceptable"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind ACT     "Switching session store to Redis"</span>
 
-<span class="t-warn">Revert this commit? [y/N]</span> y
+<span class="t-cmt"># After a milestone</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context commit "Implemented token refresh flow"</span>
 
-<span class="t-pass">✔ Reverted a3f9c2b — new commit: d4e1f88</span></pre></div>
+<span class="t-cmt"># New session — restore state instantly</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --trace</span>
+
+<span class="t-bold">── Context ──────────────────────────────────────────────────</span>
+  <span class="t-out">Project: Build an OAuth2 login system  (branch: main)</span>
+
+  <span class="t-bold">Milestones</span>
+    <span class="t-pass">✔ [x]</span> Initial setup
+    <span class="t-warn">○ [ ] Token refresh flow</span>
+
+  <span class="t-bold">Recent Trace</span>
+    <span class="t-out">[14:22:01]</span> <span class="t-red">ACT:</span>     Switching session store to Redis
+    <span class="t-out">[14:21:44]</span> <span class="t-ai">THINK:</span>  40 MB overhead is acceptable
+    <span class="t-out">[14:21:30]</span> <span class="t-pass">OBSERVE:</span> Redis p99 latency is 2 ms</pre></div>
       </div>
     </div>
 
