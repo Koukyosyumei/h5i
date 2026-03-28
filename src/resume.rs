@@ -739,6 +739,7 @@ mod tests {
             footprint: ExplorationFootprint::default(),
             causal_chain: CausalChain::default(),
             uncertainty: annotations,
+            omissions: vec![],
             churn,
             replay_hash: String::new(),
             analyzed_at: Utc::now(),

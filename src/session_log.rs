@@ -52,6 +52,97 @@ static UNCERTAINTY_PHRASES: &[(&str, f32)] = &[
     ("complicated", 0.45),
 ];
 
+// ── Omission signal tables ────────────────────────────────────────────────────
+
+/// Phrases where Claude explicitly deferred or skipped something it noticed.
+static DEFERRAL_PHRASES: &[&str] = &[
+    "for now",
+    "skip for now",
+    "leave this for later",
+    "leave it for later",
+    "handle this later",
+    "handle later",
+    "i'll leave this",
+    "i'll leave it",
+    "i'll skip",
+    "i'll omit",
+    "not going to handle",
+    "won't handle",
+    "out of scope",
+    "not in scope",
+    "separate pr",
+    "separate issue",
+    "separate commit",
+    "follow-up",
+    "future work",
+    "future improvement",
+    "next time",
+    "ignore for now",
+    "not doing this now",
+    "not going to implement",
+    "deferred",
+    "good enough for now",
+    "simplification for now",
+    "leaving this as",
+    "keep it simple for now",
+    "not worth",
+];
+
+/// Phrases that suggest Claude left a stub or incomplete implementation.
+static PLACEHOLDER_PHRASES: &[&str] = &[
+    "placeholder",
+    "stub",
+    "not fully implemented",
+    "not yet implemented",
+    "simplified version",
+    "hardcoded for now",
+    "hardcoded this",
+    "hard-coded for now",
+    "temporary",
+    "hack for now",
+    "quick hack",
+    "incomplete",
+    "partial implementation",
+    "bare minimum",
+    "minimal implementation",
+    "good enough",
+    "dummy",
+    "mock value",
+    "fake value",
+    "workaround",
+];
+
+/// Phrases where Claude promised an action; cross-checked against actual edits.
+static PROMISE_PHRASES: &[&str] = &[
+    "i'll also update",
+    "i'll also add",
+    "i'll also fix",
+    "i'll also change",
+    "i'll also modify",
+    "i'll also need to",
+    "i should also update",
+    "i should also add",
+    "i should also fix",
+    "i should also change",
+    "i need to also",
+    "also need to update",
+    "also need to add",
+    "also need to fix",
+    "also need to change",
+    "we should also update",
+    "we should also add",
+    "i will also update",
+    "i will also add",
+    "i will also fix",
+    "i will also need to",
+    "also have to update",
+    "also have to add",
+    "also have to fix",
+    "don't forget to",
+    "remember to",
+    "need to remember to",
+];
+
 static REJECTION_PHRASES: &[&str] = &[
     "instead of",
     "rather than",
@@ -128,6 +219,43 @@ pub struct UncertaintyAnnotation {
     pub turn: usize,
 }
 
+/// Classification of an omission signal.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum OmissionKind {
+    /// Claude acknowledged something but explicitly chose to skip or defer it.
+    Deferral,
+    /// Claude left a stub, placeholder, or admittedly incomplete implementation.
+    Placeholder,
+    /// Claude promised an action in thinking but the corresponding edit never happened.
+    UnfulfilledPromise,
+}
+
+impl std::fmt::Display for OmissionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OmissionKind::Deferral => write!(f, "DEFERRAL"),
+            OmissionKind::Placeholder => write!(f, "PLACEHOLDER"),
+            OmissionKind::UnfulfilledPromise => write!(f, "UNFULFILLED"),
+        }
+    }
+}
+
+/// A place where Claude omitted, deferred, or failed to follow through on something.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OmissionAnnotation {
+    pub kind: OmissionKind,
+    /// File being edited when this omission was expressed (may be empty).
+    pub context_file: String,
+    /// Short excerpt from the thinking block containing the phrase.
+    pub snippet: String,
+    /// The trigger phrase.
+    pub phrase: String,
+    /// For UnfulfilledPromise: the file path Claude mentioned but never edited.
+    /// Empty for other kinds.
+    pub promised_file: String,
+    pub turn: usize,
+}
+
 /// How often a file was read vs edited — a proxy for complexity / fragility.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileChurn {
@@ -146,6 +274,7 @@ pub struct SessionAnalysis {
     pub footprint: ExplorationFootprint,
     pub causal_chain: CausalChain,
     pub uncertainty: Vec<UncertaintyAnnotation>,
+    pub omissions: Vec<OmissionAnnotation>,
     pub churn: Vec<FileChurn>,
     /// SHA-256 of the raw JSONL content for replay verification.
     pub replay_hash: String,
@@ -432,6 +561,70 @@ pub fn analyze_session(jsonl_path: &Path) -> Result<SessionAnalysis, H5iError> {
         }
     }
 
+    // ── Omission detection ────────────────────────────────────────────────────
+    let mut omissions: Vec<OmissionAnnotation> = Vec::new();
+
+    for (text, t, ctx_file) in &thinking_entries {
+        let lower = text.to_lowercase();
+
+        // Deferral phrases
+        for &phrase in DEFERRAL_PHRASES {
+            if lower.contains(phrase) {
+                let snippet = extract_snippet(text, phrase, 150);
+                omissions.push(OmissionAnnotation {
+                    kind: OmissionKind::Deferral,
+                    context_file: ctx_file.clone(),
+                    snippet,
+                    phrase: phrase.to_string(),
+                    promised_file: String::new(),
+                    turn: *t,
+                });
+            }
+        }
+
+        // Placeholder phrases
+        for &phrase in PLACEHOLDER_PHRASES {
+            if lower.contains(phrase) {
+                let snippet = extract_snippet(text, phrase, 150);
+                omissions.push(OmissionAnnotation {
+                    kind: OmissionKind::Placeholder,
+                    context_file: ctx_file.clone(),
+                    snippet,
+                    phrase: phrase.to_string(),
+                    promised_file: String::new(),
+                    turn: *t,
+                });
+            }
+        }
+
+        // Unfulfilled promise: Claude said it would also edit something,
+        // but cross-checking shows the file was never actually written.
+        for &phrase in PROMISE_PHRASES {
+            if lower.contains(phrase) {
+                let snippet = extract_snippet(text, phrase, 200);
+                // Try to extract a file path mentioned near the promise phrase.
+                let promised_file = extract_promised_file(&lower, phrase);
+                let unfulfilled = promised_file
+                    .as_deref()
+                    .map(|pf| !files_written.iter().any(|w| w.contains(pf)))
+                    .unwrap_or(false);
+                if unfulfilled || promised_file.is_none() {
+                    omissions.push(OmissionAnnotation {
+                        kind: OmissionKind::UnfulfilledPromise,
+                        context_file: ctx_file.clone(),
+                        snippet,
+                        phrase: phrase.to_string(),
+                        promised_file: promised_file.unwrap_or_default(),
+                        turn: *t,
+                    });
+                }
+            }
+        }
+    }
+
+    // Deduplicate omissions that fired on the same turn with the same kind.
+    omissions.dedup_by(|a, b| a.kind == b.kind && a.turn == b.turn && a.phrase == b.phrase);
+
     // Deduplicate similar decisions and keep top N
     key_decisions = dedup_similar(key_decisions, 0.65);
     key_decisions.truncate(12);
@@ -500,6 +693,7 @@ pub fn analyze_session(jsonl_path: &Path) -> Result<SessionAnalysis, H5iError> {
             edit_sequence,
         },
         uncertainty,
+        omissions,
         churn,
         replay_hash,
         analyzed_at: Utc::now(),
@@ -964,6 +1158,121 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
     );
 }
 
+pub fn print_omissions(analysis: &SessionAnalysis, file_filter: Option<&str>) {
+    use console::style;
+
+    let annotations: Vec<&OmissionAnnotation> = analysis
+        .omissions
+        .iter()
+        .filter(|a| {
+            file_filter
+                .map(|f| a.context_file.contains(f))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    println!("{}", style("── Omission Report ─────────────────────────────────────────────").dim());
+
+    if annotations.is_empty() {
+        println!("  {} No omission signals detected.", style("✔").green());
+        return;
+    }
+
+    let n_deferral    = annotations.iter().filter(|a| a.kind == OmissionKind::Deferral).count();
+    let n_placeholder = annotations.iter().filter(|a| a.kind == OmissionKind::Placeholder).count();
+    let n_promise     = annotations.iter().filter(|a| a.kind == OmissionKind::UnfulfilledPromise).count();
+
+    println!(
+        "  {}  ·  session {}  ·  {} deferral{}  ·  {} placeholder{}  ·  {} unfulfilled promise{}",
+        style(format!("{} signal{}", annotations.len(), if annotations.len() == 1 { "" } else { "s" })).bold(),
+        style(&analysis.session_id[..8.min(analysis.session_id.len())]).magenta(),
+        style(n_deferral).red(),    if n_deferral    == 1 { "" } else { "s" },
+        style(n_placeholder).yellow(), if n_placeholder == 1 { "" } else { "s" },
+        style(n_promise).cyan(),    if n_promise     == 1 { "" } else { "s" },
+    );
+    println!();
+
+    // ── Summary table ─────────────────────────────────────────────────────────
+    // Group by file, count per kind.
+    let mut file_map: std::collections::HashMap<String, [usize; 3]> =
+        std::collections::HashMap::new();
+    for ann in &annotations {
+        let key = if ann.context_file.is_empty() { "(unknown)".to_string() } else { ann.context_file.clone() };
+        let entry = file_map.entry(key).or_insert([0usize; 3]);
+        match ann.kind {
+            OmissionKind::Deferral           => entry[0] += 1,
+            OmissionKind::Placeholder        => entry[1] += 1,
+            OmissionKind::UnfulfilledPromise => entry[2] += 1,
+        }
+    }
+    let mut file_list: Vec<(String, [usize; 3])> = file_map.into_iter().collect();
+    file_list.sort_by(|a, b| {
+        let sa: usize = a.1.iter().sum();
+        let sb: usize = b.1.iter().sum();
+        sb.cmp(&sa)
+    });
+
+    println!("  {}", style("File Summary").bold());
+    println!("  {}", style("─".repeat(76)).dim());
+    println!(
+        "  {:<44}  {:>8}  {:>11}  {:>10}",
+        style("file").bold(),
+        style("deferral").bold(),
+        style("placeholder").bold(),
+        style("unfulfilled").bold(),
+    );
+    println!("  {}", style("─".repeat(76)).dim());
+    for (file, counts) in &file_list {
+        let short = shorten_path(file, 44);
+        let def_s = if counts[0] > 0 { style(counts[0].to_string()).red().bold().to_string()    } else { style("-".to_string()).dim().to_string() };
+        let ph_s  = if counts[1] > 0 { style(counts[1].to_string()).yellow().bold().to_string() } else { style("-".to_string()).dim().to_string() };
+        let pr_s  = if counts[2] > 0 { style(counts[2].to_string()).cyan().bold().to_string()   } else { style("-".to_string()).dim().to_string() };
+        println!(
+            "  {:<44}  {:>8}  {:>11}  {:>10}",
+            style(&short).yellow(),
+            def_s, ph_s, pr_s,
+        );
+    }
+    println!();
+
+    // ── Individual signals ────────────────────────────────────────────────────
+    println!("  {}", style("Signals").bold());
+    println!("  {}", style("─".repeat(76)).dim());
+
+    for ann in &annotations {
+        let (badge, kind_styled) = match ann.kind {
+            OmissionKind::Deferral           => ("⏭", style("DEFERRAL").red().bold().to_string()),
+            OmissionKind::Placeholder        => ("⬜", style("PLACEHOLDER").yellow().bold().to_string()),
+            OmissionKind::UnfulfilledPromise => ("💬", style("UNFULFILLED").cyan().bold().to_string()),
+        };
+        let file_label = if ann.context_file.is_empty() {
+            style("(unknown file)".to_string()).dim().to_string()
+        } else {
+            style(shorten_path(&ann.context_file, 50)).yellow().to_string()
+        };
+        println!(
+            "\n  {} {}  {}  t:{}  phrase: \"{}\"",
+            badge, kind_styled, file_label,
+            style(ann.turn).dim(),
+            style(&ann.phrase).italic(),
+        );
+        if !ann.promised_file.is_empty() {
+            println!(
+                "     {} promised file: {}",
+                style("→").dim(),
+                style(&ann.promised_file).yellow().bold(),
+            );
+        }
+        println!("     {}", style(format!("\"{}\"", ann.snippet)).dim().italic());
+    }
+    println!();
+
+    println!(
+        "  {} red=deferral  {} yellow=placeholder  {} cyan=unfulfilled promise",
+        style("■").red(), style("■").yellow(), style("■").cyan(),
+    );
+}
+
 pub fn print_churn(churn: &[FileChurn]) {
     use console::style;
     println!("{}", style("── File Churn ──────────────────────────────────────────────").dim());
@@ -1043,6 +1352,28 @@ fn split_sentences(text: &str) -> Vec<String> {
         sentences.push(s);
     }
     sentences
+}
+
+/// Try to extract a file path that appears within ~120 chars after `phrase` in
+/// the (already lower-cased) `lower` text.  Returns the first token that looks
+/// like a relative file path (contains `/` or `.` and has a known extension).
+fn extract_promised_file(lower: &str, phrase: &str) -> Option<String> {
+    let pos = lower.find(phrase)? + phrase.len();
+    let window: &str = &lower[pos..(pos + 120).min(lower.len())];
+    for token in window.split_whitespace() {
+        // Strip surrounding punctuation
+        let t = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
+        let looks_like_path = (t.contains('/') || t.contains('.'))
+            && t.len() > 3
+            && [".rs", ".py", ".ts", ".js", ".go", ".java", ".cpp", ".c", ".h",
+                ".toml", ".json", ".yaml", ".yml", ".md", ".txt"]
+                .iter()
+                .any(|ext| t.ends_with(ext));
+        if looks_like_path {
+            return Some(t.to_string());
+        }
+    }
+    None
 }
 
 fn extract_snippet(text: &str, phrase: &str, max_len: usize) -> String {

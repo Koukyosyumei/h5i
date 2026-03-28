@@ -28,6 +28,7 @@ cd your-project && h5i init
 | **Integrity audit** | `h5i commit --audit` | Runs 12 deterministic rules before committing: credential leaks, CI/CD tampering, scope creep, `eval()` patterns, and more |
 | **Session footprint** | `h5i notes analyze && h5i notes footprint` | Maps which files the AI read vs. edited in a Claude Code session |
 | **Uncertainty heatmap** | `h5i notes uncertainty` | Surfaces every moment the AI hedged, with the exact quote and confidence score |
+| **Omission report** | `h5i notes omissions` | Detects deferrals, placeholders, and unfulfilled promises left behind by the AI |
 | **File churn** | `h5i notes churn` | Quantifies the edit-to-read ratio per file so high-churn code gets extra review |
 | **Intent graph** | `h5i notes graph` | Visualises the causal chain across commits — which AI commit triggered which |
 | **Context workspace** | `h5i context init / trace / commit` | Gives the AI a version-controlled notepad (goal, OTA trace, milestones) that survives session resets |
@@ -163,6 +164,43 @@ h5i notes uncertainty  # where was Claude unsure?
 
   ██ high risk (<35%)   ▓▓ moderate (35–55%)   ░░ low (>55%)
 ```
+
+```bash
+h5i notes omissions    # what did Claude defer, stub out, or promise but not deliver?
+```
+
+```
+── Omission Report ─────────────────────────────────────────────
+  5 signals  ·  session a3f8c12d  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
+
+  File Summary
+  ────────────────────────────────────────────────────────────────────────────
+  file                                          deferral  placeholder  unfulfilled
+  ────────────────────────────────────────────────────────────────────────────
+  src/auth.rs                                          2            1           1
+  src/session.rs                                       -            1           -
+
+  Signals
+  ────────────────────────────────────────────────────────────────────────────
+
+  ⏭ DEFERRAL      src/auth.rs · t:18 · "for now"
+       "…I'll hardcode the token TTL for now — a proper config value can be added later…"
+
+  ⬜ PLACEHOLDER   src/auth.rs · t:52 · "stub"
+       "…this refresh handler is a stub; the actual token rotation logic isn't wired up yet…"
+
+  💬 UNFULFILLED   src/auth.rs · t:61 · "i'll also update"
+     → promised file: src/auth/tests.rs
+       "…i'll also update src/auth/tests.rs to cover the new TTL behaviour…"
+```
+
+Three kinds of omissions are detected:
+
+- **Deferral** (`⏭` red) — Claude noticed something was wrong or missing and chose to skip it
+- **Placeholder** (`⬜` yellow) — Claude inserted a stub or admittedly incomplete implementation
+- **Unfulfilled promise** (`💬` cyan) — Claude stated it would also edit another file, but never did
+
+Filter to a specific file: `h5i notes omissions --file src/auth.rs`
 
 ```bash
 h5i notes churn        # which files had the most back-and-forth?

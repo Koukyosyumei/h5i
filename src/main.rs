@@ -247,6 +247,16 @@ enum NotesCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Show where Claude deferred, left placeholders, or made promises it didn't keep
+    Omissions {
+        /// Commit OID whose session analysis to display (default: HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+        /// Filter to annotations recorded while editing this file
+        #[arg(long)]
+        file: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -446,16 +456,20 @@ h5i notes show
 # 3. See where Claude expressed uncertainty
 h5i notes uncertainty
 
-# 4. See where Claude expressed uncertainty while editing a specific file
-h5i notes uncertainty --file src/repository.rs
+# 4. See where Claude deferred, left stubs, or made promises it didn't keep
+h5i notes omissions
 
-# 5. View cumulative edit-churn across all analyzed sessions
+# 5. Filter either of the above to a specific file
+h5i notes uncertainty --file src/repository.rs
+h5i notes omissions  --file src/repository.rs
+
+# 6. View cumulative edit-churn across all analyzed sessions
 h5i notes churn
 
-# 6. Visualize the chain of intents across recent commits
+# 7. Visualize the chain of intents across recent commits
 h5i notes graph --limit 20
 
-# 7. Identify commits that most need human review
+# 8. Identify commits that most need human review
 h5i notes review --limit 50
 ```
 
@@ -1224,6 +1238,25 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     println!("\n{}", style("─".repeat(62)).dim());
+                }
+            }
+
+            NotesCommands::Omissions { commit, file } => {
+                let repo = H5iRepository::open(".")?;
+                let oid_str = match commit {
+                    Some(ref s) => s.clone(),
+                    None => repo.git().head()?.peel_to_commit()?.id().to_string(),
+                };
+                match session_log::load_analysis(&repo.h5i_root, &oid_str)? {
+                    None => println!(
+                        "{} No session analysis for {}. Run {} first.",
+                        WARN,
+                        style(&oid_str[..8.min(oid_str.len())]).magenta(),
+                        style("h5i notes analyze").bold()
+                    ),
+                    Some(analysis) => {
+                        session_log::print_omissions(&analysis, file.as_deref());
+                    }
                 }
             }
         },

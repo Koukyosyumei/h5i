@@ -311,6 +311,7 @@ Claude Code stores a detailed JSONL log of every conversation in `~/.claude/proj
 | `h5i notes show [--commit <oid>]` | Show stored analysis |
 | `h5i notes footprint [<oid>]` | Exploration footprint: files read vs edited |
 | `h5i notes uncertainty [--commit <oid>] [--file <path>]` | Uncertainty heatmap |
+| `h5i notes omissions [--commit <oid>] [--file <path>]` | Omission report: deferrals, placeholders, unfulfilled promises |
 | `h5i notes churn [--limit N]` | Per-file edit churn scores |
 | `h5i notes graph [--limit N] [--mode <mode>]` | Intent graph |
 | `h5i notes review [--limit N] [--min-score F] [--json]` | Review summary |
@@ -322,6 +323,61 @@ Every file the AI *read* before making a change is recorded, revealing the impli
 ### Uncertainty heatmap
 
 When Claude expresses uncertainty — phrases like "not sure", "let me check", "this might break" — h5i records the surrounding context and the file being edited at that moment. Confidence scores: **red** (<35%) = very uncertain, **yellow** (35–55%) = moderate, **green** (>55%) = incidental mention.
+
+### Omission report
+
+`h5i notes omissions` detects three categories of incomplete work that Claude left behind, extracted from its thinking blocks:
+
+| Kind | Badge | What it catches |
+|------|-------|-----------------|
+| **Deferral** | `⏭` red | Claude acknowledged something needed doing but explicitly chose to skip or defer it (`"for now"`, `"out of scope"`, `"separate PR"`, `"leave this for later"`, …) |
+| **Placeholder** | `⬜` yellow | Claude inserted an admittedly incomplete implementation (`"stub"`, `"placeholder"`, `"hardcoded for now"`, `"simplified version"`, `"workaround"`, …) |
+| **Unfulfilled promise** | `💬` cyan | Claude stated in thinking `"I'll also update X"` or `"I should also add Y"` but the corresponding file never appeared in the edit sequence |
+
+```bash
+h5i notes omissions                          # all omissions for HEAD
+h5i notes omissions --commit a3f8c12         # for a past commit
+h5i notes omissions --file src/auth.rs       # filter to one file
+```
+
+Example output:
+
+```
+── Omission Report ─────────────────────────────────────────────
+  5 signals  ·  session a3f8c12d  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
+
+  File Summary
+  ────────────────────────────────────────────────────────────────────────────
+  file                                          deferral  placeholder  unfulfilled
+  ────────────────────────────────────────────────────────────────────────────
+  src/auth.rs                                          2            1           1
+  src/session.rs                                       -            1           -
+
+  Signals
+  ────────────────────────────────────────────────────────────────────────────
+
+  ⏭ DEFERRAL      src/auth.rs · t:18 · "for now"
+       "…I'll hardcode the token TTL for now — a proper config value can be added later…"
+
+  ⏭ DEFERRAL      src/auth.rs · t:29 · "out of scope"
+       "…proper error propagation is out of scope for this change, skipping for now…"
+
+  ⬜ PLACEHOLDER   src/auth.rs · t:52 · "stub"
+       "…this refresh handler is a stub; the actual token rotation logic isn't wired up yet…"
+
+  ⬜ PLACEHOLDER   src/session.rs · t:55 · "hardcoded for now"
+       "…session timeout is hardcoded for now at 3600s, should come from config…"
+
+  💬 UNFULFILLED   src/auth.rs · t:61 · "i'll also update"
+     → promised file: src/auth/tests.rs
+       "…i'll also update src/auth/tests.rs to cover the new TTL behaviour…"
+
+  ■ red=deferral  ■ yellow=placeholder  ■ cyan=unfulfilled promise
+```
+
+**Unfulfilled promise cross-check:** when a promise phrase names a file path (e.g. `"i'll also update src/auth/tests.rs"`), h5i checks whether that file actually appears in the session's edit sequence. If it does not, the omission is flagged. When no file path can be extracted the promise phrase is flagged unconditionally for manual review.
+
+**Recommended use:** run `h5i notes omissions` immediately after `h5i notes uncertainty`. Uncertainty tells you where Claude was unsure; omissions tell you what Claude left incomplete. Together they form a targeted review checklist — without reading the full diff.
 
 ### File churn
 
@@ -563,7 +619,7 @@ git notes --ref refs/h5i/notes show <commit-oid>
 | `blame.rs` | Line and AST blame modes with AI metadata and test results |
 | `ctx.rs` | Context workspace implementing arXiv:2508.00031 |
 | `memory.rs` | Claude memory snapshot/diff/log/restore/push/pull |
-| `session_log.rs` | Claude Code JSONL log parsing → footprint, causal chain, uncertainty, churn |
+| `session_log.rs` | Claude Code JSONL log parsing → footprint, causal chain, uncertainty, omissions, churn |
 | `resume.rs` | Session handoff briefing assembled from all locally stored h5i data |
 | `watcher.rs` | File system watcher (notify crate) → syncs to CRDT session |
 | `rules.rs` | Twelve deterministic integrity rules |
