@@ -286,13 +286,64 @@ pub struct SessionAnalysis {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Return the path of the most recently modified JSONL session file for `workdir`.
+///
+/// Strategy:
+/// 1. Try the exact Claude Code project dir derived from `workdir` (fast, no I/O).
+/// 2. Scan **all** project dirs under `~/.claude/projects/`, peek at the first few
+///    lines of each `.jsonl` to find sessions whose `cwd` field matches `workdir`.
+///    This handles cases where h5i is invoked from a different working directory
+///    than where the Claude Code session was created (e.g. the h5i dev repo vs. a
+///    scratch coding repo).
 pub fn find_latest_session(workdir: &Path) -> Option<PathBuf> {
     let home = dirs_home()?;
-    let workdir = workdir.to_string_lossy();
-    let encoded = workdir.trim_end_matches('/').replace('/', "-");
-    let dir = home.join(".claude/projects").join(&encoded);
+    let workdir_str = workdir
+        .to_string_lossy()
+        .trim_end_matches('/')
+        .to_string();
 
-    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(&dir)
+    // --- Primary: exact CWD-encoded project directory ---
+    let encoded = workdir_str.replace('/', "-");
+    let exact_dir = home.join(".claude/projects").join(&encoded);
+    if let Some(p) = collect_latest_jsonl_in_dir(&exact_dir) {
+        return Some(p);
+    }
+
+    // --- Fallback: scan all project dirs, match by `cwd` field in JSONL ---
+    let projects_dir = home.join(".claude/projects");
+    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(&projects_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().ok().map(|t| t.is_dir()).unwrap_or(false))
+        .flat_map(|proj_entry| {
+            let proj_path = proj_entry.path();
+            fs::read_dir(&proj_path)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let name = e.file_name();
+                    let s = name.to_string_lossy().to_string();
+                    s.ends_with(".jsonl") && is_uuid_filename(&s)
+                })
+                .filter_map(|e| {
+                    let modified = e.metadata().ok()?.modified().ok()?;
+                    if session_cwd_matches(&e.path(), &workdir_str) {
+                        Some((modified, e.path()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.into_iter().next().map(|(_, p)| p)
+}
+
+/// Return the most-recently-modified UUID `.jsonl` file in `dir`, or `None`.
+fn collect_latest_jsonl_in_dir(dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -305,13 +356,46 @@ pub fn find_latest_session(workdir: &Path) -> Option<PathBuf> {
             Some((modified, e.path()))
         })
         .collect();
-
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
     candidates.into_iter().next().map(|(_, p)| p)
 }
 
+/// Return `true` if any of the first 20 lines of `jsonl_path` contain a `cwd`
+/// field that matches `workdir` (trailing slashes normalised).
+fn session_cwd_matches(jsonl_path: &Path, workdir: &str) -> bool {
+    use std::io::{BufRead, BufReader};
+    let file = match fs::File::open(jsonl_path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    for (i, line) in BufReader::new(file).lines().enumerate() {
+        if i >= 20 {
+            break;
+        }
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
+                if cwd.trim_end_matches('/') == workdir {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Parse a Claude Code JSONL file and extract all session artefacts.
-pub fn analyze_session(jsonl_path: &Path) -> Result<SessionAnalysis, H5iError> {
+///
+/// `since`: if `Some(t)`, only messages with a `timestamp` field **after** `t`
+/// are processed.  This lets callers restrict analysis to a specific commit range
+/// (e.g. "only the work done since commit X landed").
+pub fn analyze_session(
+    jsonl_path: &Path,
+    since: Option<DateTime<Utc>>,
+) -> Result<SessionAnalysis, H5iError> {
     let raw = fs::read_to_string(jsonl_path)?;
 
     // Replay hash — SHA-256 of the raw bytes
@@ -326,11 +410,23 @@ pub fn analyze_session(jsonl_path: &Path) -> Result<SessionAnalysis, H5iError> {
         .to_string_lossy()
         .to_string();
 
-    // Parse every non-empty JSONL line
+    // Parse every non-empty JSONL line, optionally filtering by timestamp
     let lines: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str(l).ok())
+        .filter(|v: &Value| {
+            // Keep lines with no timestamp (e.g. snapshot headers) always.
+            // For lines that carry a timestamp, skip those at or before `since`.
+            if let Some(cutoff) = since {
+                if let Some(ts_str) = v.get("timestamp").and_then(|t| t.as_str()) {
+                    if let Ok(ts) = ts_str.parse::<DateTime<Utc>>() {
+                        return ts > cutoff;
+                    }
+                }
+            }
+            true
+        })
         .collect();
 
     // Mutable state accumulated during the linear scan
@@ -1786,7 +1882,7 @@ mod tests {
             &assistant_text("I'll start by reading the auth module."),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert_eq!(
             analysis.causal_chain.user_trigger,
             "Add OAuth2 login with GitHub"
@@ -1803,7 +1899,7 @@ mod tests {
             ),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         let phrases: Vec<&str> =
             analysis.uncertainty.iter().map(|a| a.phrase.as_str()).collect();
         assert!(
@@ -1822,7 +1918,7 @@ mod tests {
             ),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert!(
             analysis.uncertainty.is_empty(),
             "unexpected signals: {:?}",
@@ -1838,7 +1934,7 @@ mod tests {
             &assistant_edit("/home/user/src/main.rs"),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert_eq!(
             analysis.footprint.edited.len(),
             2,
@@ -1856,7 +1952,7 @@ mod tests {
             &assistant_edit("/home/user/src/auth.rs"),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert!(
             analysis.footprint.implicit_deps.iter().any(|p| p.contains("config.rs")),
             "config.rs should be an implicit dep: {:?}",
@@ -1877,7 +1973,7 @@ mod tests {
             &assistant_edit("/home/user/src/auth.rs"),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert_eq!(analysis.tool_call_count, 3);
     }
 
@@ -1885,8 +1981,8 @@ mod tests {
     fn test_analyze_session_replay_hash_is_stable() {
         let jsonl = join_lines(&[&user_msg("do something")]);
         let path = write_temp_jsonl(&jsonl);
-        let h1 = analyze_session(&path).unwrap().replay_hash;
-        let h2 = analyze_session(&path).unwrap().replay_hash;
+        let h1 = analyze_session(&path, None).unwrap().replay_hash;
+        let h2 = analyze_session(&path, None).unwrap().replay_hash;
         assert_eq!(h1, h2);
     }
 
@@ -1894,8 +1990,8 @@ mod tests {
     fn test_analyze_session_replay_hash_differs_for_different_content() {
         let p1 = write_temp_jsonl(&join_lines(&[&user_msg("task A")]));
         let p2 = write_temp_jsonl(&join_lines(&[&user_msg("task B --- unique")]));
-        let h1 = analyze_session(&p1).unwrap().replay_hash;
-        let h2 = analyze_session(&p2).unwrap().replay_hash;
+        let h1 = analyze_session(&p1, None).unwrap().replay_hash;
+        let h2 = analyze_session(&p2, None).unwrap().replay_hash;
         assert_ne!(h1, h2);
     }
 
@@ -1910,7 +2006,7 @@ mod tests {
             &assistant_edit(file),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         let fc = analysis
             .churn
             .iter()
@@ -1936,7 +2032,7 @@ mod tests {
             ),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert!(
             !analysis.causal_chain.key_decisions.is_empty(),
             "expected key decisions to be extracted"
@@ -1950,7 +2046,7 @@ mod tests {
             &assistant_bash("cargo test --verbose"),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert!(
             analysis.footprint.bash_commands.iter().any(|c| c.contains("cargo test")),
             "bash commands: {:?}",
@@ -1967,7 +2063,7 @@ mod tests {
             &assistant_text("I'll also handle this one here."),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         assert_eq!(analysis.message_count, 4);
     }
 
@@ -1982,7 +2078,7 @@ mod tests {
             &assistant_read(file),
         ]);
         let path = write_temp_jsonl(&jsonl);
-        let analysis = analyze_session(&path).unwrap();
+        let analysis = analyze_session(&path, None).unwrap();
         let entry = analysis
             .footprint
             .consulted

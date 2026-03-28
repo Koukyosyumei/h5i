@@ -53,7 +53,11 @@ enum Commands {
         #[arg(long)]
         agent: Option<String>,
 
-        /// Scan staged source files for `// h5_i_test_start` / `// h5_i_test_end` markers
+        /// Run the test suite and capture metrics.
+        /// If the `H5I_TEST_CMD` environment variable is set, that command is executed
+        /// and its output is parsed for test results (pass/fail counts, duration, etc.).
+        /// Falls back to scanning staged source files for `// h5_i_test_start` /
+        /// `// h5_i_test_end` markers when no command is configured.
         #[arg(long)]
         tests: bool,
 
@@ -200,6 +204,12 @@ enum NotesCommands {
         /// Commit OID to link this analysis to (default: HEAD)
         #[arg(long)]
         commit: Option<String>,
+        /// Only include session events that occurred *after* this commit was made.
+        /// Useful when a single Claude Code session spans multiple h5i commits:
+        ///   h5i notes analyze --since <first-commit-sha>
+        /// links only the work done *after* that commit to HEAD.
+        #[arg(long, value_name = "OID")]
+        since: Option<String>,
     },
 
     /// Show which files the AI consulted vs edited for a given commit
@@ -792,9 +802,11 @@ fn main() -> anyhow::Result<()> {
             //   1. --test-results <file>
             //   2. H5I_TEST_RESULTS env var (path to a JSON file)
             //   3. --test-cmd <cmd>
-            //   4. --tests flag (scan staged files for markers)
-            //   5. Nothing
+            //   4. --tests + H5I_TEST_CMD env var (run configured command)
+            //   5. --tests alone (scan staged files for markers)
+            //   6. Nothing
             let env_results = std::env::var("H5I_TEST_RESULTS").ok();
+            let env_test_cmd = std::env::var("H5I_TEST_CMD").ok();
             let test_source = if let Some(ref path) = test_results {
                 let metrics = repo.load_test_results_from_file(path)?;
                 TestSource::Provided(metrics)
@@ -809,17 +821,34 @@ fn main() -> anyhow::Result<()> {
                 );
                 let metrics = repo.run_test_command(cmd)?;
                 let passing = metrics.is_passing();
-                let icon = if passing {
-                    style("✔").green()
-                } else {
-                    style("✖").red()
-                };
+                let icon = if passing { style("✔").green() } else { style("✖").red() };
                 if let Some(ref s) = metrics.summary {
                     println!("  {} {}", icon, style(s).dim());
                 }
                 TestSource::Provided(metrics)
             } else if tests {
-                TestSource::ScanMarkers
+                if let Some(ref cmd) = env_test_cmd {
+                    // --tests + H5I_TEST_CMD: actually run the test suite
+                    println!(
+                        "{} Running test command (H5I_TEST_CMD): {}",
+                        style("▶").cyan(),
+                        style(cmd).yellow()
+                    );
+                    let metrics = repo.run_test_command(cmd)?;
+                    let passing = metrics.is_passing();
+                    let icon = if passing { style("✔").green() } else { style("✖").red() };
+                    if let Some(ref s) = metrics.summary {
+                        println!("  {} {}", icon, style(s).dim());
+                    } else {
+                        let status = if passing { "passed" } else { "failed" };
+                        println!("  {} exit code: {}", icon,
+                            metrics.exit_code.map(|c| c.to_string()).unwrap_or_else(|| status.into()));
+                    }
+                    TestSource::Provided(metrics)
+                } else {
+                    // Fallback: scan staged files for marker blocks
+                    TestSource::ScanMarkers
+                }
             } else {
                 TestSource::None
             };
@@ -1067,7 +1096,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Notes { action } => match action {
-            NotesCommands::Analyze { session, commit } => {
+            NotesCommands::Analyze { session, commit, since } => {
                 let repo = H5iRepository::open(".")?;
                 let workdir = repo
                     .git()
@@ -1095,10 +1124,37 @@ fn main() -> anyhow::Result<()> {
                         }
                     },
                 };
+
+                // Resolve --since to a UTC timestamp so analyze_session can filter events.
+                let since_time: Option<chrono::DateTime<chrono::Utc>> = match since {
+                    None => None,
+                    Some(ref sha) => {
+                        let oid = git2::Oid::from_str(sha)
+                            .or_else(|_| -> Result<git2::Oid, git2::Error> {
+                                repo.git()
+                                    .revparse_single(sha)?
+                                    .peel_to_commit()
+                                    .map(|c| c.id())
+                            })
+                            .map_err(|e| anyhow::anyhow!("--since: cannot resolve '{}': {}", sha, e))?;
+                        let c = repo.git().find_commit(oid)
+                            .map_err(|e| anyhow::anyhow!("--since: {}", e))?;
+                        let secs = c.time().seconds();
+                        chrono::DateTime::from_timestamp(secs, 0)
+                            .map(|dt| {
+                                println!("{} Filtering session to events after {} ({})",
+                                    STEP,
+                                    style(&sha[..8.min(sha.len())]).magenta(),
+                                    style(dt.format("%Y-%m-%d %H:%M UTC")).dim());
+                                dt
+                            })
+                    }
+                };
+
                 println!("{} {} → commit {}", STEP,
                     style("Analyzing session log").cyan().bold(),
                     style(&oid_str[..8.min(oid_str.len())]).magenta());
-                let analysis = session_log::analyze_session(&jsonl_path)?;
+                let analysis = session_log::analyze_session(&jsonl_path, since_time)?;
                 session_log::save_analysis(&repo.h5i_root, &oid_str, &analysis)?;
                 println!("{} {} messages · {} tool calls · {} edited · {} consulted",
                     SUCCESS,
