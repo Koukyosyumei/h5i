@@ -21,6 +21,7 @@ Complete reference for all h5i commands, configuration, and internals.
 13. [Claude Code Hooks](#13-claude-code-hooks)
 14. [Sharing h5i Data with Your Team](#14-sharing-h5i-data-with-your-team)
 15. [Storage Layout](#15-storage-layout)
+16. [Session Handoff (h5i resume)](#16-session-handoff-h5i-resume)
 
 ---
 
@@ -563,10 +564,115 @@ git notes show <commit-oid>
 | `ctx.rs` | Context workspace implementing arXiv:2508.00031 |
 | `memory.rs` | Claude memory snapshot/diff/log/restore/push/pull |
 | `session_log.rs` | Claude Code JSONL log parsing → footprint, causal chain, uncertainty, churn |
+| `resume.rs` | Session handoff briefing assembled from all locally stored h5i data |
 | `watcher.rs` | File system watcher (notify crate) → syncs to CRDT session |
 | `rules.rs` | Twelve deterministic integrity rules |
 | `server.rs` | Embedded web dashboard (HTML/JS served from Rust) |
 | `error.rs` | Error categories mirroring the five dimensions |
+
+---
+
+## 16. Session Handoff (h5i resume)
+
+`h5i resume` generates a structured briefing from locally stored h5i data so that an AI agent — or a human — can pick up exactly where the last session left off. No AI API call is required; every field is assembled from your repository.
+
+```bash
+h5i resume              # briefing for the current branch
+h5i resume feat/oauth   # briefing for a specific branch
+```
+
+### What the briefing shows
+
+| Section | Source |
+|---------|--------|
+| **Branch / HEAD commit** | `git2` + h5i commit record (agent, model) |
+| **Goal & milestone progress** | Context workspace (`.h5i-ctx/main.md`) |
+| **Last session statistics** | Session log analysis (`.git/.h5i/session_log/<oid>/analysis.json`) |
+| **High-risk files** | Weighted risk score across uncertainty signals + churn |
+| **Causal exposure** | Causal chain stored in Git Notes |
+| **Memory changes** | Diff between memory snapshots (`h5i memory diff`) |
+| **Suggested opening prompt** | Template-generated from goal + pending milestones + risky files |
+
+### Risk score formula
+
+Each file is ranked by a composite score:
+
+```
+risk = 0.4 × (1 − avg_confidence) + 0.3 × churn_score + 0.3 × (signal_count / max_signal_count)
+```
+
+- `avg_confidence` — mean confidence of uncertainty annotations for that file (lower = riskier)
+- `churn_score` — edit / (edit + read) ratio from the last session
+- `signal_count / max_signal_count` — relative frequency of uncertainty signals
+
+Files are sorted by `risk_score` descending and the top 5 are shown.
+
+### Example output
+
+```
+── Session Handoff ─────────────────────────────────────────────────
+  Branch: feat/oauth  ·  Last active: 2026-03-27 14:22 UTC
+  Agent: claude-code  ·  Model: claude-sonnet-4-6
+  HEAD: a3f9c2b  implement token refresh flow
+
+  Goal
+    Build an OAuth2 login system
+
+  Progress
+    ✔ Initial setup
+    ✔ GitHub provider integration
+    ○ Token refresh flow  ← resume here
+    ○ Logout + session cleanup
+
+  Last Session
+    90130372  ·  503 messages  ·  181 tool calls  ·  4 files edited
+
+  ⚠  High-Risk Files  (review before continuing)
+    ██████████  src/auth.rs                         4 signals  churn 80%  "not sure"
+    ██████░░░░  src/session.rs                      2 signals  churn 60%  "let me check"
+
+  ⚠ 3 later commits causally depend on HEAD — review before pushing.
+
+  Memory Changes Since Last Snapshot
+    + 2 files added
+    ~ 1 file modified
+    ℹ Run h5i memory diff to see the full diff.
+
+  Recent Context Commits
+    ◈ Implemented token refresh flow
+
+  Suggested Opening Prompt
+  ────────────────────────────────────────────────────────────────────
+  Continue building "Build an OAuth2 login system". Completed so far:
+  Initial setup, GitHub provider integration. Next milestone: Token
+  refresh flow. Review src/auth.rs before editing — 4 uncertainty
+  signals were recorded there in the last session.
+  ────────────────────────────────────────────────────────────────────
+```
+
+### Prerequisites
+
+The briefing is richer when other h5i features have been used:
+
+| Feature needed | How to enable |
+|----------------|---------------|
+| Goal + milestones | `h5i context init --goal "..."` |
+| Last session stats + risky files | `h5i notes analyze` after each session |
+| Memory changes | `h5i memory snapshot` after each session |
+| Agent / model in header | `h5i commit --agent ... --model ...` (or hook) |
+
+If none of these are set up, `h5i resume` still shows branch, HEAD commit, and the suggested prompt — prompting you to initialize the missing features.
+
+### Recommended workflow
+
+```bash
+# End of every session
+h5i notes analyze                          # store session analysis
+h5i memory snapshot -m "end of session"   # checkpoint memory
+
+# Start of every new session
+h5i resume                                 # get the full briefing
+```
 
 ---
 

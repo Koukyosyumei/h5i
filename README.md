@@ -197,7 +197,58 @@ h5i context prompt
 
 ---
 
-### 6. Share AI history with your team
+### 6. Start the next session with full situational awareness
+
+Before beginning a new AI session, run:
+
+```bash
+h5i resume              # briefing for the current branch
+h5i resume feat/oauth   # briefing for a specific branch
+```
+
+```
+── Session Handoff ─────────────────────────────────────────────────
+  Branch: feat/oauth  ·  Last active: 2026-03-27 14:22 UTC
+  Agent: claude-code  ·  Model: claude-sonnet-4-6
+  HEAD: a3f9c2b  implement token refresh flow
+
+  Goal
+    Build an OAuth2 login system
+
+  Progress
+    ✔ Initial setup
+    ✔ GitHub provider integration
+    ○ Token refresh flow  ← resume here
+    ○ Logout + session cleanup
+
+  Last Session
+    90130372  ·  503 messages  ·  181 tool calls  ·  4 files edited
+
+  ⚠  High-Risk Files  (review before continuing)
+    ██████████  src/auth.rs                         4 signals  churn 80%  "not sure"
+    ██████░░░░  src/session.rs                      2 signals  churn 60%  "let me check"
+
+  ⚠ 3 later commits causally depend on HEAD — review before pushing.
+
+  Memory Changes Since Last Snapshot
+    + 2 files added
+    ~ 1 file modified
+    ℹ Run h5i memory diff to see the full diff.
+
+  Suggested Opening Prompt
+  ────────────────────────────────────────────────────────────────────
+  Continue building "Build an OAuth2 login system". Completed so far:
+  Initial setup, GitHub provider integration. Next milestone: Token
+  refresh flow. Review src/auth.rs before editing — 4 uncertainty
+  signals were recorded there in the last session.
+  ────────────────────────────────────────────────────────────────────
+```
+
+No AI API call is needed — every field comes from locally stored h5i data: Git notes, the context workspace, session log analysis, and memory snapshots.
+
+---
+
+### 7. Share AI history with your team
 
 h5i metadata lives in Git refs that aren't pushed by default. Push everything at once:
 
@@ -215,7 +266,7 @@ h5i log            # Alice's prompts, models, test results — all visible
 
 ---
 
-### 7. Browse everything in the web dashboard
+### 8. Browse everything in the web dashboard
 
 ```bash
 h5i serve        # opens http://localhost:7150
@@ -245,6 +296,7 @@ See [MANUAL.md](MANUAL.md) for:
 - Web dashboard guide
 - Memory snapshot workflow
 - Context workspace command reference
+- Session handoff briefing (`h5i resume`)
 - CI/CD push/fetch configuration
 - Storage layout and architecture
 

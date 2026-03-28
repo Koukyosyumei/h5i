@@ -181,6 +181,12 @@ enum Commands {
         #[command(subcommand)]
         action: ContextCommands,
     },
+
+    /// Generate a structured handoff briefing to resume an AI session
+    Resume {
+        /// Branch to resume (defaults to current branch)
+        branch: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1519,6 +1525,33 @@ jq -c '{
                 style("ℹ").blue(),
                 style("Note: Resolution was derived mathematically from Git Notes metadata.").dim()
             );
+        }
+
+        Commands::Resume { branch } => {
+            let repo = H5iRepository::open(".")?;
+            let workdir = repo
+                .git()
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("Bare repository not supported"))?
+                .to_path_buf();
+            if let Some(ref b) = branch {
+                println!(
+                    "{} {} {}",
+                    STEP,
+                    style("Generating handoff briefing for branch").cyan().bold(),
+                    style(b).yellow()
+                );
+            } else {
+                println!(
+                    "{} {}",
+                    STEP,
+                    style("Generating handoff briefing...").cyan().bold()
+                );
+            }
+            match h5i_core::resume::generate_briefing(&repo, &workdir, branch.as_deref()) {
+                Ok(briefing) => h5i_core::resume::print_briefing(&briefing),
+                Err(e) => println!("{} Failed to generate briefing: {}", ERROR, style(e).red()),
+            }
         }
     }
 
