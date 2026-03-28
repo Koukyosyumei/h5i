@@ -1,0 +1,1 @@
+{"git_oid":"81c563fdc49a46f5960d8c5b0f5e4382d34c6e5c","parent_oid":"81cdf86e0e5155ee1bcd4eeb9c042fa1338b6deb","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"implement --decisions and attention-coverage","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-03-28T22:02:11.536213936Z"}
