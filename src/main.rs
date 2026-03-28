@@ -408,7 +408,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "  {} h5i stores metadata in {} and {}.",
                 style("Note:").dim(),
-                style("refs/notes/commits").yellow(),
+                style("refs/h5i/notes").yellow(),
                 style("refs/h5i/memory").yellow()
             );
             println!(
@@ -1101,12 +1101,12 @@ jq -c '{
                 style(&remote).yellow()
             );
 
-            // Push git notes (AI provenance, test metrics, causal links)
-            let notes_refspec = "refs/notes/commits:refs/notes/commits";
+            // Push h5i notes (AI provenance, test metrics, causal links)
+            let notes_refspec = "refs/h5i/notes:refs/h5i/notes";
             print!(
                 "  {} {} … ",
                 style("→").dim(),
-                style("refs/notes/commits").yellow()
+                style("refs/h5i/notes").yellow()
             );
             use std::io::Write as _;
             std::io::stdout().flush()?;
@@ -1122,16 +1122,8 @@ jq -c '{
             }
 
             // Push memory ref (Claude memory snapshots)
-            let mem_refspec = format!(
-                "+{}:{}",
-                memory::MEMORY_REF,
-                memory::MEMORY_REF
-            );
-            print!(
-                "  {} {} … ",
-                style("→").dim(),
-                style("refs/h5i/memory").yellow()
-            );
+            let mem_refspec = format!("+{}:{}", memory::MEMORY_REF, memory::MEMORY_REF);
+            print!("  {} {} … ", style("→").dim(), style("refs/h5i/memory").yellow());
             std::io::stdout().flush()?;
             let mem_status = std::process::Command::new("git")
                 .args(["push", &remote, &mem_refspec])
@@ -1144,13 +1136,45 @@ jq -c '{
                 println!("{} (no memory snapshots yet — run {})", style("skipped").dim(), style("h5i memory snapshot").bold());
             }
 
+            // Push context workspace (refs/h5i/context)
+            print!("  {} {} … ", style("→").dim(), style("refs/h5i/context").yellow());
+            std::io::stdout().flush()?;
+            let ctx_status = std::process::Command::new("git")
+                .args(["push", &remote, "refs/h5i/context:refs/h5i/context"])
+                .current_dir(&workdir)
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+            if ctx_status.success() {
+                println!("{}", style("ok").green());
+            } else {
+                println!("{} (no context workspace yet — run {})", style("skipped").dim(), style("h5i context init").bold());
+            }
+
+            // Push AST blobs (refs/h5i/ast)
+            print!("  {} {} … ", style("→").dim(), style("refs/h5i/ast").yellow());
+            std::io::stdout().flush()?;
+            let ast_status = std::process::Command::new("git")
+                .args(["push", &remote, "refs/h5i/ast:refs/h5i/ast"])
+                .current_dir(&workdir)
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+            if ast_status.success() {
+                println!("{}", style("ok").green());
+            } else {
+                println!("{} (no AST snapshots yet — commit with {})", style("skipped").dim(), style("--ast").bold());
+            }
+
             if notes_status.success() {
                 println!(
                     "\n{} To receive these refs on another machine:\n\
-                    \n    git fetch {} refs/notes/commits:refs/notes/commits\
+                    \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
+                    \n    git fetch {} refs/h5i/context:refs/h5i/context\
+                    \n    git fetch {} refs/h5i/ast:refs/h5i/ast\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
+                    style(&remote).yellow(),
+                    style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
                     style("git pull").bold()

@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>h5i — Next-Gen AI-Aware Git</title>
+  <meta name="description" content="h5i (high-five) is a Git sidecar that extends version control for teams where AI agents write production code alongside humans.">
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Variables ─────────────────────────────────────────── */
+    :root {
+      --red:        #D21C1C;
+      --red-dark:   #8a0000;
+      --red-glow:   rgba(210, 28, 28, 0.18);
+      --bg:         #050505;
+      --bg-card:    #0d0d0d;
+      --bg-card2:   #111111;
+      --border:     rgba(255,255,255,0.07);
+      --border-red: rgba(210,28,28,0.35);
+      --text:       #ffffff;
+      --text-dim:   rgba(255,255,255,0.55);
+      --text-faint: rgba(255,255,255,0.25);
+      --cyan:       #00c8ff;
+      --green:      #22dd88;
+      --yellow:     #f5c542;
+      --grid:       rgba(255,255,255,0.04);
+      --mono:       'Space Mono', monospace;
+      --sans:       'Space Grotesk', sans-serif;
+      --radius:     10px;
+      --radius-lg:  18px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      font-family: var(--sans);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+
+    /* ── Background Grid ───────────────────────────────────── */
+    .bg-grid {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
+    }
+
+    /* ── Nav ───────────────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2.5rem;
+      background: rgba(5,5,5,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 0.75rem;
+      font-weight: 700; font-size: 1.15rem; letter-spacing: 0.04em;
+    }
+    .nav-logo img { width: 30px; height: 30px; border-radius: 6px; }
+    .nav-logo span { color: var(--red); }
+    .nav-links {
+      display: flex; gap: 2rem; align-items: center;
+      list-style: none;
+    }
+    .nav-links a {
+      font-size: 0.85rem; font-weight: 500; letter-spacing: 0.05em;
+      color: var(--text-dim); transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: var(--red); color: #fff !important;
+      padding: 0.4rem 1.1rem; border-radius: 6px;
+      font-weight: 700 !important; letter-spacing: 0.06em !important;
+      transition: background 0.2s, box-shadow 0.2s !important;
+    }
+    .nav-cta:hover {
+      background: #f52020 !important;
+      box-shadow: 0 0 18px rgba(210,28,28,0.5) !important;
+    }
+    .nav-hamburger { display: none; cursor: pointer; flex-direction: column; gap: 5px; }
+    .nav-hamburger span { width: 22px; height: 2px; background: var(--text); border-radius: 2px; }
+
+    /* ── Sections ──────────────────────────────────────────── */
+    section { position: relative; z-index: 1; }
+    .container { max-width: 1120px; margin: 0 auto; padding: 0 2rem; }
+
+    /* ── Hero ──────────────────────────────────────────────── */
+    #hero {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 100px 2rem 80px;
+      overflow: hidden;
+    }
+    .hero-glow {
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 80vw; height: 80vw; max-width: 900px; max-height: 900px;
+      background: radial-gradient(circle, rgba(210,28,28,0.12) 0%, transparent 65%);
+      border-radius: 50%; pointer-events: none; z-index: 0;
+      animation: pulse-glow 8s ease-in-out infinite alternate;
+    }
+    @keyframes pulse-glow {
+      0%   { opacity: 0.6; transform: translateX(-50%) scale(1); }
+      100% { opacity: 1;   transform: translateX(-50%) scale(1.15); }
+    }
+    .hero-inner { position: relative; z-index: 1; max-width: 820px; }
+    .hero-logo-wrap {
+      margin-bottom: 2.2rem;
+      animation: float 7s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-14px); }
+    }
+    .hero-logo-wrap img {
+      width: 220px; height: auto; margin: 0 auto;
+      border-radius: 16px;
+      box-shadow: 0 0 40px rgba(210,28,28,0.45), 0 0 80px rgba(210,28,28,0.15);
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em;
+      color: var(--red); border: 1px solid var(--border-red);
+      padding: 0.3rem 0.9rem; border-radius: 999px;
+      margin-bottom: 1.4rem;
+      background: rgba(210,28,28,0.07);
+    }
+    .hero-badge::before {
+      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--red); animation: blink 1.5s ease infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .hero-title {
+      font-size: clamp(1.8rem, 5.5vw, 4rem);
+      font-weight: 700; line-height: 1.08;
+      letter-spacing: -0.02em;
+      margin-bottom: 1.5rem;
+      white-space: nowrap;
+    }
+    .shine-text {
+      background: linear-gradient(110deg,
+        #8a0000 0%, var(--red) 28%, #ffffff 50%, var(--red) 72%, #8a0000 100%);
+      background-size: 220% auto;
+      -webkit-background-clip: text; background-clip: text;
+      color: transparent; -webkit-text-fill-color: transparent;
+      animation: shine-flow 5s linear infinite;
+      filter: drop-shadow(0 0 18px rgba(210,28,28,0.55));
+    }
+    @keyframes shine-flow {
+      0%   { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+    .hero-sub {
+      font-size: clamp(1rem, 2.5vw, 1.22rem);
+      color: var(--text-dim); max-width: 600px; margin: 0 auto 2.4rem;
+      font-weight: 300; line-height: 1.7;
+    }
+    .hero-sub strong { color: var(--text); font-weight: 500; }
+    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 3rem; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.75rem 1.8rem; border-radius: 8px;
+      font-family: var(--sans); font-size: 0.92rem; font-weight: 700;
+      letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s;
+      border: none;
+    }
+    .btn-primary {
+      background: var(--red); color: #fff;
+    }
+    .btn-primary:hover { background: #f52020; box-shadow: 0 0 24px rgba(210,28,28,0.55); }
+    .btn-ghost {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.04); }
+    .hero-install {
+      display: inline-flex; align-items: center; gap: 0.9rem;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.7rem 1.2rem;
+      font-family: var(--mono); font-size: 0.85rem; color: var(--text-dim);
+      max-width: 100%;
+    }
+    .hero-install code { color: var(--text); word-break: break-all; }
+    .hero-install .copy-btn {
+      flex-shrink: 0; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      border-radius: 5px; padding: 0.25rem 0.5rem; cursor: pointer;
+      font-size: 0.7rem; color: var(--text-dim); transition: all 0.15s;
+    }
+    .hero-install .copy-btn:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+    .hero-stats {
+      display: flex; justify-content: center; gap: 3rem; margin-top: 3.5rem;
+      flex-wrap: wrap;
+    }
+    .hero-stat { text-align: center; }
+    .hero-stat .val {
+      font-size: 1.9rem; font-weight: 700; line-height: 1;
+      background: linear-gradient(135deg, var(--red), #ff6060);
+      -webkit-background-clip: text; background-clip: text;
+      color: transparent; -webkit-text-fill-color: transparent;
+    }
+    .hero-stat .lbl { font-size: 0.75rem; color: var(--text-faint); letter-spacing: 0.1em; margin-top: 0.3rem; }
+
+    /* ── Section heading ───────────────────────────────────── */
+    .section-head { text-align: center; margin-bottom: 3.5rem; }
+    .section-tag {
+      display: inline-block; font-family: var(--mono); font-size: 0.7rem;
+      letter-spacing: 0.18em; color: var(--red); text-transform: uppercase;
+      margin-bottom: 0.8rem; opacity: 0.9;
+    }
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 700;
+      letter-spacing: -0.01em; line-height: 1.18;
+    }
+    .section-sub {
+      margin-top: 0.9rem; font-size: 1rem; color: var(--text-dim);
+      max-width: 560px; margin-left: auto; margin-right: auto;
+    }
+    .divider { width: 48px; height: 3px; background: var(--red); border-radius: 2px; margin: 1.2rem auto 0; }
+
+    /* ── Features ──────────────────────────────────────────── */
+    #features { padding: 100px 0; background: rgba(255,255,255,0.012); }
+    .feat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 1.2rem;
+    }
+    .feat-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 1.6rem 1.5rem;
+      display: flex; flex-direction: column; gap: 0.6rem;
+      transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
+    }
+    .feat-card:hover {
+      border-color: var(--border-red);
+      box-shadow: 0 8px 32px rgba(210,28,28,0.1);
+      transform: translateY(-3px);
+    }
+    .feat-cmd {
+      font-family: var(--mono); font-size: 0.73rem;
+      color: var(--red); background: rgba(210,28,28,0.08);
+      border: 1px solid rgba(210,28,28,0.2);
+      padding: 0.25rem 0.65rem; border-radius: 5px;
+      display: inline-block; width: fit-content;
+    }
+    .feat-name { font-size: 1rem; font-weight: 700; }
+    .feat-desc { font-size: 0.85rem; color: var(--text-dim); line-height: 1.55; }
+
+    /* ── Use Cases ─────────────────────────────────────────── */
+    #usecases { padding: 100px 0; }
+    .usecase { margin-bottom: 5.5rem; }
+    .usecase:last-child { margin-bottom: 0; }
+    .usecase-header {
+      display: flex; align-items: flex-start; gap: 1.5rem; margin-bottom: 1.8rem;
+    }
+    .usecase-num {
+      flex-shrink: 0; width: 44px; height: 44px;
+      border: 2px solid var(--border-red); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono); font-size: 0.8rem; font-weight: 700; color: var(--red);
+    }
+    .usecase-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.35rem; }
+    .usecase-sub { font-size: 0.88rem; color: var(--text-dim); }
+    .terminal {
+      background: #0a0a0a; border: 1px solid var(--border);
+      border-radius: var(--radius-lg); overflow: hidden;
+      font-family: var(--mono); font-size: 0.82rem; line-height: 1.7;
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 0.55rem;
+      padding: 0.7rem 1rem; border-bottom: 1px solid var(--border);
+      background: #0f0f0f;
+    }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+    .terminal-path { margin-left: 0.5rem; font-size: 0.72rem; color: var(--text-faint); }
+    .terminal-body { padding: 1.2rem 1.4rem; overflow-x: auto; }
+    .terminal-body pre { white-space: pre; }
+    .t-prompt { color: var(--green); }
+    .t-cmd    { color: var(--text); }
+    .t-cmt    { color: rgba(255,255,255,0.28); }
+    .t-out    { color: var(--text-dim); }
+    .t-ai     { color: var(--cyan); }
+    .t-warn   { color: var(--yellow); }
+    .t-red    { color: var(--red); }
+    .t-pass   { color: var(--green); }
+    .t-bold   { font-weight: 700; color: var(--text); }
+
+    /* ── Dashboard ─────────────────────────────────────────── */
+    #dashboard { padding: 100px 0; background: rgba(255,255,255,0.012); }
+    .dashboard-wrap {
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+      transition: box-shadow 0.3s;
+    }
+    .dashboard-wrap:hover { box-shadow: 0 32px 100px rgba(210,28,28,0.15); }
+    .dashboard-wrap img { width: 100%; }
+    .dashboard-caption {
+      text-align: center; margin-top: 1.5rem;
+      font-size: 0.85rem; color: var(--text-dim);
+    }
+
+    /* ── Install ───────────────────────────────────────────── */
+    #install { padding: 100px 0; }
+    .install-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
+    }
+    .install-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 2rem;
+    }
+    .install-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 1.2rem; color: var(--text-dim); letter-spacing: 0.06em; }
+    .code-block {
+      background: #0a0a0a; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem 1.2rem;
+      font-family: var(--mono); font-size: 0.8rem; line-height: 1.8;
+      color: var(--text-dim); overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    .code-block .hl { color: var(--text); }
+    .code-block .kw { color: var(--red); }
+    .code-block .cm { color: rgba(255,255,255,0.25); }
+    .code-block .st { color: var(--cyan); }
+
+    /* ── CTA Banner ────────────────────────────────────────── */
+    #cta {
+      padding: 100px 0;
+      text-align: center;
+    }
+    .cta-glow {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      width: 60vw; height: 40vw; max-width: 700px; max-height: 450px;
+      background: radial-gradient(ellipse, rgba(210,28,28,0.1) 0%, transparent 70%);
+      pointer-events: none; z-index: 0;
+    }
+    .cta-inner { position: relative; z-index: 1; }
+    .cta-title { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 700; margin-bottom: 1rem; line-height: 1.2; }
+    .cta-sub { font-size: 1rem; color: var(--text-dim); max-width: 480px; margin: 0 auto 2.4rem; }
+
+    /* ── Footer ────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 2rem; position: relative; z-index: 1;
+    }
+    .footer-inner {
+      max-width: 1120px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.2rem;
+    }
+    .footer-brand { display: flex; align-items: center; gap: 0.6rem; }
+    .footer-brand img { width: 24px; height: 24px; border-radius: 5px; opacity: 0.8; }
+    .footer-brand span { font-weight: 700; font-size: 0.9rem; }
+    .footer-brand .red { color: var(--red); }
+    .footer-links { display: flex; gap: 1.8rem; flex-wrap: wrap; }
+    .footer-links a { font-size: 0.82rem; color: var(--text-faint); transition: color 0.2s; }
+    .footer-links a:hover { color: var(--text-dim); }
+    .footer-legal { font-size: 0.78rem; color: var(--text-faint); }
+
+    /* ── Scroll-reveal ─────────────────────────────────────── */
+    .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    /* ── Responsive ────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      nav { padding: 0 1.2rem; }
+      .nav-links { display: none; flex-direction: column; position: absolute; top: 60px; left: 0; right: 0; background: rgba(5,5,5,0.97); border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; gap: 1.2rem; }
+      .nav-links.open { display: flex; }
+      .nav-hamburger { display: flex; }
+      .install-grid { grid-template-columns: 1fr; }
+      .hero-stats { gap: 2rem; }
+      .usecase-header { flex-direction: column; }
+    }
+
+    /* ── Scrollbar ─────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(210,28,28,0.4); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--red); }
+  </style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<!-- ── Nav ──────────────────────────────────────────────────── -->
+<nav>
+  <a class="nav-logo" href="#">
+    <img src="../assets/logo.png" alt="h5i">
+    <span>h5i</span>
+  </a>
+  <ul class="nav-links" id="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#usecases">Use Cases</a></li>
+    <li><a href="#dashboard">Dashboard</a></li>
+    <li><a href="#install">Install</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+  <div class="nav-hamburger" id="hamburger" onclick="toggleNav()">
+    <span></span><span></span><span></span>
+  </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────────────────────────── -->
+<section id="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-inner">
+    <div class="hero-logo-wrap">
+      <img src="../assets/logo.png" alt="h5i logo">
+    </div>
+    <div class="hero-badge">VERSION CONTROL · AI-READY · OPEN SOURCE</div>
+    <h1 class="hero-title">
+      <span class="shine-text">Next-Gen AI-Aware Git</span>
+    </h1>
+    <p class="hero-sub">
+      <strong>h5i</strong> (pronounced <em>high-five</em>) is a Git sidecar that extends version control for teams where AI agents write production code alongside humans.
+      Where Git answers <strong>what changed</strong>, h5i answers <strong>who, why, whether it was safe, and how to undo it</strong>.
+    </p>
+    <div class="hero-actions">
+      <a href="#install" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-ghost">View on GitHub</a>
+    </div>
+    <div class="hero-install">
+      <code id="install-cmd">cargo install --git https://github.com/Koukyosyumei/h5i h5i-core</code>
+      <button class="copy-btn" onclick="copyInstall()">copy</button>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="val">5</div><div class="lbl">SEMANTIC DIMENSIONS</div></div>
+      <div class="hero-stat"><div class="val">14</div><div class="lbl">FEATURES</div></div>
+      <div class="hero-stat"><div class="val">12</div><div class="lbl">INTEGRITY RULES</div></div>
+      <div class="hero-stat"><div class="val">0</div><div class="lbl">API CALLS FOR HANDOFF</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ──────────────────────────────────────────────── -->
+<section id="features">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Feature Overview</span>
+      <h2 class="section-title">Everything you need to audit AI code</h2>
+      <p class="section-sub">One sidecar. Zero lock-in. Works alongside any Git workflow.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i commit --prompt … --audit</span>
+        <div class="feat-name">AI-tagged commits</div>
+        <div class="feat-desc">Stores the exact prompt, model, agent ID, and test results alongside every commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/notes</code>.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i blame &lt;file&gt;</span>
+        <div class="feat-name">AI-aware blame</div>
+        <div class="feat-desc">Per-line authorship enriched with agent name, model, and test badge — line or AST mode.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i log</span>
+        <div class="feat-name">Enriched log</div>
+        <div class="feat-desc">Full AI provenance inline — prompt, model, agent, test badge — in a readable timeline.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i rollback "the OAuth changes"</span>
+        <div class="feat-name">Intent rollback</div>
+        <div class="feat-desc">Reverts a commit by matching your description against stored prompts. No hash needed.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i commit --audit</span>
+        <div class="feat-name">Integrity audit</div>
+        <div class="feat-desc">12 deterministic rules — no AI in the audit path — checking credential leaks, CI/CD tampering, scope creep, and <code style="color:var(--red);font-family:var(--mono)">eval()</code> patterns.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i notes footprint</span>
+        <div class="feat-name">Session footprint</div>
+        <div class="feat-desc">Maps which files the AI read vs. edited per session — surfaces implicit dependencies.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i notes uncertainty</span>
+        <div class="feat-name">Uncertainty heatmap</div>
+        <div class="feat-desc">Every moment the AI hedged, with the exact quote, confidence score, and file-level risk map.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i notes churn</span>
+        <div class="feat-name">File churn</div>
+        <div class="feat-desc">Edit-to-read ratio per file — high-churn code gets flagged for extra review automatically.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i notes graph</span>
+        <div class="feat-name">Intent graph</div>
+        <div class="feat-desc">Visualises the causal chain across commits — which AI commit triggered which downstream change.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i context init / trace / commit</span>
+        <div class="feat-name">Context workspace</div>
+        <div class="feat-desc">Version-controlled notepad (goal, OTA trace, milestones) in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/context</code> — survives session resets.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i resume</span>
+        <div class="feat-name">Session handoff</div>
+        <div class="feat-desc">Ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — from local data. No API call.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i memory snapshot / diff</span>
+        <div class="feat-name">Memory tracking</div>
+        <div class="feat-desc">Snapshots Claude's memory files at every commit and diffs them across versions in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/memory</code>.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i push / pull</span>
+        <div class="feat-name">Team sharing</div>
+        <div class="feat-desc">Syncs all AI metadata (<code style="color:var(--red);font-family:var(--mono)">refs/h5i/*</code>) to/from the remote in one command — teammates see full provenance.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i serve</span>
+        <div class="feat-name">Web dashboard</div>
+        <div class="feat-desc">Browser UI with Timeline, Summary, Integrity, Intent Graph, Memory, and Sessions tabs at localhost:7150.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Use Cases ─────────────────────────────────────────────── -->
+<section id="usecases">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Use Cases</span>
+      <h2 class="section-title">See h5i in action</h2>
+      <p class="section-sub">Real workflows where h5i adds signal that Git alone can't provide.</p>
+      <div class="divider"></div>
+    </div>
+
+    <!-- 1 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">01</div>
+        <div>
+          <div class="usecase-title">Find who wrote this — and with what prompt</div>
+          <div class="usecase-sub">Per-line AI authorship, model, and the exact prompt that produced it.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i blame src/auth.rs</span>
+
+<span class="t-bold">STAT COMMIT   AUTHOR/AGENT    | CONTENT</span>
+<span class="t-pass">✅</span> <span class="t-ai">✨</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code    </span> | <span class="t-out">fn validate_token(tok: &amp;str) -&gt; bool {</span>
+<span class="t-pass">✅</span>    <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code    </span> | <span class="t-out">    tok.len() == 64 &amp;&amp; tok.chars().all(|c| c.is_ascii_hexdigit())</span>
+       <span class="t-out">9eff001</span>  <span class="t-out">alice          </span> | <span class="t-out">}</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i log --limit 1</span>
+
+<span class="t-bold">commit a3f9c2b...</span>
+<span class="t-out">Author:  Alice &lt;alice@example.com&gt;</span>
+<span class="t-ai">Agent:   claude-code (claude-sonnet-4-6) ✨</span>
+<span class="t-warn">Prompt:  "add per-IP rate limiting to the auth endpoint"</span>
+<span class="t-pass">Tests:   ✔ 42 passed, 0 failed, 1.23s [pytest]</span>
+
+<span class="t-out">    implement rate limiting</span></pre></div>
+      </div>
+    </div>
+
+    <!-- 2 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">02</div>
+        <div>
+          <div class="usecase-title">Keep Claude's context alive across sessions</div>
+          <div class="usecase-sub">A version-controlled notepad in <code style="font-family:var(--mono);color:var(--red)">refs/h5i/context</code> that survives session resets.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-cmt"># Project start — run once</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context init --goal "Build an OAuth2 login system"</span>
+
+<span class="t-cmt"># During the session — record reasoning</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind THINK   "40 MB overhead is acceptable"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind ACT     "Switching session store to Redis"</span>
+
+<span class="t-cmt"># After a milestone</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context commit "Implemented token refresh flow"</span>
+
+<span class="t-cmt"># New session — restore state instantly</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --trace</span>
+
+<span class="t-bold">── Context ──────────────────────────────────────────────────</span>
+  <span class="t-out">Project: Build an OAuth2 login system  (branch: main)</span>
+
+  <span class="t-bold">Milestones</span>
+    <span class="t-pass">✔ [x]</span> Initial setup
+    <span class="t-warn">○ [ ] Token refresh flow</span>
+
+  <span class="t-bold">Recent Trace</span>
+    <span class="t-out">[14:22:01]</span> <span class="t-red">ACT:</span>     Switching session store to Redis
+    <span class="t-out">[14:21:44]</span> <span class="t-ai">THINK:</span>  40 MB overhead is acceptable
+    <span class="t-out">[14:21:30]</span> <span class="t-pass">OBSERVE:</span> Redis p99 latency is 2 ms</pre></div>
+      </div>
+    </div>
+
+    <!-- 3 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">03</div>
+        <div>
+          <div class="usecase-title">Audit what the integrity engine caught</div>
+          <div class="usecase-sub">12 deterministic rules — no AI in the audit path.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i commit -m "refactor auth module" --audit</span>
+
+<span class="t-warn">⚠ INTEGRITY WARNING (score: 0.70)</span>
+  <span class="t-warn">⚠ [UNDECLARED_DELETION]  247 lines deleted (72% of total changes)</span>
+  <span class="t-out">                         with no deletion intent stated.</span>
+  <span class="t-out">ℹ [CONFIG_FILE_MODIFIED] Configuration file 'config/auth.yaml' modified.</span>
+
+<span class="t-out">Commit anyway with --force, or revise your changes.</span></pre></div>
+      </div>
+    </div>
+
+    <!-- 4 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">04</div>
+        <div>
+          <div class="usecase-title">Understand what Claude actually did in a session</div>
+          <div class="usecase-sub">Footprint, uncertainty heatmap, and file churn — all from the session log.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span>
+
+<span class="t-bold">── Uncertainty Heatmap ───────────────────────────────────────────</span>
+  <span class="t-out">7 signals  ·  session 90130372  ·  3 files</span>
+
+  <span class="t-bold">Risk Map</span>
+  <span class="t-red">src/auth.rs    </span>   <span class="t-red">████████████░░░░</span>  <span class="t-red">●●●</span>  4 signals  avg  28%
+  <span class="t-warn">src/main.rs    </span>   <span class="t-warn">██████░░░░░░░░░░</span>  <span class="t-warn">●● </span>  2 signals  avg  40%
+  <span class="t-out">src/server.rs  </span>   <span class="t-out">██░░░░░░░░░░░░░░</span>  <span class="t-out">●  </span>  1 signal   avg  52%
+
+  <span class="t-bold">Signals</span>
+  <span class="t-red">██</span>  t:32    not sure       src/auth.rs   <span class="t-red">[ 25%]</span>
+       <span class="t-out">"…token validation might break if the token contains special chars…"</span>
+
+  <span class="t-warn">▓▓</span>  t:220   let me check   src/main.rs   <span class="t-warn">[ 45%]</span>
+       <span class="t-out">"…The LSP shows the match still isn't seeing the new arm…"</span></pre></div>
+      </div>
+    </div>
+
+    <!-- 5 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">05</div>
+        <div>
+          <div class="usecase-title">Start the next session with full situational awareness</div>
+          <div class="usecase-sub">No API call needed — every field comes from locally stored h5i data.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i resume</span>
+
+<span class="t-bold">── Session Handoff ──────────────────────────────────────────────</span>
+  <span class="t-out">Branch: feat/oauth  ·  Last active: 2026-03-27 14:22 UTC</span>
+  <span class="t-ai">Agent: claude-code  ·  Model: claude-sonnet-4-6</span>
+  <span class="t-out">HEAD: a3f9c2b  implement token refresh flow</span>
+
+  <span class="t-bold">Progress</span>
+    <span class="t-pass">✔</span> Initial setup
+    <span class="t-pass">✔</span> GitHub provider integration
+    <span class="t-warn">○ Token refresh flow  ← resume here</span>
+    <span class="t-out">○ Logout + session cleanup</span>
+
+  <span class="t-warn">⚠ High-Risk Files</span>
+    <span class="t-red">██████████</span>  src/auth.rs     4 signals  churn 80%  <span class="t-red">"not sure"</span>
+    <span class="t-warn">██████░░░░</span>  src/session.rs  2 signals  churn 60%  <span class="t-warn">"let me check"</span>
+
+  <span class="t-bold">Suggested Opening Prompt</span>
+  <span class="t-out">────────────────────────────────────────────────────────────────</span>
+  <span class="t-out">Continue building "Build an OAuth2 login system". Completed so</span>
+  <span class="t-out">far: Initial setup, GitHub provider integration. Next milestone:</span>
+  <span class="t-out">Token refresh flow. Review src/auth.rs before editing — 4</span>
+  <span class="t-out">uncertainty signals recorded there in the last session.</span>
+  <span class="t-out">────────────────────────────────────────────────────────────────</span></pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Dashboard ─────────────────────────────────────────────── -->
+<section id="dashboard">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Web Dashboard</span>
+      <h2 class="section-title">Browse everything in one place</h2>
+      <p class="section-sub">Run <code style="font-family:var(--mono);color:var(--red)">h5i serve</code> to open a local dashboard at <code style="font-family:var(--mono);color:var(--red)">http://localhost:7150</code>.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="dashboard-wrap reveal">
+      <img src="../assets/screenshot_h5i_server.png" alt="h5i web dashboard — Timeline tab" loading="lazy">
+    </div>
+    <p class="dashboard-caption reveal">
+      Timeline tab — every commit with full AI context, test badge, integrity score, and one-click re-audit.<br>
+      Additional tabs: <strong>Summary · Integrity · Intent Graph · Memory · Sessions</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ── Install ────────────────────────────────────────────────── -->
+<section id="install">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Get Started</span>
+      <h2 class="section-title">Up and running in two commands</h2>
+      <div class="divider"></div>
+    </div>
+    <div class="install-grid">
+      <div class="install-card reveal">
+        <h3>INSTALL</h3>
+        <div class="code-block">
+<span class="cm"># Install from source</span>
+<span class="hl">cargo install \</span>
+<span class="hl">  --git https://github.com/Koukyosyumei/h5i \</span>
+<span class="hl">  h5i-core</span>
+
+<span class="cm"># Init in your project</span>
+<span class="hl">cd your-project</span>
+<span class="hl">h5i init</span>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <h3>FIRST COMMIT</h3>
+        <div class="code-block">
+<span class="cm"># Commit with AI metadata + audit</span>
+<span class="hl">h5i commit \</span>
+<span class="hl">  -m <span class="st">"add rate limiting"</span> \</span>
+<span class="hl">  --prompt <span class="st">"add per-IP rate limit"</span> \</span>
+<span class="hl">  --model <span class="st">claude-sonnet-4-6</span> \</span>
+<span class="hl">  --agent <span class="st">claude-code</span> \</span>
+<span class="hl">  --audit</span>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <h3>PUSH TO TEAM</h3>
+        <div class="code-block">
+<span class="cm"># Push all h5i refs + code</span>
+<span class="hl">h5i push</span>
+<span class="hl">git push origin main</span>
+
+<span class="cm"># Teammates fetch and see</span>
+<span class="cm"># full AI provenance in h5i log</span>
+        </div>
+      </div>
+      <div class="install-card reveal">
+        <h3>OPEN DASHBOARD</h3>
+        <div class="code-block">
+<span class="cm"># Browse AI history in browser</span>
+<span class="hl">h5i serve</span>
+<span class="cm"># → http://localhost:7150</span>
+
+<span class="cm"># Generate session handoff</span>
+<span class="hl">h5i resume</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ────────────────────────────────────────────────────── -->
+<section id="cta">
+  <div class="cta-glow"></div>
+  <div class="container">
+    <div class="cta-inner">
+      <h2 class="cta-title">Ready to trust your AI-generated code?</h2>
+      <p class="cta-sub">h5i gives every AI commit an audit trail, an author, and an undo button. Apache 2.0. No lock-in.</p>
+      <div class="hero-actions">
+        <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+        <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" class="btn btn-ghost">Read the Manual</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ─────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="../assets/logo.png" alt="h5i">
+      <span>h5i<span class="red"> / high-five</span></span>
+    </div>
+    <nav class="footer-links">
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+      <a href="https://github.com/Koukyosyumei/h5i/issues">Issues</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/LICENSE">License</a>
+    </nav>
+    <div class="footer-legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script>
+  /* ── Nav toggle ───────────────────────────── */
+  function toggleNav() {
+    document.getElementById('nav-links').classList.toggle('open');
+  }
+  document.addEventListener('click', e => {
+    const nav = document.getElementById('nav-links');
+    if (!nav.contains(e.target) && !document.getElementById('hamburger').contains(e.target)) {
+      nav.classList.remove('open');
+    }
+  });
+
+  /* ── Copy install command ─────────────────── */
+  function copyInstall() {
+    const text = document.getElementById('install-cmd').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'copied!';
+      setTimeout(() => { btn.textContent = 'copy'; }, 2000);
+    });
+  }
+
+  /* ── Scroll-reveal ────────────────────────── */
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+  document.querySelectorAll('.reveal').forEach((el, i) => {
+    el.style.transitionDelay = `${(i % 6) * 0.07}s`;
+    observer.observe(el);
+  });
+
+  /* ── Active nav link ──────────────────────── */
+  const sections = document.querySelectorAll('section[id]');
+  const navLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+  window.addEventListener('scroll', () => {
+    let current = '';
+    sections.forEach(s => {
+      if (window.scrollY >= s.offsetTop - 80) current = s.id;
+    });
+    navLinks.forEach(a => {
+      a.style.color = a.getAttribute('href') === `#${current}` ? 'var(--text)' : '';
+    });
+  }, { passive: true });
+</script>
+</body>
+</html>
