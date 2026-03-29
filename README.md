@@ -84,6 +84,23 @@ h5i notes review         # ranked list of commits that most need human review
     → Cargo.toml
 ```
 
+**Uncertainty** surfaces every moment Claude hedged, with confidence score and the exact quote:
+
+```
+── Uncertainty Heatmap ─────────────────────────────────────────────────
+  7 signals  ·  3 files
+
+  src/auth.rs    ████████████░░░░  ●●●  4 signals  avg 28%
+  src/main.rs    ██████░░░░░░░░░░  ●●   2 signals  avg 40%
+  src/server.rs  ██░░░░░░░░░░░░░░  ●    1 signal   avg 52%
+
+  ██ t:32   not sure    src/auth.rs  [25%]
+       "…token validation might break if the token contains special chars…"
+
+  ▓▓ t:220  let me check  src/main.rs  [45%]
+       "…The LSP shows the match still isn't seeing the new arm. Let me check…"
+```
+
 **Omissions** surface what Claude left incomplete — extracted from its own thinking:
 
 ```
