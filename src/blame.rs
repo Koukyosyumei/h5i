@@ -1,4 +1,5 @@
 use crate::metadata::{AiMetadata, TestMetrics};
+use serde::Serialize;
 
 pub enum BlameMode {
     /// Traditional line-based blame (Standard)
@@ -27,7 +28,7 @@ pub struct H5iBlameEntry {
     pub is_semantic: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct BlameResult {
     pub line_number: usize,
     pub line_content: String,
@@ -43,7 +44,7 @@ pub struct BlameResult {
 }
 
 /// One entry in the prompt ancestry chain for a specific file line.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct AncestryEntry {
     pub commit_id: String,
     pub author: String,

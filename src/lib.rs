@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod blame;
+pub mod mcp;
 pub mod ctx;
 /// Deprecated alias — use `ctx` instead.
 pub use ctx as gcc;

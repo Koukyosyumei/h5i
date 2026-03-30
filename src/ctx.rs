@@ -201,13 +201,34 @@ fn ctx_list_branches_git(repo: &Repository) -> Vec<String> {
         Ok(t) => t,
         Err(_) => return vec![],
     };
-    let mut names: Vec<String> = branches_tree
-        .iter()
-        .filter(|e| e.kind() == Some(ObjectType::Tree))
-        .filter_map(|e| e.name().map(str::to_owned))
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    collect_branch_names(repo, &branches_tree, "", &mut names);
     names.sort();
     names
+}
+
+/// Recursively walk a subtree under `branches/`. A tree entry is considered a
+/// branch if it contains a blob named `commit.md`; otherwise we recurse into
+/// nested trees (supporting slash-separated names like `experiment/alt`).
+fn collect_branch_names(repo: &Repository, tree: &git2::Tree, prefix: &str, out: &mut Vec<String>) {
+    for entry in tree.iter() {
+        let Some(entry_name) = entry.name() else { continue };
+        if entry.kind() != Some(ObjectType::Tree) {
+            continue;
+        }
+        let full_name = if prefix.is_empty() {
+            entry_name.to_owned()
+        } else {
+            format!("{prefix}/{entry_name}")
+        };
+        let Ok(subtree) = repo.find_tree(entry.id()) else { continue };
+        // A branch directory contains `commit.md`.
+        if subtree.get_name("commit.md").is_some() {
+            out.push(full_name);
+        } else {
+            collect_branch_names(repo, &subtree, &full_name, out);
+        }
+    }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

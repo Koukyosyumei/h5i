@@ -42,6 +42,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i memory pull](#h5i-memory-pull)
 - [h5i resume](#h5i-resume)
 - [h5i serve](#h5i-serve)
+- [h5i mcp](#h5i-mcp)
 - [h5i push](#h5i-push)
 - [h5i pull](#h5i-pull)
 - [h5i session](#h5i-session)
@@ -954,6 +955,118 @@ h5i serve --port 8080
 | **Intent Graph** | Directed graph of causal commit chains |
 | **Memory** | Browse and diff Claude memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
+
+---
+
+## h5i mcp
+
+```
+h5i mcp
+```
+
+Start the h5i MCP (Model Context Protocol) server on stdio. Any MCP client — including Claude Code — can connect to it to call h5i tools and read h5i resources directly without invoking the CLI.
+
+The server implements the **2024-11-05** MCP specification over a newline-delimited JSON-RPC 2.0 stdio transport.
+
+### Registering with Claude Code
+
+Add the following entry to your `~/.claude/settings.json` (or the project-level `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "h5i": {
+      "command": "h5i",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+After restarting Claude Code, all h5i tools become available natively inside any session — no shell commands needed.
+
+### Tools
+
+| Tool | Equivalent CLI | Description |
+|------|----------------|-------------|
+| `h5i_log` | `h5i log` | Recent commits with AI provenance metadata |
+| `h5i_blame` | `h5i blame` | Per-line or AST-node authorship with model/prompt annotation |
+| `h5i_notes_show` | `h5i notes show` | Full session analysis for a commit |
+| `h5i_notes_uncertainty` | `h5i notes uncertainty` | Uncertainty moments expressed during a session |
+| `h5i_notes_coverage` | `h5i notes coverage` | Per-file blind-edit coverage |
+| `h5i_notes_review` | `h5i notes review` | Commits ranked by review worthiness |
+| `h5i_notes_churn` | `h5i notes churn` | Aggregate file churn across all sessions |
+| `h5i_context_init` | `h5i context init` | Initialize the reasoning workspace |
+| `h5i_context_trace` | `h5i context trace` | Append an OBSERVE/THINK/ACT/NOTE step |
+| `h5i_context_commit` | `h5i context commit` | Checkpoint reasoning progress |
+| `h5i_context_branch` | `h5i context branch` | Create a reasoning branch |
+| `h5i_context_checkout` | `h5i context checkout` | Switch active reasoning branch |
+| `h5i_context_merge` | `h5i context merge` | Merge a reasoning branch back into current |
+| `h5i_context_show` | `h5i context show` | Full workspace state as JSON |
+| `h5i_context_status` | `h5i context status` | Compact workspace summary |
+
+**Tool parameters**
+
+| Tool | Parameter | Type | Required | Default | Description |
+|------|-----------|------|----------|---------|-------------|
+| `h5i_log` | `limit` | integer | no | 20 | Max commits to return |
+| `h5i_blame` | `file` | string | **yes** | — | Relative path to blame |
+| `h5i_blame` | `mode` | `"line"` \| `"ast"` | no | `"line"` | Blame granularity |
+| `h5i_notes_show` | `commit` | string | no | HEAD | Commit OID or prefix |
+| `h5i_notes_uncertainty` | `commit` | string | no | HEAD | Commit OID or prefix |
+| `h5i_notes_uncertainty` | `file` | string | no | — | Filter to a specific file path |
+| `h5i_notes_coverage` | `commit` | string | no | HEAD | Commit OID or prefix |
+| `h5i_notes_coverage` | `max_ratio` | number (0–1) | no | — | Only files at or below this read-before-edit ratio |
+| `h5i_notes_review` | `limit` | integer | no | 50 | Commits to scan |
+| `h5i_notes_review` | `min_score` | number (0–1) | no | 0.4 | Minimum review score |
+| `h5i_context_init` | `goal` | string | no | — | Project goal for the reasoning session |
+| `h5i_context_trace` | `kind` | `"OBSERVE"` \| `"THINK"` \| `"ACT"` \| `"NOTE"` | **yes** | — | Trace entry type |
+| `h5i_context_trace` | `content` | string | **yes** | — | Content of the trace step |
+| `h5i_context_commit` | `summary` | string | **yes** | — | One-line checkpoint summary |
+| `h5i_context_commit` | `detail` | string | no | — | Extended description |
+| `h5i_context_branch` | `name` | string | **yes** | — | Branch name (slashes allowed, e.g. `experiment/alt`) |
+| `h5i_context_branch` | `purpose` | string | no | — | Why this branch is being explored |
+| `h5i_context_checkout` | `name` | string | **yes** | — | Branch to switch to |
+| `h5i_context_merge` | `branch` | string | **yes** | — | Branch to merge from |
+| `h5i_context_show` | `branch` | string | no | current | Branch to inspect |
+| `h5i_context_show` | `window` | integer | no | 3 | Recent checkpoints to include |
+| `h5i_context_show` | `trace` | boolean | no | false | Include recent OTA trace lines |
+
+### Resources
+
+| URI | MIME type | Content |
+|-----|-----------|---------|
+| `h5i://context/current` | `application/json` | Live reasoning workspace state (goal, milestones, current branch, recent checkpoints, trace). Use this at session start instead of `h5i context prompt`. |
+| `h5i://log/recent` | `application/json` | 10 most recent commits with AI provenance metadata and test metrics. |
+
+### Typical agent workflow using MCP tools
+
+```
+# 1. Establish context at the start of the session
+→ read resource  h5i://context/current
+→ h5i_context_init  { "goal": "add retry logic to HTTP client" }
+
+# 2. Understand what has already been done
+→ h5i_log         { "limit": 5 }
+→ h5i_blame       { "file": "src/http_client.rs" }
+
+# 3. Record reasoning as you work
+→ h5i_context_trace  { "kind": "OBSERVE", "content": "send() has no retry guard" }
+→ h5i_context_trace  { "kind": "THINK",   "content": "exponential backoff with jitter is safest" }
+→ h5i_context_trace  { "kind": "ACT",     "content": "added retry loop in send() with 5-attempt cap" }
+
+# 4. Checkpoint progress
+→ h5i_context_commit { "summary": "implemented retry loop", "detail": "capped at 5, async-safe" }
+
+# 5. Explore an alternative without losing the current thread
+→ h5i_context_branch   { "name": "experiment/sync-retry", "purpose": "simpler sync fallback" }
+→ h5i_context_checkout { "name": "main" }
+→ h5i_context_merge    { "branch": "experiment/sync-retry" }
+
+# 6. After committing, check what needs human review
+→ h5i_notes_review   { "limit": 20 }
+→ h5i_notes_coverage {}
+```
 
 ---
 
