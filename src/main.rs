@@ -221,6 +221,14 @@ enum Commands {
         /// Branch to resume (defaults to current branch)
         branch: Option<String>,
     },
+
+    /// Start the h5i MCP (Model Context Protocol) server on stdio
+    ///
+    /// Exposes h5i tools and resources to any MCP client (e.g. Claude Code).
+    /// Add to your Claude Code config:
+    ///
+    ///   "h5i": { "command": "h5i", "args": ["mcp"] }
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -2091,6 +2099,12 @@ jq -c '{
                 style("ℹ").blue(),
                 style("Note: Resolution was derived mathematically from Git Notes metadata.").dim()
             );
+        }
+
+        Commands::Mcp => {
+            let workdir = std::env::current_dir()?;
+            eprintln!("h5i-mcp: listening on stdio (workdir: {})", workdir.display());
+            h5i_core::mcp::run_stdio(workdir)?;
         }
 
         Commands::Resume { branch } => {
