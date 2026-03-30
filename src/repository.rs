@@ -1823,16 +1823,32 @@ impl H5iRepository {
     }
 
     pub fn edit_commit_message(&self, oid: Oid, new_message: &str) -> Result<Oid, H5iError> {
-        let commit = self.git_repo.find_commit(oid)?;
-        commit.amend(
-            Some("HEAD"),
-            None,
-            None,
-            None,
-            Some(new_message),
-            None,
-        )?;
-        Ok(self.git_repo.head()?.peel_to_commit()?.id())
+        let workdir = self
+            .git_repo
+            .workdir()
+            .ok_or_else(|| H5iError::InvalidPath("Cannot edit message in a bare repository".into()))?;
+
+        let output = std::process::Command::new("git")
+            .args([
+                "filter-branch",
+                "-f",
+                "--msg-filter",
+                &format!("if test \"$GIT_COMMIT\" = \"{oid}\"; then echo \"{new_message}\"; else cat; fi"),
+                "--",
+                "--all",
+            ])
+            .current_dir(workdir)
+            .output()
+            .map_err(H5iError::Io)?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(H5iError::Git(git2::Error::from_str(&format!(
+                "git filter-branch failed: {stderr}"
+            ))));
+        }
+
+        Ok(oid)
     }
 
     /// Resolves the current `HEAD` reference and returns the associated commit.
