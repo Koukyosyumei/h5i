@@ -168,6 +168,23 @@ Use `h5i context branch` and `h5i context merge` to explore risky alternatives w
 
 ## Setup with Claude Code
 
+**1. MCP server — query and context tools**
+
+Register h5i as an MCP server so Claude Code can call h5i tools natively, without shell commands:
+
+```json
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "h5i": { "command": "h5i", "args": ["mcp"] }
+  }
+}
+```
+
+This gives Claude direct access to read-only query tools (`h5i_log`, `h5i_blame`, `h5i_notes_*`) and context workspace tools (`h5i_context_trace`, `h5i_context_commit`, etc.). Read the `h5i://context/current` resource at session start to restore full reasoning context automatically. Committing is intentionally kept as a CLI operation so it stays an explicit human checkpoint.
+
+**2. Prompt-capture hook — automatic provenance on `h5i commit`**
+
 Install hooks so the prompt is captured automatically on every `h5i commit` — no flags needed:
 
 ```bash
@@ -220,7 +237,7 @@ The **Timeline** tab shows every commit with its full AI context inline: model, 
 
 ## Documentation
 
-See [MANUAL.md](MANUAL.md) for the complete command reference — commit flags, integrity rules, notes subcommands, context workspace, memory management, sharing with your team, and the web dashboard guide.
+See [MANUAL.md](MANUAL.md) for the complete command reference — commit flags, integrity rules, notes subcommands, context workspace, memory management, MCP server tools and resources, sharing with your team, and the web dashboard guide.
 
 ---
 
