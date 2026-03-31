@@ -219,8 +219,6 @@ h5i resume
   ─────────────────────────────────────────────────────────────────
 ```
 
-No API call needed — every field comes from locally stored h5i data.
-
 ---
 
 ## Web Dashboard
