@@ -241,6 +241,35 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Manage governance policy for AI-assisted commits (.h5i/policy.toml)
+    Policy {
+        #[command(subcommand)]
+        action: PolicyCommands,
+    },
+
+    /// Generate a compliance audit report over a date range
+    Compliance {
+        /// Start of date range (inclusive), format: YYYY-MM-DD
+        #[arg(long)]
+        since: Option<String>,
+
+        /// End of date range (inclusive), format: YYYY-MM-DD
+        #[arg(long)]
+        until: Option<String>,
+
+        /// Output format: text, json, or html
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Write output to this file (default: stdout)
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+
+        /// Maximum number of commits to scan
+        #[arg(short, long, default_value_t = 500)]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -457,6 +486,18 @@ enum MemoryCommands {
         #[arg(short, long, default_value = "origin")]
         remote: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PolicyCommands {
+    /// Create `.h5i/policy.toml` with starter rules
+    Init,
+
+    /// Check staged files against the current policy (dry-run)
+    Check,
+
+    /// Display the current policy configuration
+    Show,
 }
 
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
@@ -859,6 +900,59 @@ fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+
+            // ── Policy check ──────────────────────────────────────────────────
+            // Run after ai_meta is constructed so path rules can inspect it.
+            {
+                let workdir = repo
+                    .git()
+                    .workdir()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                if let Ok(Some(cfg)) = h5i_core::policy::load_policy(&workdir) {
+                    // Collect staged file paths from the git index.
+                    let staged_files: Vec<String> = {
+                        let mut idx = repo.git().index().unwrap_or_else(|_| {
+                            panic!("cannot open git index")
+                        });
+                        let _ = idx.read(true);
+                        idx.iter()
+                            .map(|e| String::from_utf8_lossy(&e.path).to_string())
+                            .collect()
+                    };
+
+                    let input = h5i_core::policy::CommitCheckInput {
+                        message: &message,
+                        ai_meta: ai_meta.as_ref(),
+                        staged_files: &staged_files,
+                        audit_passed: audit,
+                    };
+                    let violations = h5i_core::policy::check_commit(&cfg, &input);
+                    if !violations.is_empty() {
+                        let has_error = violations
+                            .iter()
+                            .any(|v| v.severity == h5i_core::policy::ViolationSeverity::Error);
+                        let label = cfg.commit.label.as_deref().unwrap_or("policy");
+                        println!(
+                            "{} {} {}",
+                            if has_error { ERROR } else { WARN },
+                            style(format!("Policy violation ({})", label))
+                                .red()
+                                .bold(),
+                            style(format!("({} rule(s) failed)", violations.len())).dim()
+                        );
+                        h5i_core::policy::print_violations(&violations);
+                        if has_error && !force {
+                            println!(
+                                "\n{} Commit aborted by policy. Use {} to override.",
+                                style("!").red(),
+                                style("--force").bold()
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            }
 
             // Resolve TestSource — priority:
             //   1. --test-results <file>
@@ -2147,6 +2241,152 @@ jq -c '{
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 h5i_core::vibe::print_vibe_report(&report);
+            }
+        }
+
+        Commands::Policy { action } => {
+            let workdir = std::env::current_dir()?;
+            match action {
+                PolicyCommands::Init => {
+                    let path = h5i_core::policy::init_policy(&workdir)?;
+                    println!(
+                        "{} {} at {}",
+                        SUCCESS,
+                        style("Policy file created").green().bold(),
+                        style(path.display()).yellow()
+                    );
+                    println!(
+                        "  {} Edit {} to define your governance rules.",
+                        style("→").dim(),
+                        style(path.display()).cyan()
+                    );
+                }
+                PolicyCommands::Check => {
+                    let repo = H5iRepository::open(".")?;
+                    match h5i_core::policy::load_policy(&workdir)? {
+                        None => {
+                            println!(
+                                "{} No policy file found at {}",
+                                WARN,
+                                style(h5i_core::policy::policy_path(&workdir).display()).dim()
+                            );
+                            println!("  Run `h5i policy init` to create one.");
+                        }
+                        Some(cfg) => {
+                            // Get staged files.
+                            let staged_files: Vec<String> = {
+                                let mut idx = repo.git().index()?;
+                                idx.read(true)?;
+                                idx.iter()
+                                    .map(|e| String::from_utf8_lossy(&e.path).to_string())
+                                    .collect()
+                            };
+                            let input = h5i_core::policy::CommitCheckInput {
+                                message: "",
+                                ai_meta: None,
+                                staged_files: &staged_files,
+                                audit_passed: false,
+                            };
+                            let violations = h5i_core::policy::check_commit(&cfg, &input);
+                            if violations.is_empty() {
+                                println!(
+                                    "{} {}",
+                                    SUCCESS,
+                                    style("No policy violations in staged files.").green()
+                                );
+                            } else {
+                                println!(
+                                    "{} {} violation(s):",
+                                    ERROR,
+                                    style(violations.len()).red().bold()
+                                );
+                                h5i_core::policy::print_violations(&violations);
+                            }
+                        }
+                    }
+                }
+                PolicyCommands::Show => {
+                    let path = h5i_core::policy::policy_path(&workdir);
+                    match h5i_core::policy::load_policy(&workdir)? {
+                        None => {
+                            println!(
+                                "{} No policy file found at {}",
+                                WARN,
+                                style(path.display()).dim()
+                            );
+                            println!("  Run `h5i policy init` to create one.");
+                        }
+                        Some(cfg) => {
+                            h5i_core::policy::print_policy(&cfg, &path);
+                        }
+                    }
+                }
+            }
+        }
+
+        Commands::Compliance {
+            since,
+            until,
+            format,
+            output,
+            limit,
+        } => {
+            let repo = H5iRepository::open(".")?;
+            let workdir = repo
+                .git()
+                .workdir()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+            let policy_cfg = h5i_core::policy::load_policy(&workdir)?;
+
+            println!(
+                "{} {}",
+                STEP,
+                style("Scanning commits for compliance report…").cyan().bold()
+            );
+
+            let report = h5i_core::compliance::compute_compliance_report(
+                &repo,
+                since.as_deref(),
+                until.as_deref(),
+                policy_cfg.as_ref(),
+                limit,
+            )?;
+
+            let content: String = match format.as_str() {
+                "json" => h5i_core::compliance::to_json(&report)?,
+                "html" => h5i_core::compliance::to_html(&report),
+                _ => {
+                    // Print text directly and return early.
+                    h5i_core::compliance::print_compliance_text(&report);
+                    if let Some(ref path) = output {
+                        // Re-generate for file write.
+                        let text = format!(
+                            "h5i compliance report\n{} commits scanned · {} AI · {} policy violations\n",
+                            report.total_commits, report.ai_commits, report.policy_violations
+                        );
+                        std::fs::write(path, text)?;
+                        println!(
+                            "{} Report written to {}",
+                            SUCCESS,
+                            style(path.display()).yellow()
+                        );
+                    }
+                    return Ok(());
+                }
+            };
+
+            if let Some(ref path) = output {
+                std::fs::write(path, &content)?;
+                println!(
+                    "{} {} report written to {}",
+                    SUCCESS,
+                    style(format.to_uppercase()).cyan(),
+                    style(path.display()).yellow()
+                );
+            } else {
+                println!("{}", content);
             }
         }
 

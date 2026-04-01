@@ -52,6 +52,9 @@ pub enum H5iError {
 
     #[error("Internal h5i error: {0}")]
     Internal(String),
+
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
 }
 
 impl H5iError {

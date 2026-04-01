@@ -1,4 +1,6 @@
 pub mod ast;
+pub mod compliance;
+pub mod policy;
 pub mod blame;
 pub mod mcp;
 pub mod ctx;
