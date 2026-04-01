@@ -1,0 +1,1 @@
+{"git_oid":"fb98d0d3a764f81d93198fdfc7d7a4297eae8fdb","parent_oid":"4322dc0b190d9d43f1c5a8febb4f0ce4d1ad3c01","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"add vibe and MCP subscribe docs to MANUAL.md and man page","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-01T03:34:34.786789152Z"}
