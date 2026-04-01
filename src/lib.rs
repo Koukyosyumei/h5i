@@ -17,6 +17,7 @@ pub mod rules;
 pub mod server;
 pub mod session;
 pub mod ui;
+pub mod vibe;
 pub mod watcher;
 
 pub use repository::H5iRepository;

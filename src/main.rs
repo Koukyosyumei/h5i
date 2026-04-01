@@ -229,6 +229,18 @@ enum Commands {
     ///
     ///   "h5i": { "command": "h5i", "args": ["mcp"] }
     Mcp,
+
+    /// Show an instant AI footprint audit: how much of this repo is AI-generated,
+    /// which directories are fully AI-written, and where the riskiest files are
+    Vibe {
+        /// Number of recent commits to scan
+        #[arg(short, long, default_value_t = 500)]
+        limit: usize,
+
+        /// Output raw JSON instead of the pretty report
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2105,6 +2117,37 @@ jq -c '{
             let workdir = std::env::current_dir()?;
             eprintln!("h5i-mcp: listening on stdio (workdir: {})", workdir.display());
             h5i_core::mcp::run_stdio(workdir)?;
+        }
+
+        Commands::Vibe { limit, json } => {
+            let repo = H5iRepository::open(".")?;
+            let report = h5i_core::vibe::compute_vibe_report(&repo, limit)?;
+            if json {
+                #[derive(serde::Serialize)]
+                struct VibeJson<'a> {
+                    repo_name: &'a str,
+                    total_commits: usize,
+                    ai_commits: usize,
+                    ai_pct: f32,
+                    human_authors: &'a [String],
+                    ai_models: &'a [(String, usize)],
+                    total_blind_edits: usize,
+                    blind_edit_file_count: usize,
+                }
+                let out = VibeJson {
+                    repo_name: &report.repo_name,
+                    total_commits: report.total_commits,
+                    ai_commits: report.ai_commits,
+                    ai_pct: report.ai_pct(),
+                    human_authors: &report.human_authors,
+                    ai_models: &report.ai_models,
+                    total_blind_edits: report.total_blind_edits,
+                    blind_edit_file_count: report.blind_edit_file_count,
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                h5i_core::vibe::print_vibe_report(&report);
+            }
         }
 
         Commands::Resume { branch } => {
