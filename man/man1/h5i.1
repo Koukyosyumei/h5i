@@ -530,6 +530,124 @@ Print a Claude system prompt that explains how to use h5i context
 commands inside an agent session.
 .RE
 .
+.\" ─── vibe ───────────────────────────────────────────────────────────────────
+.SS h5i vibe [\fIOPTIONS\fR]
+Show an instant AI footprint audit of the repository: what fraction of
+recent commits are AI-generated, which directories are fully AI-written,
+and which files carry the highest risk.
+.PP
+Output is divided into five sections, printed only when non-empty:
+.RS 4
+.IP \(bu 2
+.B AI %
+\(em fraction of scanned commits that carry AI provenance metadata
+.IP \(bu 2
+.B Contributors
+\(em count of distinct human authors and AI models, with names
+.IP \(bu 2
+.B Fully AI dirs
+\(em directories where every commit is AI-generated (\(>= 2 commits)
+.IP \(bu 2
+.B Hot dirs
+\(em directories with \(>= 80% AI commits (\(>= 3 commits)
+.IP \(bu 2
+.B Blind edits
+\(em total blind edits from all analysed sessions and the file count
+.IP \(bu 2
+.B Risky files
+\(em top 5 files with \(>= 70% AI commits plus at least one risk signal
+.RE
+.PP
+A file is flagged when its AI commit ratio is \(>= 70% and at least one of:
+no passing test metrics, one or more blind edits, or one or more
+uncertainty annotations.
+Blind-edit and uncertainty data come from session analyses stored by
+.BR "h5i notes analyze" .
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-l,\ \-\-limit\  N
+Number of recent commits to scan (default:
+.BR 500 ).
+.TP
+.B \-\-json
+Output raw JSON instead of the styled report.
+.RE
+.
+.\" ─── mcp ────────────────────────────────────────────────────────────────────
+.SS h5i mcp
+Start the h5i MCP (Model Context Protocol) server on stdio.
+Implements the
+.B 2024-11-05
+specification over a newline-delimited JSON-RPC\~2.0 transport.
+.PP
+Register with Claude Code by adding to
+.I ~/.claude/settings.json
+or
+.IR .claude/settings.json :
+.PP
+.RS 4
+.nf
+{
+  "mcpServers": {
+    "h5i": { "command": "h5i", "args": ["mcp"] }
+  }
+}
+.fi
+.RE
+.PP
+.B Capabilities
+.RS 4
+.TP
+.B tools
+Fifteen tools covering
+.BR h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
+and
+.B h5i_context_*
+(see
+.IR MANUAL.md ).
+.TP
+.B resources
+Two resources:
+.B h5i://context/current
+(live reasoning workspace state) and
+.B h5i://log/recent
+(10 most recent commits with AI provenance).
+.TP
+.B resources.subscribe
+Both resources support live push notifications.
+.RE
+.PP
+.B Resource subscriptions
+.RS 4
+.PP
+The server advertises
+.B capabilities.resources.subscribe\ =\ true
+in the
+.B initialize
+response.
+Send
+.B resources/subscribe
+with a
+.I uri
+parameter to register; the server spawns a 2-second polling thread per URI
+and pushes
+.B notifications/resources/updated
+whenever the content changes.
+Send
+.B resources/unsubscribe
+to stop.
+.PP
+Subscribable URIs:
+.B h5i://log/recent
+(fires when a new
+.B h5i commit
+lands) and
+.B h5i://context/current
+(fires when the context workspace is updated).
+.RE
+.
 .SH INTEGRITY RULES
 The
 .B \-\-audit

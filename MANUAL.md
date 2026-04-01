@@ -41,6 +41,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i memory push](#h5i-memory-push)
   - [h5i memory pull](#h5i-memory-pull)
 - [h5i resume](#h5i-resume)
+- [h5i vibe](#h5i-vibe)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
 - [h5i push](#h5i-push)
@@ -926,6 +927,89 @@ h5i resume                               # get the full briefing
 
 ---
 
+## h5i vibe
+
+```
+h5i vibe [OPTIONS]
+```
+
+Show an instant AI footprint audit of the repository: what fraction of recent commits are AI-generated, which directories are fully AI-written, and which files carry the highest risk.
+
+**Options**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-l, --limit N` | `500` | Number of recent commits to scan |
+| `--json` | off | Output raw JSON instead of the styled report |
+
+**Output sections**
+
+| Symbol | Section | Description |
+|--------|---------|-------------|
+| 🤖 | AI % | Fraction of scanned commits that carry AI provenance metadata |
+| 👥 | Contributors | Count of distinct human authors and AI models; names listed below |
+| 📁 | Fully AI dirs | Directories where every commit is AI-generated (minimum 2 commits) |
+| 🔥 | Hot dirs | Directories with ≥ 80% AI commits (minimum 3 commits) |
+| ⚠ | Blind edits | Total blind edits from all analysed sessions, and the number of affected files |
+| 💀 | Risky files | Top 5 files with ≥ 70% AI commits **plus** at least one risk signal |
+
+**Risky file signals**
+
+A file is flagged when its AI commit ratio is ≥ 70% and at least one of:
+
+- No passing test metrics found in any touching commit
+- One or more blind edits (edits made without a prior Read in the same session)
+- One or more uncertainty annotations expressed while editing
+
+Files are ranked by a composite score:
+
+```
+score = 0.35 × ai_ratio
+      + min(0.25, 0.08 × blind_edit_count)
+      + min(0.20, 0.06 × uncertainty_count)
+      + 0.35  (if no tests)
+```
+
+The blind-edit and uncertainty data come from session analyses stored by [`h5i notes analyze`](#h5i-notes-analyze). Files with no session data show only their AI commit ratio.
+
+**Example output**
+
+```
+  Vibe Report  my-startup/backend
+  ──────────────────────────────────────────────────────
+  🤖  61% of 51 commits touched by AI
+  👥  2 humans  ·  2 models
+      claude-sonnet-4-6 (32), gpt-4o (10)
+      Alice, Bob
+  ──────────────────────────────────────────────────────
+  📁  src/auth/  ← fully AI-written (8 commits, 0 human)
+  🔥  src/api/   87% AI  (13/15 commits)
+  ──────────────────────────────────────────────────────
+  ⚠   23 blind edits across 7 files
+  ──────────────────────────────────────────────────────
+  💀  src/payment.rs  94% AI  no tests, 3 blind edits, 2 uncertainty flags
+  💀  src/auth/token.rs  100% AI  no tests, 1 blind edit
+  ──────────────────────────────────────────────────────
+  ℹ scanned 51 commits
+```
+
+**JSON output (`--json`)**
+
+```json
+{
+  "repo_name": "backend",
+  "total_commits": 51,
+  "ai_commits": 31,
+  "ai_pct": 60.8,
+  "human_authors": ["Alice", "Bob"],
+  "ai_models": [["claude-sonnet-4-6", 32], ["gpt-4o", 10]],
+  "total_blind_edits": 23,
+  "blind_edit_file_count": 7
+}
+```
+
+---
+
 ## h5i serve
 
 ```
@@ -1038,6 +1122,53 @@ After restarting Claude Code, all h5i tools become available natively inside any
 |-----|-----------|---------|
 | `h5i://context/current` | `application/json` | Live reasoning workspace state (goal, milestones, current branch, recent checkpoints, trace). Use this at session start instead of `h5i context prompt`. |
 | `h5i://log/recent` | `application/json` | 10 most recent commits with AI provenance metadata and test metrics. |
+
+Both resources support **live subscriptions** — see [Resource Subscriptions](#resource-subscriptions) below.
+
+### Resource Subscriptions
+
+The server declares `capabilities.resources.subscribe = true` in the `initialize` response. Clients can subscribe to any resource URI to receive push notifications when the content changes, without polling.
+
+**Protocol flow**
+
+```
+# 1. Subscribe
+→ { "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 1, "result": {} }
+
+# 2. Server pushes when the resource changes (notification — no id)
+← { "jsonrpc": "2.0", "method": "notifications/resources/updated",
+    "params": { "uri": "h5i://log/recent" } }
+
+# 3. Client re-reads to get updated content
+→ { "jsonrpc": "2.0", "id": 2, "method": "resources/read",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 2, "result": { "contents": [...] } }
+
+# 4. Unsubscribe when done
+→ { "jsonrpc": "2.0", "id": 3, "method": "resources/unsubscribe",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 3, "result": {} }
+```
+
+**What triggers a notification**
+
+| URI | Triggers when |
+|-----|---------------|
+| `h5i://log/recent` | A new `h5i commit` lands and HEAD advances |
+| `h5i://context/current` | The reasoning workspace is updated (`h5i context commit`, `h5i context trace`, branch switch, etc.) |
+
+**Implementation**
+
+When a subscription is registered, h5i spawns a background polling thread (2-second interval) per URI. Each poll serialises the full `resources/read` response and compares it to the last-seen snapshot. If the content changed, the snapshot is updated and a `notifications/resources/updated` notification is pushed to stdout. Subscribing to an already-watched URI is idempotent — the existing thread is reused. Unsubscribing removes the URI from the watch map; the thread exits on its next poll.
+
+**Error responses**
+
+| Condition | JSON-RPC code | Message |
+|-----------|---------------|---------|
+| Missing `uri` param | `-32602` | `missing param: uri` |
+| Unknown/non-subscribable URI | `-32602` | `not a subscribable resource: <uri>` |
 
 ### Typical agent workflow using MCP tools
 
