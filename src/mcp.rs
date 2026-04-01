@@ -31,8 +31,10 @@
 //! | `h5i://context/current` | Live `GccContext` JSON (replaces `h5i context prompt`) |
 //! | `h5i://log/recent` | 10 most recent commits with AI provenance |
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -723,6 +725,94 @@ pub fn read_resource(uri: &str, workdir: &Path) -> Result<Value> {
     }
 }
 
+// ── Resource subscriptions ────────────────────────────────────────────────────
+
+/// Shared map: resource URI → last-seen serialised snapshot.
+/// Removing a URI signals the watcher thread for that URI to exit.
+type SubscriptionMap = Arc<Mutex<HashMap<String, String>>>;
+
+/// Serialise a resource to a comparable string snapshot.
+/// Returns an empty string on any error (e.g. repo not initialised) so callers
+/// can skip sending spurious change notifications.
+fn resource_snapshot(uri: &str, workdir: &Path) -> String {
+    read_resource(uri, workdir)
+        .map(|v| v.to_string())
+        .unwrap_or_default()
+}
+
+/// Register a subscription for `uri` and — if no watcher thread already exists
+/// for this URI — spawn a background polling thread that pushes
+/// `notifications/resources/updated` to `stdout` whenever the resource content
+/// changes.
+///
+/// If the URI is already in `subs`, the existing watcher thread is reused and
+/// the snapshot baseline is refreshed.
+pub fn subscribe_resource(
+    uri: String,
+    workdir: PathBuf,
+    subs: SubscriptionMap,
+    stdout: Arc<Mutex<io::Stdout>>,
+) {
+    let snapshot = resource_snapshot(&uri, &workdir);
+
+    {
+        let mut map = subs.lock().unwrap();
+        if map.contains_key(&uri) {
+            // Reuse existing watcher — just refresh the baseline.
+            map.insert(uri, snapshot);
+            return;
+        }
+        map.insert(uri.clone(), snapshot);
+    }
+
+    // Detached polling thread.  Exits when the URI is removed from `subs`.
+    std::thread::spawn(move || {
+        const POLL_SECS: u64 = 2;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(POLL_SECS));
+
+            // Check if still subscribed and retrieve the last-known snapshot.
+            let last = {
+                let map = subs.lock().unwrap();
+                match map.get(&uri) {
+                    Some(s) => s.clone(),
+                    None => return, // Unsubscribed — exit.
+                }
+            };
+
+            let current = resource_snapshot(&uri, &workdir);
+
+            // Skip empty snapshots (transient errors) and unchanged content.
+            if current.is_empty() || current == last {
+                continue;
+            }
+
+            // Persist the new snapshot before pushing so we don't re-notify
+            // on the next poll if the client hasn't re-read yet.
+            {
+                let mut map = subs.lock().unwrap();
+                if !map.contains_key(&uri) {
+                    return; // Unsubscribed while computing snapshot.
+                }
+                map.insert(uri.clone(), current);
+            }
+
+            // Emit MCP notification.
+            let notif = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/resources/updated",
+                "params": { "uri": &uri }
+            });
+            if let (Ok(msg), Ok(mut out)) =
+                (serde_json::to_string(&notif), stdout.lock())
+            {
+                let _ = writeln!(out, "{}", msg);
+                let _ = out.flush();
+            }
+        }
+    });
+}
+
 // ── Request handler ───────────────────────────────────────────────────────────
 
 /// Process one JSON-RPC request and return a response (or `None` for
@@ -739,7 +829,7 @@ pub fn handle_request(req: JsonRpcRequest, workdir: &Path) -> Option<JsonRpcResp
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {
                     "tools": {},
-                    "resources": {}
+                    "resources": { "subscribe": true }
                 },
                 "serverInfo": {
                     "name": "h5i",
@@ -828,10 +918,19 @@ pub fn handle_request(req: JsonRpcRequest, workdir: &Path) -> Option<JsonRpcResp
 /// Reads newline-delimited JSON-RPC 2.0 messages from stdin and writes
 /// responses to stdout.  All log output goes to stderr so it does not
 /// contaminate the protocol stream.
+///
+/// `resources/subscribe` and `resources/unsubscribe` are handled here (not in
+/// `handle_request`) because they need access to the shared subscription map
+/// and the `Arc`-wrapped stdout used by the watcher threads.
 pub fn run_stdio(workdir: PathBuf) -> Result<()> {
     let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    // Wrap stdout in Arc<Mutex<>> so subscription watcher threads can write
+    // notifications without racing with the main request loop.
+    let stdout: Arc<Mutex<io::Stdout>> = Arc::new(Mutex::new(io::stdout()));
+    let subs: SubscriptionMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // Known subscribable URIs — used to validate subscribe requests.
+    const SUBSCRIBABLE: &[&str] = &["h5i://context/current", "h5i://log/recent"];
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -847,15 +946,55 @@ pub fn run_stdio(workdir: PathBuf) -> Result<()> {
             Ok(r) => r,
             Err(e) => {
                 let resp = JsonRpcResponse::err(None, -32700, format!("Parse error: {}", e));
-                writeln!(out, "{}", serde_json::to_string(&resp)?)?;
-                out.flush()?;
+                if let (Ok(msg), Ok(mut out)) = (serde_json::to_string(&resp), stdout.lock()) {
+                    let _ = writeln!(out, "{}", msg);
+                    let _ = out.flush();
+                }
                 continue;
             }
         };
 
-        if let Some(resp) = handle_request(req, &workdir) {
-            writeln!(out, "{}", serde_json::to_string(&resp)?)?;
-            out.flush()?;
+        // Handle subscribe/unsubscribe before delegating to handle_request so
+        // they have access to the subscription infrastructure.
+        let resp_opt: Option<JsonRpcResponse> = match req.method.as_str() {
+            "resources/subscribe" => {
+                match req.params.get("uri").and_then(Value::as_str) {
+                    None => Some(JsonRpcResponse::err(req.id, -32602, "missing param: uri")),
+                    Some(uri) if !SUBSCRIBABLE.contains(&uri) => Some(JsonRpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("not a subscribable resource: {}", uri),
+                    )),
+                    Some(uri) => {
+                        subscribe_resource(
+                            uri.to_string(),
+                            workdir.clone(),
+                            Arc::clone(&subs),
+                            Arc::clone(&stdout),
+                        );
+                        Some(JsonRpcResponse::ok(req.id, json!({})))
+                    }
+                }
+            }
+
+            "resources/unsubscribe" => {
+                match req.params.get("uri").and_then(Value::as_str) {
+                    None => Some(JsonRpcResponse::err(req.id, -32602, "missing param: uri")),
+                    Some(uri) => {
+                        subs.lock().unwrap().remove(uri);
+                        Some(JsonRpcResponse::ok(req.id, json!({})))
+                    }
+                }
+            }
+
+            _ => handle_request(req, &workdir),
+        };
+
+        if let Some(resp) = resp_opt {
+            if let (Ok(msg), Ok(mut out)) = (serde_json::to_string(&resp), stdout.lock()) {
+                let _ = writeln!(out, "{}", msg);
+                let _ = out.flush();
+            }
         }
     }
 
@@ -1425,5 +1564,111 @@ mod tests {
         let res_text = res["contents"][0]["text"].as_str().unwrap();
         let rv: Value = serde_json::from_str(res_text).unwrap();
         assert_eq!(rv["project_goal"], "implement MCP server");
+    }
+
+    // ── resources/subscribe ───────────────────────────────────────────────────
+
+    #[test]
+    fn initialize_advertises_subscribe_capability() {
+        let (_dir, path) = make_repo();
+        let resp = handle_request(make_req("initialize", json!({})), &path).unwrap();
+        let caps = &resp.result.unwrap()["capabilities"];
+        assert_eq!(
+            caps["resources"]["subscribe"].as_bool(),
+            Some(true),
+            "capabilities.resources.subscribe must be true"
+        );
+    }
+
+    #[test]
+    fn subscribe_known_uri_returns_empty_ok() {
+        let (_dir, path) = make_repo();
+        let subs: SubscriptionMap = Arc::new(Mutex::new(HashMap::new()));
+        let stdout = Arc::new(Mutex::new(io::stdout()));
+
+        subscribe_resource(
+            "h5i://log/recent".to_string(),
+            path.clone(),
+            Arc::clone(&subs),
+            Arc::clone(&stdout),
+        );
+
+        // URI must be registered in the map immediately.
+        let map = subs.lock().unwrap();
+        assert!(
+            map.contains_key("h5i://log/recent"),
+            "URI must be in subscription map after subscribe"
+        );
+    }
+
+    #[test]
+    fn subscribe_idempotent_on_second_call() {
+        let (_dir, path) = make_repo();
+        let subs: SubscriptionMap = Arc::new(Mutex::new(HashMap::new()));
+        let stdout = Arc::new(Mutex::new(io::stdout()));
+
+        // First subscription.
+        subscribe_resource(
+            "h5i://log/recent".to_string(),
+            path.clone(),
+            Arc::clone(&subs),
+            Arc::clone(&stdout),
+        );
+        let snap1 = subs.lock().unwrap().get("h5i://log/recent").cloned().unwrap();
+
+        // Second subscription — should not panic or duplicate entries.
+        subscribe_resource(
+            "h5i://log/recent".to_string(),
+            path.clone(),
+            Arc::clone(&subs),
+            Arc::clone(&stdout),
+        );
+        let snap2 = subs.lock().unwrap().get("h5i://log/recent").cloned().unwrap();
+
+        // Snapshot may be refreshed but URI still present exactly once.
+        assert_eq!(snap1, snap2, "snapshot should be stable for unchanged repo");
+        assert_eq!(
+            subs.lock().unwrap().len(),
+            1,
+            "only one entry per URI"
+        );
+    }
+
+    #[test]
+    fn unsubscribe_removes_uri_from_map() {
+        let (_dir, path) = make_repo();
+        let subs: SubscriptionMap = Arc::new(Mutex::new(HashMap::new()));
+        let stdout = Arc::new(Mutex::new(io::stdout()));
+
+        subscribe_resource(
+            "h5i://log/recent".to_string(),
+            path.clone(),
+            Arc::clone(&subs),
+            Arc::clone(&stdout),
+        );
+        assert!(subs.lock().unwrap().contains_key("h5i://log/recent"));
+
+        // Remove via direct map manipulation (mirrors what run_stdio does for
+        // resources/unsubscribe).
+        subs.lock().unwrap().remove("h5i://log/recent");
+        assert!(
+            !subs.lock().unwrap().contains_key("h5i://log/recent"),
+            "URI must be gone after unsubscribe"
+        );
+    }
+
+    #[test]
+    fn resource_snapshot_returns_nonempty_for_known_uris() {
+        let (_dir, path) = make_repo();
+        // h5i://log/recent should always work (HEAD exists from make_repo).
+        let snap = resource_snapshot("h5i://log/recent", &path);
+        assert!(!snap.is_empty(), "snapshot must not be empty for valid repo");
+    }
+
+    #[test]
+    fn resource_snapshot_returns_empty_for_unknown_uri() {
+        let (_dir, path) = make_repo();
+        let snap = resource_snapshot("h5i://does/not/exist", &path);
+        assert!(snap.is_empty(), "unknown URI must yield empty snapshot");
     }
 }

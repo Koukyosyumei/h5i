@@ -166,6 +166,55 @@ Use `h5i context branch` and `h5i context merge` to explore risky alternatives w
 
 ---
 
+### 4. `h5i policy` + `h5i compliance` — enforce governance rules
+
+As AI-assisted contributions grow, teams need an auditable answer to *"are we following our own rules?"* h5i enforces lightweight policy-as-code at commit time and generates audit-grade compliance reports on demand.
+
+**Define rules once, enforce them everywhere:**
+
+```toml
+# .h5i/policy.toml  (committed alongside your code)
+[commit]
+require_ai_provenance = true   # every commit must record model + agent + prompt
+min_message_len = 10
+
+[paths."src/auth/**"]
+require_ai_provenance = true
+require_audit = true           # security-sensitive paths must pass --audit
+max_ai_ratio = 0.8             # compliance: flag if >80% of auth commits are AI
+```
+
+```bash
+h5i policy init    # scaffold .h5i/policy.toml
+h5i policy check   # dry-run against staged files
+h5i policy show    # inspect current rules
+```
+
+When a rule is violated, `h5i commit` prints a clear explanation and blocks the commit:
+
+```
+✖ Policy violation (company-standard-v1)  (1 rule failed)
+  ✖ [commit.require_ai_provenance]  This commit has no AI provenance…
+! Commit aborted by policy. Use --force to override.
+```
+
+**Audit any date range for compliance reporting:**
+
+```bash
+h5i compliance --since 2025-01-01 --until 2025-03-31
+h5i compliance --format html --output q1-report.html   # dark-theme HTML
+h5i compliance --format json | jq '.policy_violations'
+```
+
+```
+── h5i compliance report  (2025-01-01 – 2025-03-31) ──────────
+  ✔ 142 commits scanned  ·  89 AI (63%)  ·  53 human
+  3 policy violations  ·  98% pass rate
+  src/payment/**   ai=91% ✖  blind=35% ✖
+```
+
+---
+
 ## Setup with Claude Code
 
 **1. MCP server — query and context tools**

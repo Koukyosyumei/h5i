@@ -41,6 +41,12 @@ Command reference for all h5i subcommands and flags.
   - [h5i memory push](#h5i-memory-push)
   - [h5i memory pull](#h5i-memory-pull)
 - [h5i resume](#h5i-resume)
+- [h5i vibe](#h5i-vibe)
+- [h5i policy](#h5i-policy)
+  - [h5i policy init](#h5i-policy-init)
+  - [h5i policy check](#h5i-policy-check)
+  - [h5i policy show](#h5i-policy-show)
+- [h5i compliance](#h5i-compliance)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
 - [h5i push](#h5i-push)
@@ -926,6 +932,268 @@ h5i resume                               # get the full briefing
 
 ---
 
+## h5i vibe
+
+```
+h5i vibe [OPTIONS]
+```
+
+Show an instant AI footprint audit of the repository: what fraction of recent commits are AI-generated, which directories are fully AI-written, and which files carry the highest risk.
+
+**Options**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-l, --limit N` | `500` | Number of recent commits to scan |
+| `--json` | off | Output raw JSON instead of the styled report |
+
+**Output sections**
+
+| Symbol | Section | Description |
+|--------|---------|-------------|
+| 🤖 | AI % | Fraction of scanned commits that carry AI provenance metadata |
+| 👥 | Contributors | Count of distinct human authors and AI models; names listed below |
+| 📁 | Fully AI dirs | Directories where every commit is AI-generated (minimum 2 commits) |
+| 🔥 | Hot dirs | Directories with ≥ 80% AI commits (minimum 3 commits) |
+| ⚠ | Blind edits | Total blind edits from all analysed sessions, and the number of affected files |
+| 💀 | Risky files | Top 5 files with ≥ 70% AI commits **plus** at least one risk signal |
+
+**Risky file signals**
+
+A file is flagged when its AI commit ratio is ≥ 70% and at least one of:
+
+- No passing test metrics found in any touching commit
+- One or more blind edits (edits made without a prior Read in the same session)
+- One or more uncertainty annotations expressed while editing
+
+Files are ranked by a composite score:
+
+```
+score = 0.35 × ai_ratio
+      + min(0.25, 0.08 × blind_edit_count)
+      + min(0.20, 0.06 × uncertainty_count)
+      + 0.35  (if no tests)
+```
+
+The blind-edit and uncertainty data come from session analyses stored by [`h5i notes analyze`](#h5i-notes-analyze). Files with no session data show only their AI commit ratio.
+
+**Example output**
+
+```
+  Vibe Report  my-startup/backend
+  ──────────────────────────────────────────────────────
+  🤖  61% of 51 commits touched by AI
+  👥  2 humans  ·  2 models
+      claude-sonnet-4-6 (32), gpt-4o (10)
+      Alice, Bob
+  ──────────────────────────────────────────────────────
+  📁  src/auth/  ← fully AI-written (8 commits, 0 human)
+  🔥  src/api/   87% AI  (13/15 commits)
+  ──────────────────────────────────────────────────────
+  ⚠   23 blind edits across 7 files
+  ──────────────────────────────────────────────────────
+  💀  src/payment.rs  94% AI  no tests, 3 blind edits, 2 uncertainty flags
+  💀  src/auth/token.rs  100% AI  no tests, 1 blind edit
+  ──────────────────────────────────────────────────────
+  ℹ scanned 51 commits
+```
+
+**JSON output (`--json`)**
+
+```json
+{
+  "repo_name": "backend",
+  "total_commits": 51,
+  "ai_commits": 31,
+  "ai_pct": 60.8,
+  "human_authors": ["Alice", "Bob"],
+  "ai_models": [["claude-sonnet-4-6", 32], ["gpt-4o", 10]],
+  "total_blind_edits": 23,
+  "blind_edit_file_count": 7
+}
+```
+
+---
+
+## h5i policy
+
+```
+h5i policy <subcommand>
+```
+
+Manage governance rules for AI-assisted commits. Rules live in `.h5i/policy.toml` — committed alongside your code so the policy is version-controlled and shared with the team.
+
+Policy rules are evaluated automatically on every `h5i commit`. A rule violation blocks the commit unless `--force` is passed.
+
+---
+
+### h5i policy init
+
+```
+h5i policy init
+```
+
+Create `.h5i/policy.toml` with a commented-out starter configuration. Edit the file to enable the rules you need.
+
+**Policy file location:** `<workdir>/.h5i/policy.toml` (not inside `.git/`; it should be committed to the repository).
+
+**Example `.h5i/policy.toml`**
+
+```toml
+[commit]
+# Block commits with no AI provenance (no --model / --agent / --prompt).
+require_ai_provenance = true
+
+# Reject commit messages shorter than 10 characters.
+min_message_len = 10
+
+# When true, commits touching flagged paths must also pass --audit.
+require_audit_on_flagged_paths = true
+
+# Human-readable label shown in output.
+label = "company-standard-v1"
+
+# Per-path rules: keys are glob patterns relative to the repository root.
+# Supports *, **, and ? wildcards.
+[paths."src/auth/**"]
+require_ai_provenance = true  # all auth changes must record AI involvement
+require_audit = true          # all auth changes must pass --audit
+
+# These two are compliance-only (not enforced at commit time):
+max_ai_ratio = 0.8            # flag if >80% of commits in this path are AI
+max_blind_edit_ratio = 0.3    # flag if >30% of edits were blind (no prior Read)
+```
+
+---
+
+### h5i policy check
+
+```
+h5i policy check
+```
+
+Run a dry-run policy check against the currently staged files without committing. Useful in pre-commit hooks or CI.
+
+```bash
+# In a pre-commit hook:
+h5i policy check || exit 1
+```
+
+---
+
+### h5i policy show
+
+```
+h5i policy show
+```
+
+Display the parsed policy configuration in a human-readable format.
+
+```
+── h5i policy  (.h5i/policy.toml) ──────────────────────────
+  label:                      company-standard-v1
+  require_ai_provenance:      true
+  min_message_len:            10
+  require_audit_on_flagged_paths: true
+
+  paths:
+    src/auth/**
+      require_ai_provenance = true
+      require_audit = true
+      max_ai_ratio = 0.80
+      max_blind_edit_ratio = 0.30
+```
+
+---
+
+## h5i compliance
+
+```
+h5i compliance [OPTIONS]
+```
+
+Generate a compliance audit report over a date range. Walks the commit history, re-evaluates policy rules on each commit, and aggregates session data (blind edits, uncertainty) into a structured report.
+
+**Options**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--since <YYYY-MM-DD>` | — | Start of date range (inclusive) |
+| `--until <YYYY-MM-DD>` | — | End of date range (inclusive) |
+| `--format <fmt>` | `text` | Output format: `text`, `json`, or `html` |
+| `--output <FILE>` | stdout | Write report to a file instead of printing |
+| `-l, --limit <N>` | `500` | Maximum number of commits to scan |
+
+**Text output**
+
+```
+── h5i compliance report  (2025-01-01 – 2025-03-31) ──────────
+
+  ✔ 142 commits scanned  ·  89 AI (63%)  ·  53 human
+  3 policy violations  ·  98% pass rate
+
+  path rules:
+    src/auth/**         ai=72% ✔  blind=18% ✔
+    src/payment/**      ai=91% ✖  blind=35% ✖
+
+  violations:
+    a3f8c12  [commit.require_ai_provenance]  …no AI provenance recorded.
+    9e21b04  [paths.src/auth/**.require_ai_provenance]  …auth changes require AI provenance.
+    1d3c5f0  [commit.min_message_len]  Commit message is 3 chars; policy requires at least 10.
+
+  commits:
+    a3f8c12  Alice  AI ⚠ policy  add retry logic
+    9e21b04  Bob   ⚠ policy  2 blind  fix token validation
+    1d3c5f0  Alice           upd
+    …
+```
+
+**HTML report**
+
+The `--format html` output is a self-contained dark-theme HTML file with:
+- Summary cards (total commits, AI %, violations, pass rate)
+- Policy violation list with commit link, rule, and detail
+- Commit table with AI / policy / blind-edit badges
+
+```bash
+h5i compliance --since 2025-01-01 --format html --output report.html
+open report.html
+```
+
+**JSON output**
+
+```json
+{
+  "since": "2025-01-01",
+  "until": null,
+  "total_commits": 142,
+  "ai_commits": 89,
+  "human_commits": 53,
+  "policy_violations": 3,
+  "path_stats": [
+    { "path": "src/auth/**", "ai_ratio": 0.72, "blind_edit_ratio": 0.18,
+      "violates_ai_ratio": false, "violates_blind_edit_ratio": false }
+  ],
+  "violations": [...],
+  "commits": [...]
+}
+```
+
+**What is checked**
+
+At commit time, only rules from `[commit]` and `[paths]` sections are enforced. The compliance report additionally checks `max_ai_ratio` and `max_blind_edit_ratio` per path — rules designed for historical trend analysis rather than blocking individual commits.
+
+| Rule | Enforced at commit | Enforced in compliance |
+|------|--------------------|------------------------|
+| `commit.require_ai_provenance` | ✔ | ✔ |
+| `commit.min_message_len` | ✔ | ✔ |
+| `paths.*.require_ai_provenance` | ✔ | ✔ |
+| `paths.*.require_audit` | ✔ (needs `require_audit_on_flagged_paths`) | ✔ |
+| `paths.*.max_ai_ratio` | — | ✔ |
+| `paths.*.max_blind_edit_ratio` | — | ✔ |
+
+---
+
 ## h5i serve
 
 ```
@@ -1038,6 +1306,53 @@ After restarting Claude Code, all h5i tools become available natively inside any
 |-----|-----------|---------|
 | `h5i://context/current` | `application/json` | Live reasoning workspace state (goal, milestones, current branch, recent checkpoints, trace). Use this at session start instead of `h5i context prompt`. |
 | `h5i://log/recent` | `application/json` | 10 most recent commits with AI provenance metadata and test metrics. |
+
+Both resources support **live subscriptions** — see [Resource Subscriptions](#resource-subscriptions) below.
+
+### Resource Subscriptions
+
+The server declares `capabilities.resources.subscribe = true` in the `initialize` response. Clients can subscribe to any resource URI to receive push notifications when the content changes, without polling.
+
+**Protocol flow**
+
+```
+# 1. Subscribe
+→ { "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 1, "result": {} }
+
+# 2. Server pushes when the resource changes (notification — no id)
+← { "jsonrpc": "2.0", "method": "notifications/resources/updated",
+    "params": { "uri": "h5i://log/recent" } }
+
+# 3. Client re-reads to get updated content
+→ { "jsonrpc": "2.0", "id": 2, "method": "resources/read",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 2, "result": { "contents": [...] } }
+
+# 4. Unsubscribe when done
+→ { "jsonrpc": "2.0", "id": 3, "method": "resources/unsubscribe",
+    "params": { "uri": "h5i://log/recent" } }
+← { "jsonrpc": "2.0", "id": 3, "result": {} }
+```
+
+**What triggers a notification**
+
+| URI | Triggers when |
+|-----|---------------|
+| `h5i://log/recent` | A new `h5i commit` lands and HEAD advances |
+| `h5i://context/current` | The reasoning workspace is updated (`h5i context commit`, `h5i context trace`, branch switch, etc.) |
+
+**Implementation**
+
+When a subscription is registered, h5i spawns a background polling thread (2-second interval) per URI. Each poll serialises the full `resources/read` response and compares it to the last-seen snapshot. If the content changed, the snapshot is updated and a `notifications/resources/updated` notification is pushed to stdout. Subscribing to an already-watched URI is idempotent — the existing thread is reused. Unsubscribing removes the URI from the watch map; the thread exits on its next poll.
+
+**Error responses**
+
+| Condition | JSON-RPC code | Message |
+|-----------|---------------|---------|
+| Missing `uri` param | `-32602` | `missing param: uri` |
+| Unknown/non-subscribable URI | `-32602` | `not a subscribable resource: <uri>` |
 
 ### Typical agent workflow using MCP tools
 

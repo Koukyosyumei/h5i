@@ -1,4 +1,6 @@
 pub mod ast;
+pub mod compliance;
+pub mod policy;
 pub mod blame;
 pub mod mcp;
 pub mod ctx;
@@ -17,6 +19,7 @@ pub mod rules;
 pub mod server;
 pub mod session;
 pub mod ui;
+pub mod vibe;
 pub mod watcher;
 
 pub use repository::H5iRepository;

@@ -530,6 +530,229 @@ Print a Claude system prompt that explains how to use h5i context
 commands inside an agent session.
 .RE
 .
+.\" ─── vibe ───────────────────────────────────────────────────────────────────
+.SS h5i vibe [\fIOPTIONS\fR]
+Show an instant AI footprint audit of the repository: what fraction of
+recent commits are AI-generated, which directories are fully AI-written,
+and which files carry the highest risk.
+.PP
+Output is divided into five sections, printed only when non-empty:
+.RS 4
+.IP \(bu 2
+.B AI %
+\(em fraction of scanned commits that carry AI provenance metadata
+.IP \(bu 2
+.B Contributors
+\(em count of distinct human authors and AI models, with names
+.IP \(bu 2
+.B Fully AI dirs
+\(em directories where every commit is AI-generated (\(>= 2 commits)
+.IP \(bu 2
+.B Hot dirs
+\(em directories with \(>= 80% AI commits (\(>= 3 commits)
+.IP \(bu 2
+.B Blind edits
+\(em total blind edits from all analysed sessions and the file count
+.IP \(bu 2
+.B Risky files
+\(em top 5 files with \(>= 70% AI commits plus at least one risk signal
+.RE
+.PP
+A file is flagged when its AI commit ratio is \(>= 70% and at least one of:
+no passing test metrics, one or more blind edits, or one or more
+uncertainty annotations.
+Blind-edit and uncertainty data come from session analyses stored by
+.BR "h5i notes analyze" .
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-l,\ \-\-limit\  N
+Number of recent commits to scan (default:
+.BR 500 ).
+.TP
+.B \-\-json
+Output raw JSON instead of the styled report.
+.RE
+.
+.\" ─── mcp ────────────────────────────────────────────────────────────────────
+.SS h5i mcp
+Start the h5i MCP (Model Context Protocol) server on stdio.
+Implements the
+.B 2024-11-05
+specification over a newline-delimited JSON-RPC\~2.0 transport.
+.PP
+Register with Claude Code by adding to
+.I ~/.claude/settings.json
+or
+.IR .claude/settings.json :
+.PP
+.RS 4
+.nf
+{
+  "mcpServers": {
+    "h5i": { "command": "h5i", "args": ["mcp"] }
+  }
+}
+.fi
+.RE
+.PP
+.B Capabilities
+.RS 4
+.TP
+.B tools
+Fifteen tools covering
+.BR h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
+and
+.B h5i_context_*
+(see
+.IR MANUAL.md ).
+.TP
+.B resources
+Two resources:
+.B h5i://context/current
+(live reasoning workspace state) and
+.B h5i://log/recent
+(10 most recent commits with AI provenance).
+.TP
+.B resources.subscribe
+Both resources support live push notifications.
+.RE
+.PP
+.B Resource subscriptions
+.RS 4
+.PP
+The server advertises
+.B capabilities.resources.subscribe\ =\ true
+in the
+.B initialize
+response.
+Send
+.B resources/subscribe
+with a
+.I uri
+parameter to register; the server spawns a 2-second polling thread per URI
+and pushes
+.B notifications/resources/updated
+whenever the content changes.
+Send
+.B resources/unsubscribe
+to stop.
+.PP
+Subscribable URIs:
+.B h5i://log/recent
+(fires when a new
+.B h5i commit
+lands) and
+.B h5i://context/current
+(fires when the context workspace is updated).
+.RE
+.
+.\" ─── policy ──────────────────────────────────────────────────────────────────
+.SS h5i policy \fISUBCOMMAND\fR
+Manage governance rules for AI-assisted commits.
+Rules live in
+.I .h5i/policy.toml
+(workdir, not inside
+.IR .git/ ;
+commit it alongside your code).
+Policy is evaluated automatically on every
+.B h5i commit\c
+; violations block the commit unless
+.B \-\-force
+is passed.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.B init
+Create
+.I .h5i/policy.toml
+with a commented-out starter configuration.
+.TP
+.B check
+Dry-run policy check against the currently staged files without committing.
+Exit code is non-zero when at least one error-level violation is found.
+.TP
+.B show
+Print the parsed policy configuration.
+.RE
+.PP
+.B Policy file schema
+.RS 4
+.nf
+[commit]
+require_ai_provenance = true   # reject commits with no AI provenance
+min_message_len = 10           # reject short messages
+require_audit_on_flagged_paths = true
+label = "company-standard-v1"
+
+[paths."src/auth/**"]
+require_ai_provenance = true   # enforced at commit time
+require_audit = true           # enforced at commit time (needs flag above)
+max_ai_ratio = 0.8             # compliance-only: flag if >80% AI commits
+max_blind_edit_ratio = 0.3     # compliance-only: flag if >30% blind edits
+.fi
+.RE
+.PP
+Glob patterns support
+.BR * ,\  ** ,
+and
+.BR ? .
+.
+.\" ─── compliance ──────────────────────────────────────────────────────────────
+.SS h5i compliance [\fIOPTIONS\fR]
+Generate a compliance audit report over a date range.
+Walks the commit history, re-evaluates policy rules, and aggregates session
+data (blind edits, uncertainty signals) into a text, JSON, or HTML report.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-\-since " YYYY-MM-DD"
+Start of date range (inclusive).
+.TP
+.BI \-\-until " YYYY-MM-DD"
+End of date range (inclusive).
+.TP
+.BI \-\-format " fmt"
+Output format:
+.BR text " (default), " json ", or " html .
+The HTML output is a self-contained dark-theme page.
+.TP
+.BI \-\-output " FILE"
+Write the report to a file instead of stdout.
+.TP
+.BI \-l, \-\-limit " N"
+Maximum commits to scan (default: 500).
+.RE
+.PP
+.B What is checked
+.RS 4
+.TP
+At commit time:
+.BR commit.require_ai_provenance ,\  commit.min_message_len ,\  paths.*.require_ai_provenance ,
+and
+.B paths.*.require_audit
+(the last two require the global
+.B require_audit_on_flagged_paths
+flag).
+.TP
+Compliance-only:
+.B paths.*.max_ai_ratio
+and
+.B paths.*.max_blind_edit_ratio
+\(em trend rules designed for historical analysis rather than blocking
+individual commits.
+.RE
+.PP
+.B Example
+.RS 4
+.nf
+h5i compliance \-\-since 2025-01-01 \-\-format html \-\-output report.html
+.fi
+.RE
+.
 .SH INTEGRITY RULES
 The
 .B \-\-audit
