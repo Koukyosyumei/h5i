@@ -244,14 +244,37 @@ impl H5iRepository {
                 Some(crdt_states)
             },
             timestamp: chrono::Utc::now(),
-            caused_by: resolved_caused_by,
+            caused_by: resolved_caused_by.clone(),
+            causes: vec![],
             decisions,
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
             .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
+        // 4. For each commit listed in caused_by, push this commit's OID into
+        //    that commit's `causes` list so the inverse link is always stored.
+        for cause_oid_str in &resolved_caused_by {
+            if let Ok(cause_oid) = git2::Oid::from_str(cause_oid_str) {
+                if let Ok(mut cause_record) = self.load_h5i_record(cause_oid) {
+                    if !cause_record.causes.contains(&commit_oid.to_string()) {
+                        cause_record.causes.push(commit_oid.to_string());
+                        let updated_json = serde_json::to_string(&cause_record)?;
+                        self.git_repo.note(
+                            author,
+                            committer,
+                            Some(H5I_NOTES_REF),
+                            cause_oid,
+                            &updated_json,
+                            true,
+                        )?;
+                    }
+                }
+            }
+        }
+
         Ok(commit_oid)
+
     }
 
     /// Reads local binary deltas from .git/h5i/delta and encodes them for the Note.
@@ -1337,6 +1360,59 @@ impl H5iRepository {
 
         Ok(())
     }
+
+    fn rewrite_note_oid(
+        &self,
+        old_oid: git2::Oid,
+        new_oid: git2::Oid,
+    ) -> Result<(), H5iError> {
+        let note = match self.git_repo.find_note(Some(H5I_NOTES_REF), old_oid) {
+            Ok(n) => n,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(()),
+            Err(e) => return Err(H5iError::Git(e)),
+        };
+
+        let raw = note
+            .message()
+            .ok_or_else(|| H5iError::Metadata(format!("Empty note on {}", old_oid)))?;
+
+        let mut record: H5iCommitRecord = serde_json::from_str(raw)?;
+        record.git_oid = new_oid.to_string();
+        let updated_json = serde_json::to_string(&record)?;
+
+        let sig = self
+            .git_repo
+            .signature()
+            .unwrap_or_else(|_| git2::Signature::now("h5i", "h5i@local").unwrap());
+
+        self.git_repo.note(
+            &sig,
+            &sig,
+            Some(H5I_NOTES_REF),
+            new_oid,
+            &updated_json,
+            true,
+        )?;
+
+        self.git_repo
+            .note_delete(old_oid, Some(H5I_NOTES_REF), &sig, &sig)?;
+
+        Ok(())
+    }
+
+    fn delete_h5i_note(&self, oid: git2::Oid) -> Result<(), H5iError> {
+        let sig = self
+            .git_repo
+            .signature()
+            .unwrap_or_else(|_| git2::Signature::now("h5i", "h5i@local").unwrap());
+
+        match self.git_repo.note_delete(oid, Some(H5I_NOTES_REF), &sig, &sig) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(()),
+            Err(e) => Err(H5iError::Git(e)),
+        }
+    }
+
 }
 
 // ============================================================
@@ -1825,49 +1901,173 @@ impl H5iRepository {
     // Provides opportunity to edit the message of a previously made commit.
     // Returns the OID of the newly edited commit.
     pub fn edit_commit_message(&self, oid: Oid, new_message: &str) -> Result<Oid, H5iError> {
-        let workdir = self
-            .git_repo
-            .workdir()
-            .ok_or_else(|| H5iError::InvalidPath("Cannot edit message in a bare repository".into()))?;
+        // ── Phase 1: BFS from HEAD to find the target ────────────────────
+        // `path` is ordered [target, ..., HEAD].
 
-        let output = std::process::Command::new("git")
-            .args([
-                "filter-branch",
-                "-f",
-                "--msg-filter",
-                &format!("if test \"$GIT_COMMIT\" = \"{oid}\"; then echo \"{new_message}\"; else cat; fi"),
-                "--",
-                "--all",
-            ])
-            .current_dir(workdir)
-            .output()
-            .map_err(H5iError::Io)?;
+        let head_commit = self.get_head_commit()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(H5iError::Git(git2::Error::from_str(&format!(
-                "git filter-branch failed: {stderr}"
-            ))));
-        }
+        let path: Vec<git2::Oid> = if head_commit.id() == oid {
+            vec![oid]
+        } else {
+            let mut found: Option<Vec<git2::Oid>> = None;
+            let mut queue: std::collections::VecDeque<(git2::Oid, Vec<git2::Oid>)> =
+                std::collections::VecDeque::new();
+            let mut visited: std::collections::HashSet<git2::Oid> =
+                std::collections::HashSet::new();
 
-        // Force git2 to reload the repository state after filter-branch rewrites history
-        let workdir_path = workdir.to_path_buf();
-        drop(output);
-        let fresh_repo = git2::Repository::open(&workdir_path)?;
+            queue.push_back((head_commit.id(), vec![head_commit.id()]));
+            visited.insert(head_commit.id());
 
-        let mut revwalk = fresh_repo.revwalk()?;
-        revwalk.push_head()?;
-        for id in revwalk {
-            let id = id?;
-            let commit = fresh_repo.find_commit(id)?;
-            if commit.message().unwrap_or("").trim() == new_message {
-                return Ok(id);
+            'bfs: while let Some((current_oid, current_path)) = queue.pop_front() {
+                let commit = self.git_repo.find_commit(current_oid)?;
+                for i in 0..commit.parent_count() {
+                    let parent_oid = commit.parent_id(i)?;
+                    if parent_oid == oid {
+                        let mut p = current_path.clone();
+                        p.push(parent_oid);
+                        found = Some(p);
+                        break 'bfs;
+                    }
+                    if visited.insert(parent_oid) {
+                        let mut p = current_path.clone();
+                        p.push(parent_oid);
+                        queue.push_back((parent_oid, p));
+                    }
+                }
             }
+
+            match found {
+                Some(mut p) => {
+                    p.reverse(); // now [target, ..., HEAD]
+                    p
+                }
+                None => {
+                    return Err(H5iError::Git(git2::Error::from_str(&format!(
+                        "Commit {} is not reachable from HEAD",
+                        oid
+                    ))));
+                }
+            }
+        };
+
+        // ── Phase 2: Rewrite the target commit ───────────────────────────
+
+        let target_commit = self.git_repo.find_commit(oid)?;
+
+        let parent_commits: Vec<git2::Commit> = (0..target_commit.parent_count())
+            .map(|i| target_commit.parent(i).map_err(H5iError::Git))
+            .collect::<Result<Vec<_>, _>>()?;
+        let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+
+        let new_target_oid = self.git_repo.commit(
+            None,
+            &target_commit.author(),
+            &target_commit.committer(),
+            new_message,
+            &target_commit.tree()?,
+            &parent_refs,
+        )?;
+
+        self.rewrite_note_oid(oid, new_target_oid)?;
+
+        // ── Phase 3: Rewrite each ancestor back up to HEAD ───────────────
+
+        let mut oid_map: std::collections::HashMap<git2::Oid, git2::Oid> =
+            std::collections::HashMap::new();
+        oid_map.insert(oid, new_target_oid);
+
+        let mut previous_new_oid = new_target_oid;
+
+        for &old_oid in path.iter().skip(1) {
+            let old_commit = self.git_repo.find_commit(old_oid)?;
+
+            let new_parents: Vec<git2::Commit> = (0..old_commit.parent_count())
+                .map(|i| {
+                    let p_oid = old_commit.parent_id(i)?;
+                    let remapped = oid_map.get(&p_oid).copied().unwrap_or(p_oid);
+                    self.git_repo.find_commit(remapped)
+                })
+                .collect::<Result<Vec<_>, git2::Error>>()?;
+            let new_parent_refs: Vec<&git2::Commit> = new_parents.iter().collect();
+
+            let new_oid = self.git_repo.commit(
+                None,
+                &old_commit.author(),
+                &old_commit.committer(),
+                old_commit.message().unwrap_or(""),
+                &old_commit.tree()?,
+                &new_parent_refs,
+            )?;
+
+            oid_map.insert(old_oid, new_oid);
+            self.rewrite_note_oid(old_oid, new_oid)?;
+
+            // Use the `causes` field on the rewritten note (already moved to
+            // new_oid by rewrite_note_oid) to find every commit that declared
+            // old_oid in its `caused_by`, and update those records in-place.
+            let old_oid_str = old_oid.to_string();
+            let new_oid_str = new_oid.to_string();
+
+            if let Ok(record) = self.load_h5i_record(new_oid) {
+                for dep_oid_str in &record.causes {
+                    if let Ok(dep_oid) = git2::Oid::from_str(dep_oid_str) {
+                        let live_dep_oid = oid_map.get(&dep_oid).copied().unwrap_or(dep_oid);
+                        if let Ok(mut dep_record) = self.load_h5i_record(live_dep_oid) {
+                            let mut changed = false;
+                            for entry in dep_record.caused_by.iter_mut() {
+                                if *entry == old_oid_str {
+                                    *entry = new_oid_str.clone();
+                                    changed = true;
+                                }
+                            }
+                            if changed {
+                                let updated_json = serde_json::to_string(&dep_record)?;
+                                let sig = self.git_repo.signature().unwrap_or_else(|_| {
+                                    git2::Signature::now("h5i", "h5i@local").unwrap()
+                                });
+                                self.git_repo.note(
+                                    &sig,
+                                    &sig,
+                                    Some(H5I_NOTES_REF),
+                                    live_dep_oid,
+                                    &updated_json,
+                                    true,
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+
+            previous_new_oid = new_oid;
         }
 
-        Err(H5iError::Git(git2::Error::from_str("Could not find rewritten commit")))
-    }
+        // ── Phase 4: Advance HEAD to the new tip ─────────────────────────
 
+        let new_head_oid = previous_new_oid;
+        let head_ref = self.git_repo.head()?;
+
+        if head_ref.is_branch() {
+            let branch_name = head_ref
+                .shorthand()
+                .ok_or_else(|| H5iError::Git(git2::Error::from_str("Cannot read branch name")))?;
+            let full_ref = format!("refs/heads/{}", branch_name);
+            let new_head_commit = self.git_repo.find_commit(new_head_oid)?;
+            self.git_repo.reference(
+                &full_ref,
+                new_head_oid,
+                true,
+                &format!("h5i: rewrite message of {}", &oid.to_string()[..8]),
+            )?;
+            self.git_repo
+                .checkout_tree(new_head_commit.as_object(), None)?;
+            self.git_repo.set_head(&full_ref)?;
+        } else {
+            self.git_repo.set_head_detached(new_head_oid)?;
+        }
+
+        Ok(new_target_oid)
+    }
 
     /// Resolves the current `HEAD` reference and returns the associated commit.
     ///

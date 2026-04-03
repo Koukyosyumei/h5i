@@ -36,9 +36,12 @@ pub struct H5iCommitRecord {
     pub crdt_states: Option<HashMap<String, String>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// OIDs of commits that causally triggered this commit.
-    /// e.g. this commit fixes a bug introduced by `caused_by[0]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caused_by: Vec<String>,
+    /// OIDs of commits that this commit causally triggered.
+    /// Inverse of `caused_by` — populated automatically at commit time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub causes: Vec<String>,
     /// Structured design decisions recorded at commit time via `--decisions`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decisions: Vec<Decision>,
@@ -278,14 +281,16 @@ impl H5iCommitRecord {
         H5iCommitRecord {
             git_oid: oid.to_string(),
             parent_oid,
-            ai_metadata: None,  // Standard Git commits do not contain AI metadata
-            test_metrics: None, // Standard Git commits do not contain testing metrics
-            ast_hashes: None,   // Standard Git commits do not contain AST hashes
+            ai_metadata: None,
+            test_metrics: None,
+            ast_hashes: None,
             crdt_states: None,
             timestamp,
             caused_by: vec![],
+            causes: vec![],
             decisions: vec![],
         }
+
     }
 }
 
