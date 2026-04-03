@@ -1050,6 +1050,28 @@ fn main() -> anyhow::Result<()> {
                 vec![]
             };
 
+            // Warn about stale decisions whose location overlaps the staged diff.
+            let stale_warnings = repo.stale_decisions_overlapping_index().unwrap_or_default();
+            for entry in &stale_warnings {
+                let short_oid = &entry.commit_oid[..8.min(entry.commit_oid.len())];
+                println!(
+                    "{} Commit touches {} near a stale decision from {}: \"{}\"",
+                    WARN,
+                    style(&entry.decision.location).yellow(),
+                    style(short_oid).magenta().bold(),
+                    entry.decision.choice
+                );
+                println!(
+                    "  {}  {}",
+                    style("reason was:").dim(),
+                    entry.decision.reason
+                );
+                println!(
+                    "  {}",
+                    style("Has this reasoning changed? Run `h5i decisions --stale` for details.").dim()
+                );
+            }
+
             let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser, caused_by, decisions)?;
             repo.clear_pending_context()?;
             println!(

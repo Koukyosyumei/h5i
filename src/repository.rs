@@ -2853,6 +2853,87 @@ impl H5iRepository {
         Ok(entries)
     }
 
+    /// Returns decisions from recent history that are both stale *and* whose
+    /// recorded location overlaps with the currently staged diff.
+    ///
+    /// Called just before `commit` so that inline warnings can be printed when
+    /// a commit touches code near a decision whose reasoning may no longer hold.
+    /// Only `StalenessStatus::Stale` entries are returned; `Modified` and `Fresh`
+    /// are dropped to keep the signal-to-noise ratio low.
+    pub fn stale_decisions_overlapping_index(&self) -> Result<Vec<DecisionEntry>, H5iError> {
+        // ── 1. Build file → hunk line-ranges map from staged diff ──────────
+        let mut index = self.git_repo.index()?;
+        index.read(false)?;
+        let parent_tree = self.get_head_commit().ok().and_then(|c| c.tree().ok());
+        let diff = self.git_repo
+            .diff_tree_to_index(parent_tree.as_ref(), Some(&index), None)?;
+
+        // path → [(hunk_start, hunk_end)] in 1-based line numbers, inclusive
+        let mut changed_ranges: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
+        for (delta_idx, _) in diff.deltas().enumerate() {
+            let patch = match git2::Patch::from_diff(&diff, delta_idx) {
+                Ok(Some(p)) => p,
+                _ => continue,
+            };
+            let path = match patch.delta().new_file().path() {
+                Some(p) => p.to_path_buf(),
+                None => continue,
+            };
+            let ranges = changed_ranges.entry(path).or_default();
+            for hunk_idx in 0..patch.num_hunks() {
+                if let Ok((hunk, _)) = patch.hunk(hunk_idx) {
+                    let start = hunk.new_start();
+                    let end = start + hunk.new_lines().saturating_sub(1);
+                    ranges.push((start, end));
+                }
+            }
+        }
+
+        if changed_ranges.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // ── 2. Load decisions from last 50 commits (no staleness check yet) ─
+        let all_decisions = self.decisions_list(50, false)?;
+
+        // ── 3. Check each decision for overlap + staleness ──────────────────
+        let proximity = CONTEXT_LINES as u32;
+        let mut stale = Vec::new();
+        for entry in all_decisions {
+            let overlaps = match parse_decision_location(&entry.decision.location) {
+                ParsedLocation::NonPath => false,
+                ParsedLocation::FileOnly { ref path } => changed_ranges.contains_key(path),
+                ParsedLocation::FileLine { ref path, line } => {
+                    match changed_ranges.get(path) {
+                        Some(ranges) => {
+                            let line = line as u32;
+                            ranges.iter().any(|(start, end)| {
+                                line + proximity >= *start && line <= end + proximity
+                            })
+                        }
+                        None => false,
+                    }
+                }
+            };
+            if !overlaps {
+                continue;
+            }
+            let oid = match git2::Oid::from_str(&entry.commit_oid) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let staleness = self.check_staleness(&entry.decision.location, oid);
+            if matches!(staleness, StalenessStatus::Stale { .. }) {
+                stale.push(DecisionEntry {
+                    staleness: Some(staleness),
+                    ..entry
+                });
+            }
+        }
+
+        Ok(stale)
+    }
+
     fn check_staleness(&self, location: &str, recorded_at_oid: git2::Oid) -> StalenessStatus {
         let head_oid = match self.git_repo.head()
             .and_then(|h| h.peel_to_commit())
@@ -3383,6 +3464,89 @@ mod tests {
             StalenessStatus::Unresolvable { .. } => {}
             other => panic!("expected Unresolvable, got {:?}", other),
         }
+    }
+
+    // Helper: create a file with `n` numbered lines.
+    fn write_numbered_lines(path: &std::path::Path, n: usize) {
+        let content: String = (1..=n).map(|i| format!("line{}\n", i)).collect();
+        fs::write(path, content).unwrap();
+    }
+
+    // Helper: delete a file and commit, making any FileLine decision recorded against it Stale.
+    fn commit_delete_file(h5i_repo: &H5iRepository, dir: &std::path::Path, sig: &Signature, filename: &str) {
+        let file_path = dir.join(filename);
+        fs::remove_file(&file_path).unwrap();
+        // Need at least one entry in the index — write a sentinel file.
+        let sentinel = dir.join("_sentinel.txt");
+        fs::write(&sentinel, "x").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.remove_path(Path::new(filename)).unwrap();
+        index.add_path(Path::new("_sentinel.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("delete", sig, sig, None, TestSource::None, None, vec![], vec![])
+            .unwrap();
+    }
+
+    /// A staged hunk that covers the decision line (within CONTEXT_LINES proximity) must fire.
+    #[test]
+    fn test_stale_decisions_overlapping_index_fires_when_line_touched() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        // c1: 20-line file, decision at line 10.
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], vec![make_decision("f.txt:10")])
+            .unwrap();
+
+        // c2: delete the file → decision becomes Stale (similarity 0.0).
+        commit_delete_file(&h5i_repo, dir.path(), &sig, "f.txt");
+
+        // Stage: re-add f.txt with 20 lines. The hunk spans lines 1–20, which
+        // overlaps with line 10 ± CONTEXT_LINES (5).
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+
+        let stale = h5i_repo.stale_decisions_overlapping_index().unwrap();
+        assert_eq!(stale.len(), 1, "expected one stale decision to fire");
+        assert_eq!(stale[0].decision.location, "f.txt:10");
+    }
+
+    /// A staged hunk that is far from the decision line (beyond CONTEXT_LINES) must not fire.
+    #[test]
+    fn test_stale_decisions_overlapping_index_silent_when_far() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        // c1: 20-line file, decision at line 10.
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], vec![make_decision("f.txt:10")])
+            .unwrap();
+
+        // c2: delete the file → decision becomes Stale (similarity 0.0).
+        commit_delete_file(&h5i_repo, dir.path(), &sig, "f.txt");
+
+        // Stage: re-add f.txt with only 2 lines. The hunk spans lines 1–2.
+        // Overlap condition: line(10) <= end(2) + proximity(5) = 7 → false → no fire.
+        write_numbered_lines(&dir.path().join("f.txt"), 2);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+
+        let stale = h5i_repo.stale_decisions_overlapping_index().unwrap();
+        assert!(stale.is_empty(), "expected no warnings when hunk is far from decision line");
     }
 }
 
