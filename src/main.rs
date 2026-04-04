@@ -179,6 +179,16 @@ enum Commands {
         yes: bool,
     },
 
+    /// Edit the message of an existing commit
+    EditMessage {
+        /// Commit OID to edit
+        commit: String,
+
+        /// New commit message
+        #[arg(long)]
+        edit: String,
+    },
+
     /// Launch the h5i web dashboard in your browser
     Serve {
         /// Port to listen on
@@ -1400,6 +1410,26 @@ fn main() -> anyhow::Result<()> {
                 "{} {} {}",
                 SUCCESS,
                 style("Revert commit created:").green(),
+                style(new_oid).magenta().bold()
+            );
+        }
+
+        Commands::EditMessage { commit, edit } => {
+            let repo = H5iRepository::open(".")?;
+            let oid = Oid::from_str(&commit)?;
+
+            println!(
+                "{} {} {}",
+                STEP,
+                style("Editing commit message for").cyan().bold(),
+                style(&commit[..8.min(commit.len())]).magenta(),
+            );
+
+            let (new_oid, _oid_map) = repo.edit_commit_message(oid, &edit)?;
+            println!(
+                "{} {} {}",
+                SUCCESS,
+                style("New commit OID:").green(),
                 style(new_oid).magenta().bold()
             );
         }
