@@ -114,8 +114,8 @@ def substitute(text, port, query=""):
             return DOMAINS[""]
         indexed = re.match(r"([a-z_]+)\[([^\]]*)\](?:\[([^\]]*)\])?", token)
         if indexed:
-            name, first, second = indexed.group(1), indexed.group(2),
-            indexed.group(3) if name == "domains":
+            name, first, second = indexed.group(1), indexed.group(2), indexed.group(3)
+            if name == "domains":
                 return DOMAINS.get(first, DOMAINS[""])
             if name == "hosts":
                 table = ALT_DOMAINS if first == "alt" else DOMAINS
@@ -212,8 +212,8 @@ def wrapper_for(js_path: str, source: str) -> str:
     base = posixpath.dirname(js_path)
     tags = []
     for script in scripts:
-        src = script if script.startswith("/") else
-        posixpath.normpath(posixpath.join(base, script)) tags.append(f'<script src="{src}"></script>')
+        src = script if script.startswith("/") else posixpath.normpath(posixpath.join(base, script))
+        tags.append(f'<script src="{src}"></script>')
 
     return (
         "<!doctype html>\n<meta charset=utf-8>\n"
@@ -260,8 +260,8 @@ TESTDRIVER = """
 
   function refuse(name) {
     return Promise.reject(new Error(
-      name + '() needs automation authority this engine does not have, and is '
-      + 'refused rather than approximated (h5i testdriver-vendor shim).'));
+      name + '() needs automation authority this engine does not have, and is ' +
+      'refused rather than approximated (h5i testdriver-vendor shim).'));
   }
 
   window.test_driver_internal = Object.assign(window.test_driver_internal || {}, {
@@ -293,8 +293,8 @@ TESTDRIVER = """
       var text = String(keys);
       for (var i = 0; i < text.length; i++) {
         var key = text[i];
-        var init = { bubbles: true, cancelable: true, key: key, composed: true
-        }; fire(element, 'keydown', init);
+        var init = { bubbles: true, cancelable: true, key: key, composed: true };
+        fire(element, 'keydown', init);
         fire(element, 'keypress', init);
         if ('value' in element) element.value = (element.value || '') + key;
         fire(element, 'input', { bubbles: true, composed: true });
@@ -374,12 +374,12 @@ TESTDRIVER = """
           pointer.x = to.x; pointer.y = to.y;
           var over = at(pointer.x, pointer.y);
           if (over !== pointer.target) {
-            if (pointer.target) fire(pointer.target, 'pointerout',
-            pointerInit()); pointer.target = over;
+            if (pointer.target) fire(pointer.target, 'pointerout', pointerInit());
+            pointer.target = over;
             if (over) fire(over, 'pointerover', pointerInit());
           }
-          if (over) { fire(over, 'pointermove', pointerInit()); fire(over,
-          'mousemove', pointerInit()); } return;
+          if (over) { fire(over, 'pointermove', pointerInit()); fire(over, 'mousemove', pointerInit()); }
+          return;
         }
         var el = pointer.target || at(pointer.x, pointer.y);
         if (kind === 'pointerDown') {
@@ -387,14 +387,14 @@ TESTDRIVER = """
           pointer.button = Number(action.button) || 0;
           pointer.downTarget = el;
           if (window.__h5iNoteUserActivation) window.__h5iNoteUserActivation();
-          if (el) { fire(el, 'pointerdown', pointerInit()); fire(el,
-          'mousedown', pointerInit()); } return;
+          if (el) { fire(el, 'pointerdown', pointerInit()); fire(el, 'mousedown', pointerInit()); }
+          return;
         }
         if (kind === 'pointerUp') {
           pointer.down = false;
-          if (el) { fire(el, 'pointerup', pointerInit()); fire(el, 'mouseup',
-          pointerInit()); } // A down and an up on the same element is a click,
-          which is what // every light-dismiss test is really performing.
+          if (el) { fire(el, 'pointerup', pointerInit()); fire(el, 'mouseup', pointerInit()); }
+          // A down and an up on the same element is a click, which is what
+          // every light-dismiss test is really performing.
           // Only the primary button makes a `click`; a right-button release
           // is a `contextmenu` gesture and must not be turned into one.
           if (el && el === pointer.downTarget && (pointer.button || 0) === 0) {
@@ -429,8 +429,8 @@ TESTDRIVER = """
     async get_named_cookie() { return refuse('get_named_cookie'); },
     async minimize_window() { return refuse('minimize_window'); },
     async set_window_rect() { return refuse('set_window_rect'); },
-    async add_virtual_authenticator() { return
-    refuse('add_virtual_authenticator'); }, async create_virtual_sensor() { return refuse('create_virtual_sensor'); },
+    async add_virtual_authenticator() { return refuse('add_virtual_authenticator'); },
+    async create_virtual_sensor() { return refuse('create_virtual_sensor'); },
   });
 })();
 """
@@ -502,8 +502,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # nothing about this engine. Served from the bundle that is present,
         # which is exactly what the build would have produced.
         if path == "/resources/WebIDLParser.js":
-            bundle = os.path.join(WPT_ROOT, "resources", "webidl2", "lib",
-            "webidl2.js") if os.path.isfile(bundle):
+            bundle = os.path.join(WPT_ROOT, "resources", "webidl2", "lib", "webidl2.js")
+            if os.path.isfile(bundle):
                 with open(bundle, "rb") as handle:
                     body = handle.read()
                 self.send_response(200)

@@ -64,8 +64,8 @@ def main():
     for name, floor in sorted(expected.items()):
         got = results.get(name)
         if got is None:
-            failures.append(f"  {name}: not in this run at all (baseline
-            {floor})") continue
+            failures.append(f"  {name}: not in this run at all (baseline {floor})")
+            continue
         allowed = floor - max(1, int(floor * TOLERANCE))
         if got < allowed:
             failures.append(f"  {name}: {got} passing, baseline {floor} (floor {allowed})")
@@ -75,8 +75,8 @@ def main():
     total = sum(results.values())
     print(f"WPT gate: {total} subtests passing, baseline {baseline['total']}")
     if gains:
-        print("\nabove baseline — re-baseline with `wpt/check.py --write` to keep the gate
-        tight:") print("\n".join(gains))
+        print("\nabove baseline — re-baseline with `wpt/check.py --write` to keep the gate tight:")
+        print("\n".join(gains))
     if failures:
         print("\nREGRESSION:")
         print("\n".join(failures))

@@ -86,8 +86,8 @@ def summarise(results, rules):
 def render(summary):
     """The table, with the two framings §B13.3 says have to travel together."""
     lines = []
-    lines.append("tier         subtests passing        of scored   files  
-    dirs") lines.append("-" * 66)
+    lines.append("tier         subtests passing        of scored   files   dirs")
+    lines.append("-" * 66)
     for tier in ORDER:
         bucket = summary[tier]
         if not bucket["areas"] and tier == "remainder":
@@ -113,8 +113,8 @@ def render(summary):
     lines.append(
         f"  of which the encoding tier is {enc['passing']}"
         + (
-            f" ({100 * enc['passing'] / (core['passing'] +
-            enc['passing']):.0f}%)" if core["passing"] + enc["passing"]
+            f" ({100 * enc['passing'] / (core['passing'] + enc['passing']):.0f}%)"
+            if core["passing"] + enc["passing"]
             else ""
         )
     )
@@ -124,8 +124,8 @@ def render(summary):
         # A count, never a percentage. See ORDER.
         lines.append(
             f"\nunscoped remainder: {rem['passing']} passing of {rem['total']} "
-            f"scored, across {len(rem['areas'])} areas not named in tiers.list.
-            " f"Name them or leave them out of every claim. Largest first:"
+            f"scored, across {len(rem['areas'])} areas not named in tiers.list. "
+            f"Name them or leave them out of every claim. Largest first:"
         )
         biggest = sorted(rem["areas"].items(), key=lambda kv: -kv[1][1])[:12]
         for area, (passing, total) in biggest:

@@ -145,8 +145,8 @@ def start(root: Path, ready_timeout=90):
     while time.time() < deadline:
         if process.poll() is not None:
             sys.exit(
-                f"wptserve exited immediately ({process.returncode}). See
-                {log}.\n" "The usual cause is a leftover server holding the ports: "
+                f"wptserve exited immediately ({process.returncode}). See {log}.\n"
+                "The usual cause is a leftover server holding the ports: "
                 "`pkill -f 'wpt serve'`."
             )
         try:

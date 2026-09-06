@@ -68,8 +68,8 @@ def main():
     parser.add_argument("--results", default=str(RESULTS))
     opts = parser.parse_args()
     results_dir = Path(opts.results)
-    files = sorted(p for p in results_dir.glob("*.json") if p.name !=
-    "merged.json") if not files:
+    files = sorted(p for p in results_dir.glob("*.json") if p.name != "merged.json")
+    if not files:
         sys.exit(f"no result files in {results_dir}; run wpt/sweep.sh first")
 
     subtests = collections.Counter()
@@ -151,8 +151,8 @@ def main():
         print()
         print("=" * 66)
         print("files that reported nothing, grouped by cause:")
-        print("  (one gap here stops a whole file before it can say what it
-        failed)") for shape, n in silent_shapes.most_common(20):
+        print("  (one gap here stops a whole file before it can say what it failed)")
+        for shape, n in silent_shapes.most_common(20):
             print(f"  {n:5d}  {shape}")
             print(f"         e.g. {failure_example.get(shape, '')}")
 
