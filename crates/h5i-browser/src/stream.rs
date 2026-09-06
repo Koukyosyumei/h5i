@@ -6200,15 +6200,24 @@ mod tests {
         // The property neither reference engine has, and it turns out to be
         // stronger than "the wait is cheap".
         //
-        // The page arms a one second timer. Because the settle runs on a *virtual*
-        // clock and runs to quiescence, that timer has already fired by the time
-        // the session exists, so the wait does not wait, it answers. Both
-        // reference engines would have spent a real second here, or given up early
-        // on a wall-clock heuristic and reported a page that had not finished.
+        // The page arms a five second timer. Because the settle runs on a
+        // *virtual* clock and runs to quiescence, that timer has already fired by
+        // the time the session exists, so the wait does not wait, it answers. Both
+        // reference engines would have spent five real seconds here, or given up
+        // early on a wall-clock heuristic and reported a page that had not
+        // finished.
+        //
+        // Five rather than one, and the reason is the assertion below: what it
+        // must catch is an engine that spent the delay in real time, so the
+        // page's delay has to stand well clear of how much two session builds on
+        // a shared runner can differ. One second did not: this failed CI at
+        // 1.517s against a 1.009s control, eight milliseconds outside its slack.
+        // Virtual seconds cost nothing, so a longer timer is a free way to buy
+        // signal. Kept under `SETTLE_BUDGET_MS`, which is virtual too.
         let page = "<html><body><div id='host'></div><script>\
                     setTimeout(() => { const p = document.createElement('p'); \
                     p.textContent = 'late'; document.querySelector('#host').appendChild(p); \
-                    }, 1000);</script></body></html>";
+                    }, 5000);</script></body></html>";
 
         // The same page with its timer already resolved, as a control. What the
         // wait costs has to be compared against what building a session costs
@@ -6242,9 +6251,12 @@ mod tests {
             a["waited_ms"], 0,
             "the page's second was spent before the verb was served: {a:?}"
         );
+        // Two seconds of slack against five seconds of page delay: wide enough
+        // that a busy runner cannot fail it, narrow enough that an engine which
+        // actually slept the delay cannot pass it.
         assert!(
-            real < control_real + std::time::Duration::from_millis(500),
-            "a page's own second of delay costs the agent nothing: {real:?}, \
+            real < control_real + std::time::Duration::from_secs(2),
+            "a page's own five seconds of delay cost the agent nothing: {real:?}, \
              against {control_real:?} for the same page with nothing to wait for"
         );
 
