@@ -532,7 +532,9 @@ default would have given away.</p>
 <p><code>--allow ORIGIN</code>, repeatable, is for when that refusal is the problem rather
 than the point: a page written in a library served from a CDN, read without the
 grant, is the page the library never ran on. It is the same flag <code>open</code> takes
-and it grants the same thing, one named origin at a time.</p>
+and it grants the same thing, one named origin at a time. Inside a box it can
+only narrow: the box's own egress list is enforced at a boundary outside the
+engine, and a flag cannot widen it.</p>
 <p>Several targets share one browser (one connection pool, one cookie jar and one
 font set across the batch) and a page that fails does not stop the ones after
 it. <code>--json</code> returns the page, its request log, and what was holding the engine

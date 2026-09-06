@@ -366,9 +366,22 @@ impl Session {
         }
         let (_, viewport_height) = self.viewport();
         match scroll_for_key(&key.name, viewport_height as f64) {
-            Some(delta) => self.page.scroll_by(0.0, delta),
+            Some(delta) => self.scroll_and_notify(delta).0,
             None => false,
         }
+    }
+
+    /// Scroll, and let the page hear it.
+    ///
+    /// Every way of scrolling goes through here — the verb, the wheel and the
+    /// keys — because a lazy-loader listening for the event should not care
+    /// which of them moved the page. See [`crate::engine::Page::scrolled`].
+    fn scroll_and_notify(&mut self, delta: f64) -> (bool, Vec<crate::script::host::RequestLink>) {
+        let moved = self.page.scroll_by(0.0, delta);
+        if !moved || !self.page.has_script() {
+            return (moved, Vec::new());
+        }
+        (moved, self.page.scrolled().unwrap_or_default())
     }
 
     /// Add a frame to `out`, or remember that one is owed. The single place the
@@ -2009,17 +2022,12 @@ fn control_verb_inner(
         // loop asking for more page that does not exist.
         Verb::Scroll => {
             let by = request.get("by").and_then(Value::as_f64).unwrap_or(0.0);
-            let moved = session.page.scroll_by(0.0, by);
             // A scroll is an event before it is an offset. The page's own
             // lazy-loader is listening for it, and the intersection observers
             // are re-checked by the settle that follows, so the content the
             // gesture was meant to reveal is on the page before this replies.
+            let (moved, caused) = session.scroll_and_notify(by);
             let scripted = moved && session.page.has_script();
-            let caused = if scripted {
-                session.page.scrolled().unwrap_or_default()
-            } else {
-                Vec::new()
-            };
             let mut reply = json!({
                 "ok": true,
                 "moved": moved,
@@ -3450,7 +3458,7 @@ fn handle_with(
                     .get("deltaY")
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
-                session.page.scroll_by(0.0, delta)
+                session.scroll_and_notify(delta).0
             }
             Some("mouseReleased") => {
                 let x = message.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32;
@@ -5754,6 +5762,32 @@ mod tests {
         assert!(
             !session.page.snapshot().render().contains("separator"),
             "nothing moved, so no handler should have run"
+        );
+    }
+
+    /// The same for a person at the live view: the wheel is a scroll too, and a
+    /// page that loads more as you go should do it for the human as well.
+    #[test]
+    fn a_wheel_from_the_viewer_fires_the_handler_the_verb_does() {
+        let mut session = scripted_session_with(
+            "<html><body><div style='height:2000px'></div><script>\
+             window.addEventListener('scroll', () => { \
+               const p = document.createElement('p'); p.textContent = 'loaded more'; \
+               document.body.appendChild(p); });\
+             </script></body></html>",
+        );
+
+        let out = handle(
+            &mut session,
+            &json!({"type":"input_mouse","eventType":"mouseWheel","deltaY": 300.0}),
+        )
+        .unwrap();
+
+        assert_eq!(out.len(), 1, "a real scroll redraws");
+        assert!(
+            session.page.snapshot().render().contains("loaded more"),
+            "the wheel moved the page and the page never heard it:\n{}",
+            session.page.snapshot().render()
         );
     }
 

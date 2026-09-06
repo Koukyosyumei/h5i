@@ -1923,8 +1923,8 @@
       list.getNamedItem = (name) =>
         list.find((a) => a.name === String(name).toLowerCase()) || null;
       for (const attr of list) {
-        // A named property never shadows an interface member: `length` on a
-        // NamedNodeMap is the count, not the attribute of that name.
+        // A named property never shadows something the list already answers
+        // to: `length` is the count, not the attribute of that name.
         if (attr.name in list) continue;
         Object.defineProperty(list, attr.name, { configurable: true, value: attr });
       }
