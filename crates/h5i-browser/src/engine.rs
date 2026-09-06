@@ -2347,6 +2347,19 @@ impl Page {
         true
     }
 
+    /// Fire the `scroll` event a lazy-loader is listening for.
+    ///
+    /// Window and document listeners both land on the root element in this
+    /// engine, so one dispatch reaches every shape of `scroll` handler, and the
+    /// settle that follows re-runs the intersection observers against the
+    /// offset the page is now at. Without this a scroll moved the viewport and
+    /// told nobody, which is the "scrolling loads nothing here" the scraping
+    /// course found.
+    pub fn scrolled(&mut self) -> Option<Vec<crate::script::host::RequestLink>> {
+        let root = self.doc.borrow().root_element().id;
+        self.dispatch_event(root, "scroll")
+    }
+
     /// The link at a viewport coordinate, resolved against the page's base.
     ///
     /// Hit-testing takes the scroll offset into account because the viewer

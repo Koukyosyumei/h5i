@@ -203,6 +203,16 @@ pub enum BrowserCommands {
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 
+        /// Grant an origin besides the target's own. Repeatable.
+        ///
+        /// Naming the URL is what grants its origin, and for most reads that is
+        /// the whole allowlist. A page written in a library served from a CDN
+        /// is the case where it is not: without the grant the script is
+        /// refused, and the page an agent reads is the one the library never
+        /// ran on.
+        #[arg(long = "allow", value_name = "ORIGIN")]
+        allow: Vec<String>,
+
         /// Print the page's prose instead of its outline.
         #[arg(long)]
         text: bool,
@@ -462,6 +472,10 @@ pub enum BrowserCommands {
     },
 
     /// Scroll the page. Negative scrolls up.
+    ///
+    /// With `--script`, the page's own `scroll` handlers run and its
+    /// intersection observers are re-checked at the new offset, so a page that
+    /// loads more as you go has loaded it before this replies.
     Scroll {
         /// Which session, when more than one is open. A name from
         /// `--session` at open time, or an opaque id. Defaults to
@@ -1198,6 +1212,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Read {
             targets,
             in_box,
+            allow,
             text,
             script,
             no_sandbox,
@@ -1207,6 +1222,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         } => read(
             targets,
             in_box,
+            allow,
             text,
             script,
             no_sandbox,
@@ -3411,9 +3427,11 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
 }
 
 /// One page, or a batch, with nothing left behind.
+#[allow(clippy::too_many_arguments)]
 fn read(
     targets: Vec<String>,
     in_box: Option<String>,
+    allow: Vec<String>,
     text: bool,
     script: bool,
     no_sandbox: bool,
@@ -3422,7 +3440,7 @@ fn read(
 ) -> anyhow::Result<()> {
     let mut engine_args: Vec<String> = vec![ENGINE_SUBCOMMAND.into(), "open".into()];
     engine_args.extend(targets.iter().cloned());
-    for origin in origins_of(&targets) {
+    for origin in origins_of(&targets).into_iter().chain(allow) {
         engine_args.push("--allow".into());
         engine_args.push(origin);
     }

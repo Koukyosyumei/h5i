@@ -315,12 +315,17 @@ For the shape a crawl has: fetch, read, move on. No cookies carried between
 verbs, no `@ref` to click, nothing resident afterwards, and `h5i browser list`
 shows nothing when it is done.
 
-There is no `--allow` here, and the omission is the design. The engine is
-fail-closed, so something has to name the origins; making you name a URL and
-then name its origin again is ceremony that teaches nothing. So the targets
-grant themselves, and only themselves. A page that pulls a script from a
-third-party CDN, or redirects to another host, is still refused and still says
-so in the log, which is the part a wider default would have given away.
+The targets grant themselves, and only themselves. The engine is fail-closed, so
+something has to name the origins, and a URL you typed is one you asked for:
+making you name it and then name its origin again is ceremony that teaches
+nothing. A page that pulls a script from a third-party CDN, or redirects to
+another host, is refused and says so in the log, which is the part a wider
+default would have given away.
+
+`--allow ORIGIN`, repeatable, is for when that refusal is the problem rather
+than the point: a page written in a library served from a CDN, read without the
+grant, is the page the library never ran on. It is the same flag `open` takes
+and it grants the same thing, one named origin at a time.
 
 Several targets share one browser (one connection pool, one cookie jar and one
 font set across the batch) and a page that fails does not stop the ones after

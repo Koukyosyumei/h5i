@@ -2010,16 +2010,29 @@ fn control_verb_inner(
         Verb::Scroll => {
             let by = request.get("by").and_then(Value::as_f64).unwrap_or(0.0);
             let moved = session.page.scroll_by(0.0, by);
-            let (_, offset) = session.page.scroll_offset();
-            (
-                json!({
-                    "ok": true,
-                    "moved": moved,
-                    "offset": offset,
-                    "content_height": session.page.content_height(),
-                }),
-                moved,
-            )
+            // A scroll is an event before it is an offset. The page's own
+            // lazy-loader is listening for it, and the intersection observers
+            // are re-checked by the settle that follows, so the content the
+            // gesture was meant to reveal is on the page before this replies.
+            let scripted = moved && session.page.has_script();
+            let caused = if scripted {
+                session.page.scrolled().unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let mut reply = json!({
+                "ok": true,
+                "moved": moved,
+                "offset": session.page.scroll_offset().1,
+                "content_height": session.page.content_height(),
+            });
+            if scripted {
+                reply["caused_requests"] = json!(caused);
+                reply["settled"] = json!(
+                    session.page.settled().map(|s| s.render()).unwrap_or_default()
+                );
+            }
+            (reply, moved)
         }
 
         Verb::Navigate => {
@@ -5694,6 +5707,54 @@ mod tests {
             session.page.snapshot().render()
         );
         assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    /// The gesture a lazy-loading page is written against.
+    ///
+    /// A scroll that moves the viewport and tells nobody is the shape of the
+    /// "scrolling loads nothing here" this engine used to report: the offset
+    /// changed, the page's own handler never ran, and the loop's "stop when a
+    /// scroll adds nothing" ended it at the first round.
+    #[test]
+    fn a_scroll_fires_the_page_s_own_scroll_handler() {
+        let mut session = scripted_session_with(
+            "<html><body><div id='l' style='height:2000px'></div><script>\
+             window.addEventListener('scroll', () => { \
+               const p = document.createElement('p'); p.textContent = 'loaded more'; \
+               document.body.appendChild(p); });\
+             </script></body></html>",
+        );
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
+
+        assert_eq!(reply["moved"], true, "{reply:?}");
+        assert!(
+            session.page.snapshot().render().contains("loaded more"),
+            "the handler ran and the agent can see it:\n{}",
+            session.page.snapshot().render()
+        );
+        assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    /// And a scroll with nowhere to go stays silent: a page at its end must not
+    /// keep firing handlers for a gesture that moved nothing.
+    #[test]
+    fn a_scroll_that_cannot_move_fires_nothing() {
+        let mut session = scripted_session_with(
+            "<html><body><p>short</p><script>\
+             window.addEventListener('scroll', () => { \
+               document.body.appendChild(document.createElement('hr')); });\
+             </script></body></html>",
+        );
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "scroll", "by": 300.0}));
+
+        assert_eq!(reply["moved"], false, "{reply:?}");
+        assert!(reply.get("caused_requests").is_none(), "{reply:?}");
+        assert!(
+            !session.page.snapshot().render().contains("separator"),
+            "nothing moved, so no handler should have run"
+        );
     }
 
     /// A session that loaded four hundred subresources has a log an agent should

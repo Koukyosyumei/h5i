@@ -3773,7 +3773,12 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // Neither can be a tier (images and forms are on every page), and without
     // them a payload and a POST flow are silent, which reads as a clean result.
     // The submission's *encoding* is in Rust so the page does not pay for it.
-    const BUDGET_KIB: usize = 283;
+    //
+    // 284 for the window's GlobalEventHandlers and the NamedNodeMap's named
+    // properties: the pair jQuery 1.x feature-detects on its way in. Neither is
+    // tierable — both are read before any page code runs — and without them the
+    // library threw before defining `$`, which is every page written against it.
+    const BUDGET_KIB: usize = 284;
 
     assert!(
         !super::PRELUDE.contains("/*"),
@@ -7459,4 +7464,41 @@ fn a_form_with_a_scheme_this_engine_does_not_submit_produces_nothing() {
          </body></html>",
     );
     assert!(page.take_pending_submission().is_none());
+}
+
+/// The two feature detects jQuery 1.x opens with, which is where it used to die.
+///
+/// `"onsubmit" in window` is false in an engine whose window carries only the
+/// WindowEventHandlers set, and the false sends jQuery down its IE branch:
+/// `div.attributes["onsubmit"].expando`, undefined on a NamedNodeMap with no
+/// named getter, throwing before `$` is defined and taking every page written
+/// against the library with it.
+#[test]
+fn a_window_carries_the_global_event_handlers_and_a_named_node_map_is_indexable() {
+    let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
+
+    for name in ["onsubmit", "onchange", "onclick", "oninput", "onload"] {
+        assert_eq!(
+            script.eval_value(&format!("'{name}' in window")).unwrap(),
+            "true",
+            "window is missing {name}"
+        );
+    }
+
+    assert_eq!(
+        script
+            .eval_value(
+                "const d = document.querySelector('#d'); d.setAttribute('onsubmit', 't'); \
+                 String(d.attributes['onsubmit'].name)"
+            )
+            .unwrap(),
+        "onsubmit"
+    );
+    // A named property never shadows an interface member.
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').attributes.length")
+            .unwrap(),
+        "2"
+    );
 }

@@ -882,14 +882,14 @@ fn a_screenshot_goes_where_the_caller_asked_and_not_where_the_engine_may_write()
     let _ = fx.run(&["browser", "close"]);
 }
 
-/// A read grants the targets it was given, and only those.
+/// A read grants the targets it was given, and nothing it was not asked about.
 ///
-/// The first half is why there is no `--allow`: a URL the caller typed is a URL
-/// the caller asked for, and making them say it twice teaches nothing. The
-/// second half is why that is not a wide default: the page's off-origin
-/// subresource is still refused, and still says so in the log, which is the
-/// part that would have been given away by an allowlist meaning "and whatever
-/// this page pulls in".
+/// The first half is why `--allow` is not needed for the ordinary case: a URL
+/// the caller typed is a URL the caller asked for, and making them say it twice
+/// teaches nothing. The second half is why the grant is not wider than that:
+/// the page's off-origin subresource is refused unless it too was named, and
+/// says so in the log, which is the part that would have been given away by an
+/// allowlist meaning "and whatever this page pulls in".
 #[test]
 fn a_read_grants_its_targets_and_nothing_else() {
     let Some(fx) = Fixture::new() else {
@@ -910,6 +910,41 @@ fn a_read_grants_its_targets_and_nothing_else() {
     assert!(
         requests.iter().any(|r| r["allowed"] == false),
         "an off-origin subresource was not refused: {answer}"
+    );
+}
+
+/// And an origin the caller *does* name is granted, without a session.
+///
+/// The case this exists for is a page written in a library served from a CDN:
+/// with the script refused, the page an agent reads is the one the library
+/// never ran on. `open --allow` could always say it; a read is the shape most
+/// scraping takes, and it could not.
+#[test]
+fn a_read_can_be_told_to_allow_a_third_party_origin() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = format!("{}/third-party", fx.site.base);
+    let out = fx.run(&[
+        "browser",
+        "read",
+        &url,
+        "--allow",
+        "https://cdn.example.invalid",
+        "--json",
+    ]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let requests = answer["requests"].as_array().expect("a request log");
+
+    // The subresource still does not load — `.invalid` resolves nowhere, which
+    // is the point of the name — so what is asserted is the *reason*: the
+    // policy is no longer the thing refusing it.
+    assert!(
+        !requests.iter().any(|r| r["denied_reason"]
+            .as_str()
+            .is_some_and(|why| why.contains("not in the allowlist"))),
+        "a named origin was still refused by the allowlist: {answer}"
     );
 }
 

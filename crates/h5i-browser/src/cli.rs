@@ -284,6 +284,10 @@ enum SessionVerb {
         at: SessionArgs,
     },
     /// Scroll the page. Negative scrolls up.
+    ///
+    /// With `--script`, the page's own `scroll` handlers run and its
+    /// intersection observers are re-checked at the new offset, so a page that
+    /// loads more as you go has loaded it before this replies.
     Scroll {
         /// Pixels to scroll by.
         #[arg(allow_negative_numbers = true)]
@@ -388,8 +392,9 @@ enum SessionVerb {
     ///
     /// The schema is an object of field names to selector specs: `"h1"` for the
     /// first match's text, `["a"]` for every match, `{"selector":"a",
-    /// "attr":"href"}` for an attribute, and `[{"selector":"li","fields":{…}}]` for
-    /// one object per match with sub-selectors scoped to it.
+    /// "attr":"href"}` for an attribute, `[{"selector":"a","attr":"href"}]` for that
+    /// attribute of every match, and `[{"selector":"li","fields":{…}}]` for one
+    /// object per match with sub-selectors scoped to it.
     ///
     /// An empty array is a result. A schema where nothing matched is an error,
     /// because an object full of nulls looks like an answer.

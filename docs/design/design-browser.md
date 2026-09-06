@@ -412,9 +412,12 @@ their indent.
 `extract` answers a schema. Keys are output names, values selector specs: `"h1"`
 for the first match's text, `["a"]` for every match,
 `{"selector":"a","attr":"href"}` for an attribute (`href` and `src` come back
-absolute), `[{"selector":"li","fields":{…}}]` for one object per match with
-sub-selectors scoped to it. An empty array is a result, a schema where nothing
-matched is an error. Both verbs are fenced.
+absolute), `[{"selector":"a","attr":"href"}]` for that attribute of every match,
+`[{"selector":"li","fields":{…}}]` for one object per match with sub-selectors
+scoped to it. The array form of a spec differs from the scalar form in arity and
+in nothing else: an attribute read over every match is a flat list of values, not
+of one-key objects. An empty array is a result, a schema where nothing matched is
+an error. Both verbs are fenced.
 
 ### The request log, from inside the session
 

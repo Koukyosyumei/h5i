@@ -1049,13 +1049,18 @@ Read one page, or a batch of them, and leave no session behind
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBread\fR [\fB\-\-in\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+\fBread\fR [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-identity\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-in\fR \fI<BOX>\fR
 Read inside this box
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant an origin besides the target\*(Aqs own. Repeatable.
+
+Naming the URL is what grants its origin, and for most reads that is the whole allowlist. A page written in a library served from a CDN is the case where it is not: without the grant the script is refused, and the page an agent reads is the one the library never ran on.
 .TP
 \fB\-\-text\fR
 Print the page\*(Aqs prose instead of its outline
@@ -1371,7 +1376,7 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIBY\fR>
 

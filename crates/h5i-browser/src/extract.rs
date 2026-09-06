@@ -10,6 +10,7 @@
 //! "<sel>"                                first match's text, or null
 //! ["<sel>"]                              every match's text
 //! {"selector": "<sel>", "attr": "href"}  an attribute; href/src come back absolute
+//! [{"selector": "<sel>", "attr": "..."}] that attribute of every match
 //! [{"selector": "<sel>", "limit": 5,     one object per match, sub-selectors
 //!   "fields": { ... }}]                  scoped to it
 //! ```
@@ -44,6 +45,12 @@ pub enum Field {
     TextAll(String),
     /// `{"selector": "a", "attr": "href"}`: an attribute of the first match.
     Attr { selector: String, attr: String },
+    /// `[{"selector": "a", "attr": "href"}]`: that attribute of every match.
+    AttrAll {
+        selector: String,
+        attr: String,
+        limit: Option<usize>,
+    },
     /// `[{"selector": "li", "fields": {…}}]`: one object per match.
     Objects {
         selector: String,
@@ -114,17 +121,15 @@ fn parse_field(name: &str, spec: &Value) -> Result<Field, VerbError> {
                     })?;
                     // An object entry without `fields` is an attribute read
                     // over every match, which is a reasonable thing to want.
+                    // A flat list of values, not of one-key objects: the array
+                    // form of a scalar spec should differ from it in arity and
+                    // in nothing else, and the wrapping was a surprise every
+                    // caller then had to unwrap.
                     if let Some(attr) = string_of(map, "attr") {
-                        return Ok(Field::Objects {
+                        return Ok(Field::AttrAll {
                             selector,
+                            attr,
                             limit: limit_of(map),
-                            fields: BTreeMap::from([(
-                                attr.clone(),
-                                Field::Attr {
-                                    selector: ":scope".to_string(),
-                                    attr,
-                                },
-                            )]),
                         });
                     }
                     let Some(Value::Object(inner)) = map.get("fields") else {
@@ -237,6 +242,27 @@ fn eval(doc: &BaseDocument, base: &url::Url, scope: usize, field: &Field) -> Val
             node.and_then(|node| attribute(doc, base, node, attr))
                 .map(Value::String)
                 .unwrap_or(Value::Null)
+        }
+
+        Field::AttrAll {
+            selector,
+            attr,
+            limit,
+        } => {
+            let mut values: Vec<Value> = Vec::new();
+            for node in matches(doc, scope, selector) {
+                if limit.is_some_and(|cap| values.len() >= cap) {
+                    break;
+                }
+                // A match without the attribute keeps its place as a null, so
+                // the list still lines up row for row with a sibling list.
+                values.push(
+                    attribute(doc, base, node, attr)
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                );
+            }
+            Value::Array(values)
         }
 
         Field::Objects {
@@ -362,6 +388,30 @@ mod tests {
                 {"name": "two", "url": "https://app.example/2"}
             ])
         );
+    }
+
+    #[test]
+    fn an_attribute_over_every_match_is_a_flat_list() {
+        // The array form of a spec differs from the scalar form in arity and in
+        // nothing else. Handing back `[{"href": …}]` made every caller unwrap a
+        // one-key object, and the first one that did not silently wrote the
+        // objects into its output.
+        let html = "<html><body><ul>\
+                    <li><a href='/1'>one</a></li>\
+                    <li><span>no link here</span></li>\
+                    <li><a href='/3'>three</a></li></ul></body></html>";
+        let got = extract(html, json!({"urls": [{"selector": "li a", "attr": "href"}]}))
+            .expect("matched");
+        assert_eq!(
+            got["urls"],
+            json!(["https://app.example/1", "https://app.example/3"])
+        );
+
+        // A match without the attribute keeps its place, so the list still
+        // lines up with a sibling read over the same selector.
+        let aligned = extract(html, json!({"ids": [{"selector": "li", "attr": "id"}]}))
+            .expect("matched");
+        assert_eq!(aligned["ids"], json!([null, null, null]));
     }
 
     #[test]

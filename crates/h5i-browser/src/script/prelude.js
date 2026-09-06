@@ -1910,8 +1910,11 @@
       return null;
     }
 
-    // The live list, in source order. Enough of a `NamedNodeMap` for the two
-    // things code does with it: iterate it, and look a name up.
+    // The live list, in source order. Enough of a `NamedNodeMap` for the three
+    // things code does with it: iterate it, look a name up, and index it by
+    // name. The last is not a nicety: jQuery 1.x reads
+    // `div.attributes["onsubmit"].expando` and threw on the undefined, before
+    // it had finished defining `$`.
     get attributes() {
       const node = this;
       const list = api.attrNames(this._id).map((name) => internal(
@@ -1919,6 +1922,12 @@
       ));
       list.getNamedItem = (name) =>
         list.find((a) => a.name === String(name).toLowerCase()) || null;
+      for (const attr of list) {
+        // A named property never shadows an interface member: `length` on a
+        // NamedNodeMap is the count, not the attribute of that name.
+        if (attr.name in list) continue;
+        Object.defineProperty(list, attr.name, { configurable: true, value: attr });
+      }
       return list;
     }
     hasAttributes() { return api.attrNames(this._id).length > 0; }
@@ -5463,7 +5472,7 @@
     "storage", "offline", "online", "languagechange", "rejectionhandled",
     "unhandledrejection", "afterprint", "beforeprint",
   ];
-  for (const type of WINDOW_HANDLER_EVENTS) {
+  function installWindowHandler(type) {
     const slot = `__on_window_${type}`;
     Object.defineProperty(globalThis, `on${type}`, {
       configurable: true,
@@ -5477,6 +5486,16 @@
         if (globalThis[slot]) addEventListener(type, globalThis[slot]);
       },
     });
+  }
+  for (const type of WINDOW_HANDLER_EVENTS) installWindowHandler(type);
+  /// Window includes GlobalEventHandlers as well, so `"onsubmit" in window` is
+  /// true here as it is in a browser. Not only for the IDL: a false sent
+  /// jQuery 1.x down its IE branch, which is where it used to die.
+  ///
+  /// Kept out of `WINDOW_HANDLER_EVENTS`, which is also the set `<body>`
+  /// forwards to the window — `body.onclick` is the body's own.
+  for (const type of HANDLER_EVENTS) {
+    if (!WINDOW_HANDLER_EVENTS.includes(type)) installWindowHandler(type);
   }
   // `window.name` is a plain settable string here. In a browser it names the
   // browsing context for `target=`; this engine has one context (§B20.15), so
