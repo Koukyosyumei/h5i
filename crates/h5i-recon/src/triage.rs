@@ -39,7 +39,7 @@ pub fn text_digest(body: &str, path: &str) -> String {
         match c {
             '<' => inside_tag = true,
             '>' => inside_tag = false,
-            c if inside_tag => {}
+            _ if inside_tag => {}
             c if c.is_ascii_digit() => {}
             c if c.is_whitespace() => text.push(' '),
             c => text.push(c.to_ascii_lowercase()),
