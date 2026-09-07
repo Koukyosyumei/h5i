@@ -29,10 +29,17 @@ use console::style;
 /// A known name is what lets `h5i websec` answer "that is a plugin, here is how
 /// to install it" instead of "unknown command". A capability nobody can
 /// discover is a capability nobody uses.
-pub const KNOWN: &[(&str, &str)] = &[(
-    "websec",
-    "an HTTP workbench: read, edit, resend and compare what a browser session sent",
-)];
+pub const KNOWN: &[(&str, &str)] = &[
+    (
+        "websec",
+        "an HTTP workbench: read, edit, resend and compare what a browser session sent",
+    ),
+    (
+        "recon",
+        "the endpoint ledger: what a target exposes, where each candidate came from, \
+         and which message confirmed it",
+    ),
+];
 
 #[derive(Subcommand)]
 pub enum PluginCommands {

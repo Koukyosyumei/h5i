@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use clap::Subcommand;
 use console::style;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use h5i_core::browser_session as bs;
 use h5i_core::ui::SUCCESS;
@@ -832,123 +832,9 @@ pub enum BrowserCommands {
         json: bool,
     },
 
-    /// What this session reached, as a tree of origins and endpoints.
-    ///
-    /// The request log folded into the shape a person asks it questions in:
-    /// which paths, by which methods, answering which statuses, taking which
-    /// parameters. Built from the receipts, so it holds what the session
-    /// actually reached and nothing it merely read about. A URL scraped out of
-    /// a JavaScript bundle was not visited, and blurring the two would answer
-    /// "what did this session reach" with a guess.
-    Sitemap {
-        /// Which session, when more than one is open.
-        #[arg(long, short = 's', value_name = "NAME")]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
 
-    /// One stored message, as it went out or as it came back.
-    ///
-    /// Needs a session opened with `--capture`. This is the verb that shows the
-    /// bytes: headers in full, `Authorization` and `Cookie` included, which the
-    /// request log deliberately never holds. `--raw` prints it as an HTTP
-    /// message; the default summarises it.
-    Message {
-        /// The sequence number, as `requests` lists them.
-        #[arg(value_name = "SEQ")]
-        seq: u64,
-        /// Which half. Both by default.
-        #[arg(long, value_name = "HALF", value_parser = ["request", "response", "both"])]
-        part: Option<String>,
-        /// Print it as an HTTP message rather than a summary.
-        ///
-        /// Wins over `--json`: a wire message is bytes, and bytes wrapped in a
-        /// JSON string are no longer the message.
-        #[arg(long)]
-        raw: bool,
-        /// Write the body to this file, exactly as it came back.
-        ///
-        /// The store already holds the bytes; this is the way to get them out.
-        /// A response is not always something to read — a database backup left
-        /// in an open bucket, an image, an archive — and the next step is
-        /// usually a tool that wants a file.
-        ///
-        /// With `--part both`, the response body if there is one, otherwise
-        /// the request's.
-        #[arg(long = "body-to", value_name = "PATH")]
-        body_to: Option<PathBuf>,
-        /// Which session, when more than one is open.
-        #[arg(long, short = 's', value_name = "NAME")]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
 
-    /// How two of this session's responses differ.
-    ///
-    /// Status, headers and body, with the clock headers left out so that two
-    /// identical answers read as identical. A JSON body is compared field by
-    /// field, so a re-ordered object is not a difference; anything else is
-    /// compared by line. The reply carries a similarity number for the loop
-    /// that has to decide "same page or not" a few hundred times.
-    Diff {
-        /// The response to compare from.
-        #[arg(value_name = "SEQ")]
-        left: u64,
-        /// The response to compare to.
-        #[arg(value_name = "SEQ")]
-        right: u64,
-        /// Which session, when more than one is open.
-        #[arg(long, short = 's', value_name = "NAME")]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
 
-    /// Ask a stored response a question, for a script to branch on.
-    ///
-    /// Every condition has to hold. Exits 0 when they all do and 1 when they do
-    /// not, the way `grep` does, so a loop reads `if h5i browser match ...`
-    /// without reaching for `jq`. A condition that could not be *evaluated* (a
-    /// pattern that does not compile, a body that was never stored) is an
-    /// error, not a "no": those two answers must never look the same.
-    ///
-    /// What it captures is the other half. A regex hands back its groups and
-    /// `--json` hands back a JSON path's value, which is how a CSRF token or a
-    /// session id gets from one response into the next request.
-    Match {
-        /// The response to ask about.
-        #[arg(value_name = "SEQ")]
-        seq: u64,
-        /// A regular expression over the body. Capture groups come back.
-        #[arg(long, value_name = "PATTERN")]
-        regex: Option<String>,
-        /// A literal substring of the body. Needs no escaping, which matters
-        /// when the thing being looked for is a payload.
-        #[arg(long, value_name = "TEXT")]
-        contains: Option<String>,
-        /// A dotted path into a JSON body (`session.token`), or `path=value`.
-        #[arg(long = "json-path", value_name = "PATH[=VALUE]")]
-        json_path: Option<String>,
-        /// A header by name, or `name=value`.
-        #[arg(long, value_name = "NAME[=VALUE]")]
-        header: Option<String>,
-        /// The status code.
-        #[arg(long, value_name = "CODE")]
-        status: Option<u16>,
-        /// The body is longer than this many bytes.
-        #[arg(long, value_name = "BYTES")]
-        longer_than: Option<u64>,
-        /// The body is shorter than this many bytes.
-        #[arg(long, value_name = "BYTES")]
-        shorter_than: Option<u64>,
-        /// Which session, when more than one is open.
-        #[arg(long, short = 's', value_name = "NAME")]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
 
     /// Send one of this session's own requests again, with changes.
     ///
@@ -1072,6 +958,43 @@ pub enum BrowserCommands {
         session: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+
+    /// Names that moved to the workbench plugin, kept hidden so a script that
+    /// used one is told where it went (design-websec.md W21).
+    #[command(name = "message", hide = true)]
+    MovedMessage {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<std::ffi::OsString>,
+    },
+    #[command(name = "diff", hide = true)]
+    MovedDiff {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<std::ffi::OsString>,
+    },
+    #[command(name = "match", hide = true)]
+    MovedMatch {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<std::ffi::OsString>,
+    },
+    #[command(name = "sitemap", hide = true)]
+    MovedSitemap {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<std::ffi::OsString>,
+    },
+
+    /// Speak one request per line, and answer one per line: the same verbs
+    /// without paying process startup for each (design-websec.md W10).
+    ///
+    /// Each line is an object with an `id` and a `verb`, and the reply carries
+    /// the same `id`. Everything else is the verb's own flags, as fields.
+    Rpc {
+        /// Read requests from stdin and write replies to stdout.
+        #[arg(long)]
+        stdio: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
     },
 
     /// Which credentials this session can use, by name. Never their values.
@@ -1552,85 +1475,6 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 json,
             )
         }
-        BrowserCommands::Sitemap { session, json } => {
-            super::websec::sitemap(&root, session.as_deref(), json)
-        }
-        BrowserCommands::Message {
-            seq,
-            part,
-            raw,
-            body_to,
-            session,
-            json,
-        } => {
-            let part = match part.as_deref() {
-                Some("request") => super::websec::Part::Request,
-                Some("response") => super::websec::Part::Response,
-                _ => super::websec::Part::Both,
-            };
-            super::websec::show(
-                &root,
-                session.as_deref(),
-                seq,
-                part,
-                raw,
-                body_to.as_deref(),
-                json,
-            )
-        }
-        BrowserCommands::Diff {
-            left,
-            right,
-            session,
-            json,
-        } => super::websec::diff(&root, session.as_deref(), left, right, json),
-        BrowserCommands::Match {
-            seq,
-            regex,
-            contains,
-            json_path,
-            header,
-            status,
-            longer_than,
-            shorter_than,
-            session,
-            json,
-        } => {
-            use super::websec::Condition;
-            // `name=value` splits on the first `=`, like an edit does, so a
-            // value containing one needs no escaping.
-            let split = |spec: String| -> (String, Option<String>) {
-                match spec.split_once('=') {
-                    Some((name, value)) => (name.to_string(), Some(value.to_string())),
-                    None => (spec, None),
-                }
-            };
-            let mut conditions = Vec::new();
-            if let Some(pattern) = regex {
-                conditions.push(Condition::Regex(pattern));
-            }
-            if let Some(text) = contains {
-                conditions.push(Condition::Contains(text));
-            }
-            if let Some(spec) = json_path {
-                let (path, value) = split(spec);
-                conditions.push(Condition::Json { path, value });
-            }
-            if let Some(spec) = header {
-                let (name, value) = split(spec);
-                conditions.push(Condition::Header { name, value });
-            }
-            if let Some(code) = status {
-                conditions.push(Condition::Status(code));
-            }
-            if let Some(bytes) = longer_than {
-                conditions.push(Condition::LongerThan(bytes));
-            }
-            if let Some(bytes) = shorter_than {
-                conditions.push(Condition::ShorterThan(bytes));
-            }
-            super::websec::matches(&root, session.as_deref(), seq, &conditions, json)
-        }
         BrowserCommands::Resend {
             from,
             set,
@@ -1764,6 +1608,11 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 audit(&root, session.as_deref(), json)
             }
         }
+        BrowserCommands::MovedMessage { .. } => moved("message", "show"),
+        BrowserCommands::MovedDiff { .. } => moved("diff", "diff"),
+        BrowserCommands::MovedMatch { .. } => moved("match", "match"),
+        BrowserCommands::MovedSitemap { .. } => moved("sitemap", "sitemap"),
+        BrowserCommands::Rpc { stdio, session } => rpc(&root, session.as_deref(), stdio),
         BrowserCommands::Env { session, json } => {
             verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
@@ -3047,6 +2896,150 @@ fn verb(
 /// at the same place: this assembles the same command line `BrowserCommands::
 /// Resend` does, so the control lock, the receipts and the policy see a
 /// sequence exactly as they see somebody typing the steps one at a time.
+/// What to say when a script asks for a verb that is now the plugin's.
+fn moved(was: &str, now: &str) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "`h5i browser {was}` is now `h5i websec {now}`, and it arrives with the workbench \
+         plugin:\n    h5i plugin install websec --from ./h5i-websec\n\n  \
+         Reading a captured store is what installing the plugin adds. Sending is still \
+         here: `h5i browser requests`, `resend`, `sequence` and `rpc`."
+    )
+}
+
+/// `h5i browser rpc --stdio`.
+///
+/// Every request goes through `ask_session` like a typed verb: same
+/// resolution, same control lock, same receipts. It saves the process, not a
+/// check.
+fn rpc(root: &Path, selector: Option<&str>, stdio: bool) -> anyhow::Result<()> {
+    if !stdio {
+        anyhow::bail!("`rpc` speaks over stdin and stdout: pass `--stdio`");
+    }
+    use std::io::{BufRead, Read};
+
+    let stdin = std::io::stdin();
+    let mut reader = std::io::BufReader::new(stdin.lock());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        // Read the cap, not past it: checking the length afterwards would mean
+        // holding whatever was sent before deciding it was too much.
+        let read = (&mut reader)
+            .take(RPC_MAX_LINE as u64 + 1)
+            .read_line(&mut line)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if !line.ends_with('\n') && read > RPC_MAX_LINE {
+            drain_line(&mut reader)?;
+            println!(
+                "{}",
+                json!({"error": {"code": "too-long", "message": format!(
+                    "a request line may be at most {RPC_MAX_LINE} bytes"
+                )}})
+            );
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let reply = match serde_json::from_str::<Value>(&line) {
+            Ok(request) => rpc_one(root, selector, &request),
+            Err(why) => json!({"error": {"code": "unreadable", "message": why.to_string()}}),
+        };
+        println!("{reply}");
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// The longest request line the loop will read.
+const RPC_MAX_LINE: usize = 1024 * 1024;
+
+/// Throw away the rest of a line that was too long, in bounded pieces, so the
+/// next read starts on a request rather than in the middle of one.
+fn drain_line(reader: &mut impl std::io::BufRead) -> std::io::Result<()> {
+    use std::io::Read;
+    loop {
+        let mut chunk = Vec::new();
+        let read = std::io::BufRead::read_until(
+            &mut reader.by_ref().take(64 * 1024),
+            b'\n',
+            &mut chunk,
+        )?;
+        if read == 0 || chunk.ends_with(b"\n") {
+            return Ok(());
+        }
+    }
+}
+
+/// One RPC request, answered.
+fn rpc_one(root: &Path, selector: Option<&str>, request: &Value) -> Value {
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let answer = match verb {
+        // Cheap, and the way a caller finds out whether this build speaks the
+        // protocol at all before it commits a run to it.
+        "ping" => Ok(json!({"ok": true, "verb": "ping"})),
+        "resend" => rpc_resend(root, selector, request),
+        other => Err(anyhow::anyhow!(
+            "`{other}` is not a verb this speaks. It speaks: ping, resend"
+        )),
+    };
+    match answer {
+        Ok(mut value) => {
+            if let Some(map) = value.as_object_mut() {
+                map.insert("id".to_string(), id);
+            }
+            value
+        }
+        Err(why) => json!({"id": id, "error": {"code": "verb", "message": why.to_string()}}),
+    }
+}
+
+fn rpc_resend(root: &Path, selector: Option<&str>, request: &Value) -> anyhow::Result<Value> {
+    let from = request
+        .get("from")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("resend needs `from`: the sequence number to send again"))?;
+    let mut argv = vec!["resend".to_string(), "--from".to_string(), from.to_string()];
+    let strings = |field: &str| -> Vec<String> {
+        request
+            .get(field)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for spec in strings("set") {
+        argv.push("--set".into());
+        argv.push(spec);
+    }
+    for spec in strings("unset") {
+        argv.push("--unset".into());
+        argv.push(spec);
+    }
+    if let Some(target) = request.get("raw_target").and_then(Value::as_str) {
+        argv.push("--raw-target".into());
+        argv.push(target.to_string());
+    }
+    for (field, flag) in [
+        ("create", "--create"),
+        ("no_follow", "--no-follow"),
+        ("reset_budget", "--reset-budget"),
+    ] {
+        if request.get(field).and_then(Value::as_bool) == Some(true) {
+            argv.push(flag.into());
+        }
+    }
+    ask_session(root, selector, argv, true)
+}
+
 pub(crate) fn resend_step(
     root: &Path,
     selector: Option<&str>,

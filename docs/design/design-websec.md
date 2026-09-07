@@ -98,12 +98,12 @@ The workbench is mostly a matter of exposing machinery that is shipped.
    credential a stored request carries.
 4. **No timing detail, parallelism, site map, sequence engine, DOM taint or
    OAST.** Features 11, 12, 15 to 20. Match and extract (feature 14) were built
-   2026-09-03: `h5i browser match` takes regex, substring, JSON path, header,
+   2026-09-03: `h5i websec match` takes regex, substring, JSON path, header,
    status and length conditions, ANDs them, hands back what each captured, and
    keeps three answers apart in its exit code (matched, did not match, could not
    look). Comparison (feature 13) and the raw and
    typed views (feature 5) were built 2026-09-03 in `src/cli/websec.rs`, reached
-   by `h5i browser message` and `h5i browser diff`. Both read the store from
+   by `h5i websec show` and `h5i websec diff`. Both read the store from
    disk on h5i's side rather than through a session verb: a verb's reply travels
    out through the renderer, and asking the untrusted parser to relay a stored
    `Authorization` header would undo on request exactly what the broker split
@@ -154,6 +154,12 @@ All store content is untrusted target input, like snapshots.
 `req_<n>` and `res_<n>`, where `<n>` is the receipt `seq`, scoped to a session
 and stable for its life. Fully qualified as `<session>/req_42` when a command
 spans sessions, which cross-session replay and diff both do.
+
+The qualified form is written but not yet parsed: `websec show` and
+`websec show` takes a bare id plus `--session`, and recon's `merge` records
+cross-session evidence as `<session>/req_n` and says so. Accepting the
+qualified form wherever an id is taken is a small piece of work and is not
+done.
 
 A request and its response share a number because they are two phases of one
 receipt row, which is already how `RequestRecord` models them. `res_42` is the
@@ -305,6 +311,15 @@ h5i websec rpc --stdio
 {"id":1,"method":"replay","request":"req_42","set":{"query.id":123}}
 {"id":2,"method":"replay","request":"req_42","set":{"query.id":124}}
 ```
+
+Built 2026-09-07 as `h5i browser rpc --stdio`, engine-side, speaking `ping` and
+`resend`: one JSON object per line in, one per line out, ids matched, every
+request through the same `ask_session` a typed verb uses, so the control lock,
+the policy and the receipts see no difference. Measured on 200 path probes
+against a local target: 6.1s through the loop against 10.1s spawning `h5i` per
+request. Less than the startup cost alone predicts, because each call still
+resolves the session and opens the control channel; holding that connection
+open across a run is the next saving and is not built.
 
 One JSONL request per line, one reply per line, ids for correlation, and the
 same schema as `--json`. A Python client is then roughly 150 lines wrapping that
@@ -504,7 +519,7 @@ visited, and the map must not blur the two, because "what did this session
 reach" is the question the receipts exist to answer.
 
 Built 2026-09-03, with deliberately narrower scope:
-`h5i browser sitemap` folds the *receipts* into origins and endpoints, with
+`h5i websec sitemap` folds the *receipts* into origins and endpoints, with
 methods, statuses, parameter names, hit counts, a mark for what was navigated to
 rather than pulled in, and the refused URLs listed apart. The disclosed-but-
 unvisited half is not built. The verb reports only observed endpoints; bundle
@@ -628,23 +643,32 @@ because a plugin directory anything can add a name to is a directory where
 unchanged, so `websec match` still exits 1 for a miss and 2 for "could not
 look".
 
-Two honest limits.
+Two honest limits, both since removed (see below). The plugin composed `h5i
+browser` verbs in a subprocess rather than reading the message store itself,
+because the store's types lived in `h5i-browser` and a plugin depending on that
+crate would link Blitz, Stylo and Boa into a second binary. And so the workbench
+verbs were still in the default build, which left the posture argument above
+undelivered: an install *did* include them.
 
-The plugin composes `h5i browser` verbs in a subprocess rather than reading the
-message store itself. That is the right shape for the privilege argument, and it
-also sidesteps a real constraint: the store's types live in `h5i-browser`, and a
-plugin depending on that crate would link Blitz, Stylo and Boa into a second
-binary. Reading the store from the plugin needs those types extracted into a
-small crate of their own, which is worth doing and is not done.
+### What moved, 2026-09-07
 
-So the workbench verbs are still in the default binary (`h5i browser message`,
-`diff`, `match`, `resend`, `sequence`, `sitemap`), and the posture argument
-above is not yet delivered: an install *does* currently include them. What the
-plugin delivers today is the mechanism, the agent-facing naming (`req_42` rather
-than a bare sequence number, one noun instead of six verbs) and the proof that
-a plugin can drive a session with no privilege of its own. Moving the verbs
-behind the plugin is the next step, and it should follow the benchmark rather
-than precede it: the benchmark is what will say which of them are load-bearing.
+Both limits above are gone. `crates/h5i-wire` holds the store's types and its
+readers, so the plugin reads the bytes itself, and the four reading verbs moved
+into it: `show`, `diff`, `match` and `sitemap` are no longer in the default
+build. `h5i browser message|diff|match|sitemap` do not exist; the capability
+arrives with `h5i plugin install websec`, which is what the posture argument
+above claimed and did not deliver.
+
+What stays in the binary is what sends: `requests`, `resend`, `sequence` and
+`rpc`. They need the engine's control channel, and a plugin reaching the
+network by any path other than the engine's is the thing this design refuses.
+The binary still reads the store for its own two cases, `resend --as` carrying
+a request and `sequence` binding a value out of a response, through the same
+`h5i-wire` readers rather than a second copy.
+
+Recon depends on the same split: it sends through `h5i browser resend` and
+`h5i browser rpc`, and reads through `h5i-wire` (`docs/design/design-recon.md`
+N19).
 
 ### What a plugin is
 
@@ -704,9 +728,15 @@ the enforcement in W16 depends on it.
 
 Each of these is a decision to be defended in review, not a gap to be filled.
 
-- **A scanner.** No crawl-and-flag mode, no severity ratings.
+- **A scanner.** No crawl-and-flag mode, no severity ratings. Crawling itself
+  moved out rather than staying refused: it belongs to recon
+  ([`design-recon.md`](design-recon.md) N9), which discovers and never flags.
+  The *and-flag* half is what this file still refuses, wherever the crawl lives.
 - **Payload generation.** No SQL injection strings, no XSS vectors, no
-  wordlists, no encoders beyond the ones an edit needs to be correct.
+  encoders beyond the ones an edit needs to be correct. Wordlists are input,
+  never cargo: recon's path discovery (N10) takes `--wordlist PATH` and h5i
+  ships no corpus, exactly as W15 takes payloads from the caller and generates
+  none.
 - **Vulnerability verdicts.** h5i reports differences. Calling one a
   vulnerability is the agent's claim, made in a finding it writes and signs.
 - **An exploit database or plugin marketplace.**

@@ -15,6 +15,10 @@ identity = ["dep:toml"]
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }
+# The receipt row and the stored message, as data. Small on purpose: the
+# readers of both (the websec plugin, recon) depend on that crate and not on
+# this one, so reading a log never links a browser engine.
+h5i-wire = { path = "../h5i-wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

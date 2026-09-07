@@ -13,9 +13,10 @@ env:
   # crates.io publish, because the engine depends on boa by git revision and
   # crates.io refuses that (see scripts/check_boa_release.sh).
   BINARY_NAME: h5i
-  # The workbench plugin, shipped beside the binary rather than inside it: see
-  # `docs/design/design-websec.md` W21.
+  # The plugins, shipped beside the binary rather than inside it: see
+  # `docs/design/design-websec.md` W21 and `docs/design/design-recon.md` N19.
   PLUGIN_NAME: h5i-websec
+  RECON_NAME: h5i-recon
 
 permissions:
   contents: write
@@ -166,11 +167,11 @@ jobs:
       # and boa alongside git2, so a target that cannot compile the engine cannot
       # produce a release binary at all. That is the reading the asset guard
       # below already takes.
-      # Both binaries. `h5i-websec` is the workbench plugin: a small clap
-      # wrapper that runs `h5i browser` verbs in a subprocess and links no
-      # engine, so it costs seconds to build and a few hundred kilobytes to
-      # ship. Without it in the release, `h5i plugin install websec --from …`
-      # has no file to point at unless you have the source and a toolchain.
+      # All three. `h5i-websec` and `h5i-recon` are the plugins: small clap
+      # binaries that link no engine, so they cost seconds to build and a few
+      # megabytes to ship. Without them in the release, `h5i plugin install
+      # <name> --from …` has no file to point at unless you have the source and
+      # a toolchain.
       - name: Build
         env:
           H5I_SKIP_WEB_BUILD: "1"
@@ -179,7 +180,7 @@ jobs:
         # `\` continuation is not one — it reached cargo as an argument in v0.4.1.
         run: >-
           cargo build --release --locked --target ${{ matrix.target }}
-          -p ${{ env.BINARY_NAME }} -p ${{ env.PLUGIN_NAME }}
+          -p ${{ env.BINARY_NAME }} -p ${{ env.PLUGIN_NAME }} -p ${{ env.RECON_NAME }}
 
       # ── Package ───────────────────────────────────────────────────────────
 
@@ -206,6 +207,7 @@ jobs:
           }
           package "${{ env.BINARY_NAME }}"
           package "${{ env.PLUGIN_NAME }}"
+          package "${{ env.RECON_NAME }}"
 
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
@@ -224,6 +226,7 @@ jobs:
           }
           Package "${{ env.BINARY_NAME }}"
           Package "${{ env.PLUGIN_NAME }}"
+          Package "${{ env.RECON_NAME }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -261,9 +264,9 @@ jobs:
       # nobody notices until someone's install breaks.
       - name: Every expected asset is present, and nothing else
         run: |
-          # Four targets x two binaries (`h5i` and the `h5i-websec` plugin) x
+          # Four targets x three binaries (`h5i` and the two plugins) x
           # (archive + checksum).
-          expected=16
+          expected=24
           found=$(find artifacts -maxdepth 1 -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) | wc -l)
           extra=$(find artifacts -mindepth 1 -maxdepth 1 \
@@ -334,6 +337,20 @@ jobs:
             It holds no privilege of its own: every verb runs the `h5i browser`
             verbs a person would type, through the same policy, budget and
             receipts.
+
+            ### The recon ledger
+
+            `h5i-recon` is the other plugin, and it arrives the same way:
+
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/h5i-recon-${{ github.ref_name }}-<TARGET>.tar.gz | tar -xz
+            h5i plugin install recon --from ./h5i-recon
+            ```
+
+            It records what a target exposes, where each candidate came from,
+            and which stored message confirmed it. Discovery only: a URL read
+            out of a bundle stays a candidate until a request answers for it,
+            and nothing here is called a vulnerability.
 
             Every request it makes is checked against an allowlist — every
             request and every redirect hop — and written to the log before any

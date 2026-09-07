@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""A deliberately small target for the websec smoke tests.
+"""A deliberately small target for the websec and recon smoke tests.
 
 Four behaviours, each the smallest thing that exercises one verb end to end:
 an IDOR the tool should find, an ownership check it should *not* be able to
 break, a single-use CSRF token that makes a two-step flow necessary, and a page
 with subresources so the request log has something to be narrowed.
+
+The `/site/` tree is recon's half: pages that link to each other, a bundle that
+names endpoints, robots.txt and a sitemap, and a directory that answers 200 with
+its own "not found" page for everything (docs/design/design-recon.md N11). A
+soft 404 is the case triage exists for, so the fixture has to have one.
 
 Not a benchmark. The benchmark the roadmap asks for (docs/design/design-websec.md
 W20) is a corpus of real problems; this is the fixture that proves the verbs
@@ -128,6 +133,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         elif path == "/missing":
             self.reply(404, b"gone", "text/plain")
+
+        elif path == "/robots.txt":
+            self.reply(200, b"User-agent: *\nDisallow: /site/admin/\n"
+                            b"Sitemap: /sitemap.xml\n", "text/plain")
+
+        elif path == "/sitemap.xml":
+            self.reply(200, b'<?xml version="1.0"?><urlset><url><loc>/site/help</loc>'
+                            b'</url></urlset>', "application/xml")
+
+        elif path == "/site/" or path == "/site/index.html":
+            self.reply(200, b'<html><body><h1>site</h1>'
+                            b'<a href="/site/one">one</a>'
+                            b'<a href="/site/two?page=1">two</a>'
+                            b'<script src="/site/app.js"></script>'
+                            b'<form action="/site/login" method="POST">'
+                            b'<input name="user"><input name="pass"></form>'
+                            b"</body></html>", "text/html")
+
+        elif path == "/site/app.js":
+            self.reply(200, b'fetch("/site/api/cart");\n'
+                            b'fetch("/site/api/order", { method: "POST" });\n'
+                            b'const u = "/site/api/item/" + id;\n',
+                       "text/javascript")
+
+        elif path in ("/site/one", "/site/two", "/site/help"):
+            self.reply(200, ("<html><body><article><p>%s</p></article></body></html>"
+                             % path).encode(), "text/html")
+
+        elif path.startswith("/site/"):
+            # The soft 404: 200, the site's own template, and the path echoed
+            # back so no two of them are the same length.
+            self.reply(200, ("<html><body><div><span>no such page: %s</span></div>"
+                             "</body></html>" % path).encode(), "text/html")
 
         else:
             self.reply(200, b"x", "text/plain")

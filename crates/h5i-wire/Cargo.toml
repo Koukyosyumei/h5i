@@ -1,0 +1,23 @@
+[package]
+name = "h5i-wire"
+version = "0.1.0"
+edition = "2024"
+description = "The shapes h5i writes about an HTTP message: receipt rows and stored messages, without the engine that produces them."
+
+# A library only, and a deliberately small one. Everything here is data: the
+# row a receipt log holds and the message a capture store holds. The engine
+# that writes them lives in `h5i-browser`, which links Blitz, Stylo and Boa, so
+# a reader that depended on it to name a `RequestRecord` would pull a browser
+# into a binary that only wanted to read a log (design-websec.md W21,
+# design-recon.md N4).
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The reader parses a stored request's URL to render its request line, the way
+# the sender composed it.
+url = "2.5"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3.8"

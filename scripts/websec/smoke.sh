@@ -15,6 +15,11 @@ set -uo pipefail
 
 H5I="${1:-target/release/h5i}"
 [ -x "$H5I" ] || { echo "no h5i at $H5I — cargo build --release --features browser"; exit 2; }
+# Reading a store is the plugin's job now, so the suite needs both binaries:
+# `show`, `diff`, `match` and `sitemap` are not in the default build (W21).
+WEBSEC="${2:-$(dirname "$H5I")/h5i-websec}"
+[ -x "$WEBSEC" ] || { echo "no h5i-websec at $WEBSEC — cargo build --release -p h5i-websec"; exit 2; }
+export H5I_BIN="$(cd "$(dirname "$H5I")" && pwd)/$(basename "$H5I")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
 SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race ws-smoke-up)
@@ -46,27 +51,27 @@ is "the request log has the navigation" \
 REPLAY="$("$H5I" browser resend 0 --set 'query.user_id=2' --session ws-smoke-a --json 2>/dev/null)"
 is "a replay changes the parameter"  "$(echo "$REPLAY" | jqp 'd["applied"][0]["was"]')" "1"
 is "and comes back 200"              "$(echo "$REPLAY" | jqp 'd["response"]["status"]')" "200"
-has "with the other user's record"   "$("$H5I" browser message 1 --part response --session ws-smoke-a 2>/dev/null)" "bob"
+has "with the other user's record"   "$("$WEBSEC" show res_1 --session ws-smoke-a 2>/dev/null)" "bob"
 
 is "a typo is refused, not sent" \
    "$("$H5I" browser resend 0 --set 'query.userid=2' --session ws-smoke-a --json 2>/dev/null | jqp 'd["code"]')" "bad-edit"
 
-RAW="$("$H5I" browser message 1 --session ws-smoke-a --raw 2>/dev/null)"
+RAW="$("$WEBSEC" show req_1 --session ws-smoke-a --raw 2>/dev/null)"
 is "a replay sends one accept-encoding" "$(echo "$RAW" | grep -c '^accept-encoding:')" "1"
 
 echo
 echo "── diff ─────────────────────────────────────────────────────────────"
-DIFF="$("$H5I" browser diff 0 1 --session ws-smoke-a --json 2>/dev/null)"
+DIFF="$("$WEBSEC" diff res_0 res_1 --session ws-smoke-a 2>/dev/null)"
 is "the diff names the changed fields" "$(echo "$DIFF" | jqp 'len(d["json_changes"])')" "4"
 is "and reports no status change"      "$(echo "$DIFF" | jqp 'd["status_changed"]')" "False"
 
 echo
 echo "── match ────────────────────────────────────────────────────────────"
-"$H5I" browser match 1 --json-path role=admin --status 200 --session ws-smoke-a >/dev/null 2>&1
+"$WEBSEC" match res_1 --json-path role=admin --status 200 --session ws-smoke-a >/dev/null 2>&1
 is "a hit exits 0" "$?" "0"
-"$H5I" browser match 1 --contains 'not-in-this-body' --session ws-smoke-a >/dev/null 2>&1
+"$WEBSEC" match res_1 --contains 'not-in-this-body' --session ws-smoke-a >/dev/null 2>&1
 is "a miss exits 1" "$?" "1"
-"$H5I" browser match 1 --regex '([unclosed' --session ws-smoke-a >/dev/null 2>&1
+"$WEBSEC" match res_1 --regex '([unclosed' --session ws-smoke-a >/dev/null 2>&1
 is "a broken pattern exits 2, not 1" "$?" "2"
 
 echo
@@ -135,7 +140,7 @@ BYPASS="$("$H5I" browser resend 0 --create \
 is "and a lie about the type gets past it" "$(echo "$BYPASS" | jqp 'd["response"]["status"]')" "200"
 SEQ="$(echo "$BYPASS" | jqp 'd["seq"]')"
 has "with the filename the server stored" \
-    "$("$H5I" browser message "$SEQ" --part response --session ws-smoke-up 2>/dev/null)" "../shell.php"
+    "$("$WEBSEC" show "res_$SEQ" --session ws-smoke-up 2>/dev/null)" "../shell.php"
 
 echo
 echo "── races ────────────────────────────────────────────────────────────"
@@ -168,8 +173,21 @@ is "so can a URL"                   "$(narrowed --url-contains .css)" "2"
 is "a limit is a narrowing"         "$("$H5I" browser requests --session ws-smoke-log --limit 2 --json 2>/dev/null | jqp 'd["narrowed"]')" "True"
 
 echo
+echo "── the line protocol ────────────────────────────────────────────────"
+RPC=$(printf '{"id":1,"verb":"ping"}\n{"id":2,"verb":"resend","from":0,"raw_target":"/page"}\n{"id":3,"verb":"nope"}\n' \
+      | "$H5I" browser rpc --stdio --session ws-smoke-a)
+is "ping is answered, with its id" "$(echo "$RPC" | sed -n 1p | jqp "d['id'], d['ok']")" "1 True"
+is "a resend answers with the receipt it made" "$(echo "$RPC" | sed -n 2p | jqp "d['response']['status']")" "200"
+is "an unknown verb is an error carrying the same id" "$(echo "$RPC" | sed -n 3p | jqp "d['id'], d['error']['code']")" "3 verb"
+# A line longer than the cap is refused without being held: the loop reads the
+# bound, not past it.
+HUGE=$(python3 -c "print('{\"id\":4,\"verb\":\"ping\",\"pad\":\"' + 'a' * 2000000 + '\"}')")
+OVER=$(printf '%s\n{"id":5,"verb":"ping"}\n' "$HUGE" | "$H5I" browser rpc --stdio --session ws-smoke-a)
+is "an oversized line is refused" "$(echo "$OVER" | sed -n 1p | jqp "d['error']['code']")" "too-long"
+is "and the next line is still read" "$(echo "$OVER" | sed -n 2p | jqp "d['id']")" "5"
+
 echo "── the plugin ───────────────────────────────────────────────────────"
-PLUGIN="$(dirname "$H5I")/h5i-websec"
+PLUGIN="$WEBSEC"
 if [ -x "$PLUGIN" ]; then
     "$H5I" plugin install websec --from "$PLUGIN" --force >/dev/null 2>&1
     is "the plugin reports itself installed" \

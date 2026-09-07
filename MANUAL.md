@@ -109,9 +109,15 @@ agent edits code -> starts dev server -> opens a session against it
 ## Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
-cargo install --path .                         # from source
+curl -fsSL https://h5i.dev/install.sh | sh                      # prebuilt binary
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon  # with both plugins
+cargo install --path .                                          # from source
 ```
+
+The plugins are not in the default install. `--websec` adds the HTTP workbench
+and `--recon` the endpoint ledger; each is fetched as its own archive and
+registered with `h5i plugin install`, so `h5i plugin list` stays the whole truth
+about what is there.
 
 `h5i.dev/install.sh` and `raw.githubusercontent.com/h5i-dev/h5i/main/install.sh`
 are the same file, and CI fails if they ever stop being. Use the second one if
@@ -136,6 +142,9 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i ui`](#h5i-ui) | The box console: the whole fleet, as one read-only screen. |
 | [`h5i runner`](#h5i-runner) | Pair a second Linux machine and run boxes there over SSH. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
+| [`h5i plugin`](#h5i-plugin) | Install a capability that is not in the default build: the workbench, the ledger. |
+| [`h5i websec`](#h5i-websec) | Read, edit, resend and compare what a session sent. A plugin. |
+| [`h5i recon`](#h5i-recon) | What a target exposes, and how h5i knows. A plugin. |
 | [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
 | `h5i completion` | Shell completions for bash, zsh, fish and friends. |
 
@@ -1137,6 +1146,95 @@ h5i skill path                       # where an install would write
 
 This is also how the *in-box* agent gets the skill: nothing is baked into an
 image, and nothing is copied from host to box.
+
+---
+
+## h5i plugin
+
+A plugin is a separate executable h5i runs by name. It is not in the default
+build, and installing one is a deliberate act.
+
+```bash
+h5i plugin install websec --from ./h5i-websec   # from a release archive or a build
+h5i plugin install recon --from ./h5i-recon
+h5i plugin list                                 # what is installed, and what exists
+h5i plugin remove recon
+```
+
+Only names h5i knows can be installed, and they live in h5i's own state
+directory rather than on `$PATH`, so `h5i plugin list` is the whole truth about
+what `h5i <name>` can become. A plugin holds no privilege of its own: it reaches
+a session through the same verbs a person types, so its requests are the
+engine's, checked by the engine's policy and written into the engine's receipts.
+
+A build without a plugin still knows the name. `h5i recon` on a plain install
+says what the capability is and how to get it rather than "unknown command".
+
+---
+
+## h5i websec
+
+The HTTP workbench: read what a session sent, change a part of it, send it
+again, and compare the answers. Design: `docs/design/design-websec.md`.
+
+```bash
+h5i browser open https://target.example --capture
+h5i websec requests                              # captured messages
+h5i websec show req_42 --raw                     # one message, exactly
+h5i websec replay req_42 --set query.id=456      # edit and resend
+h5i websec diff res_42 res_43                    # compare two answers
+h5i websec match res_43 --status 200 --contains ok
+```
+
+Capture is opt-in (`--capture`) because the message store holds bodies and
+credentials in full. It is never included in an export unless it is named.
+
+`h5i browser rpc --stdio` is the same verbs over one process: one JSON object
+per line in, one per line out, ids matched. A loop that sends hundreds of
+requests pays process startup once instead of every time.
+
+---
+
+## h5i recon
+
+Discovery, kept apart from testing. Recon records what a target exposes and how
+it knows; calling a difference a vulnerability stays the agent's claim. Design:
+`docs/design/design-recon.md`.
+
+```bash
+h5i recon extract                             # read what the session already fetched
+h5i recon known                               # robots.txt, sitemap.xml, security.txt
+h5i recon crawl --max-requests 200 --rate 4   # walk it under this session's login
+h5i recon paths --wordlist ./words.txt        # ask for what was never disclosed
+h5i recon triage --calibrate                  # fold the noise, confirm what is real
+h5i recon endpoints --state confirmed --json  # the inventory, with evidence
+```
+
+Every endpoint carries a state, and the states are the point:
+
+| State | What it means |
+|---|---|
+| `candidate` | Something disclosed it. No request was ever sent. |
+| `observed` | A request answered, and the row names the message. |
+| `confirmed` | The answer differs from what that directory says about a path that is not there. |
+| `refused` | Policy declined it. Kept, because it is a fact about the scope. |
+| `gone` | Confirmed once, and now answering like a missing path. |
+
+Confirmation happens only in `triage --calibrate`, which learns what a missing
+path looks like in each directory. Against an application that answers `200`
+for everything, nothing is confirmed without it.
+
+h5i ships no wordlist and generates no payloads: `paths --wordlist` takes a list
+you bring, `--reuse-words` uses the words the session has already seen, and
+`recon import --format urls|katana|subfinder|httpx|openapi` reads a file another
+tool produced as candidates that stay candidates until an h5i request answers.
+`recon export` writes the inventory as JSONL; `recon merge --from <session>`
+folds another session's ledger in, keeping each identity's observations apart.
+
+Runs that spend requests are jobs: `h5i recon jobs list`, `jobs show`, and
+`jobs resume`, which re-runs the same parameters and skips what the ledger has
+already answered. The ledger is written as a run goes, so a run that is killed
+keeps what it found.
 
 ---
 

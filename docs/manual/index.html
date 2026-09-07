@@ -196,6 +196,9 @@
 </div>
 <a class="t2" href="#h5i-ui">h5i ui</a>
 <a class="t2" href="#h5i-skill">h5i skill</a>
+<a class="t2" href="#h5i-plugin">h5i plugin</a>
+<a class="t2" href="#h5i-websec">h5i websec</a>
+<a class="t2" href="#h5i-recon">h5i recon</a>
 <a class="t2" href="#h5i-runner">h5i runner</a>
 <div class="t3group">
 <a class="t3" href="#what-pairing-does">What pairing does</a>
@@ -321,9 +324,14 @@ git apply --3way ./review/patch.diff       # apply it where you want
 </code></pre>
 <hr />
 <h2 id="install">Install</h2>
-<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
-cargo install --path .                         # from source
+<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh                      # prebuilt binary
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon  # with both plugins
+cargo install --path .                                          # from source
 </code></pre>
+<p>The plugins are not in the default install. <code>--websec</code> adds the HTTP workbench
+and <code>--recon</code> the endpoint ledger; each is fetched as its own archive and
+registered with <code>h5i plugin install</code>, so <code>h5i plugin list</code> stays the whole truth
+about what is there.</p>
 <p><code>h5i.dev/install.sh</code> and <code>raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</code>
 are the same file, and CI fails if they ever stop being. Use the second one if
 you would rather the install path not depend on the domain.</p>
@@ -364,6 +372,18 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 <tr>
 <td><a href="#h5i-skill"><code>h5i skill</code></a></td>
 <td>Write or print the agent skill this binary carries.</td>
+</tr>
+<tr>
+<td><a href="#h5i-plugin"><code>h5i plugin</code></a></td>
+<td>Install a capability that is not in the default build: the workbench, the ledger.</td>
+</tr>
+<tr>
+<td><a href="#h5i-websec"><code>h5i websec</code></a></td>
+<td>Read, edit, resend and compare what a session sent. A plugin.</td>
+</tr>
+<tr>
+<td><a href="#h5i-recon"><code>h5i recon</code></a></td>
+<td>What a target exposes, and how h5i knows. A plugin.</td>
 </tr>
 <tr>
 <td><a href="#h5i-box-share"><code>h5i join</code></a></td>
@@ -1323,6 +1343,94 @@ h5i skill path                       # where an install would write
 </code></pre>
 <p>This is also how the <em>in-box</em> agent gets the skill: nothing is baked into an
 image, and nothing is copied from host to box.</p>
+<hr />
+<h2 id="h5i-plugin">h5i plugin</h2>
+<p>A plugin is a separate executable h5i runs by name. It is not in the default
+build, and installing one is a deliberate act.</p>
+<pre><code class="language-bash">h5i plugin install websec --from ./h5i-websec   # from a release archive or a build
+h5i plugin install recon --from ./h5i-recon
+h5i plugin list                                 # what is installed, and what exists
+h5i plugin remove recon
+</code></pre>
+<p>Only names h5i knows can be installed, and they live in h5i's own state
+directory rather than on <code>$PATH</code>, so <code>h5i plugin list</code> is the whole truth about
+what <code>h5i &lt;name&gt;</code> can become. A plugin holds no privilege of its own: it reaches
+a session through the same verbs a person types, so its requests are the
+engine's, checked by the engine's policy and written into the engine's receipts.</p>
+<p>A build without a plugin still knows the name. <code>h5i recon</code> on a plain install
+says what the capability is and how to get it rather than "unknown command".</p>
+<hr />
+<h2 id="h5i-websec">h5i websec</h2>
+<p>The HTTP workbench: read what a session sent, change a part of it, send it
+again, and compare the answers. Design: <code>docs/design/design-websec.md</code>.</p>
+<pre><code class="language-bash">h5i browser open https://target.example --capture
+h5i websec requests                              # captured messages
+h5i websec show req_42 --raw                     # one message, exactly
+h5i websec replay req_42 --set query.id=456      # edit and resend
+h5i websec diff res_42 res_43                    # compare two answers
+h5i websec match res_43 --status 200 --contains ok
+</code></pre>
+<p>Capture is opt-in (<code>--capture</code>) because the message store holds bodies and
+credentials in full. It is never included in an export unless it is named.</p>
+<p><code>h5i browser rpc --stdio</code> is the same verbs over one process: one JSON object
+per line in, one per line out, ids matched. A loop that sends hundreds of
+requests pays process startup once instead of every time.</p>
+<hr />
+<h2 id="h5i-recon">h5i recon</h2>
+<p>Discovery, kept apart from testing. Recon records what a target exposes and how
+it knows; calling a difference a vulnerability stays the agent's claim. Design:
+<code>docs/design/design-recon.md</code>.</p>
+<pre><code class="language-bash">h5i recon extract                             # read what the session already fetched
+h5i recon known                               # robots.txt, sitemap.xml, security.txt
+h5i recon crawl --max-requests 200 --rate 4   # walk it under this session's login
+h5i recon paths --wordlist ./words.txt        # ask for what was never disclosed
+h5i recon triage --calibrate                  # fold the noise, confirm what is real
+h5i recon endpoints --state confirmed --json  # the inventory, with evidence
+</code></pre>
+<p>Every endpoint carries a state, and the states are the point:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>candidate</code></td>
+<td>Something disclosed it. No request was ever sent.</td>
+</tr>
+<tr>
+<td><code>observed</code></td>
+<td>A request answered, and the row names the message.</td>
+</tr>
+<tr>
+<td><code>confirmed</code></td>
+<td>The answer differs from what that directory says about a path that is not there.</td>
+</tr>
+<tr>
+<td><code>refused</code></td>
+<td>Policy declined it. Kept, because it is a fact about the scope.</td>
+</tr>
+<tr>
+<td><code>gone</code></td>
+<td>Confirmed once, and now answering like a missing path.</td>
+</tr>
+</tbody>
+</table>
+<p>Confirmation happens only in <code>triage --calibrate</code>, which learns what a missing
+path looks like in each directory. Against an application that answers <code>200</code>
+for everything, nothing is confirmed without it.</p>
+<p>h5i ships no wordlist and generates no payloads: <code>paths --wordlist</code> takes a list
+you bring, <code>--reuse-words</code> uses the words the session has already seen, and
+<code>recon import --format urls|katana|subfinder|httpx|openapi</code> reads a file another
+tool produced as candidates that stay candidates until an h5i request answers.
+<code>recon export</code> writes the inventory as JSONL; <code>recon merge --from &lt;session&gt;</code>
+folds another session's ledger in, keeping each identity's observations apart.</p>
+<p>Runs that spend requests are jobs: <code>h5i recon jobs list</code>, <code>jobs show</code>, and
+<code>jobs resume</code>, which re-runs the same parameters and skips what the ledger has
+already answered. The ledger is written as a run goes, so a run that is killed
+keeps what it found.</p>
 <hr />
 <h2 id="h5i-runner">h5i runner</h2>
 <p>A <em>runner</em> is a second Linux machine you own that h5i reaches over SSH: a spare

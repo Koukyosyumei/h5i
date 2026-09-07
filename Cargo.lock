@@ -1920,6 +1920,7 @@ dependencies = [
  "h5i-core",
  "h5i-runner",
  "h5i-share",
+ "h5i-wire",
  "libc",
  "regex",
  "serde",
@@ -1963,6 +1964,7 @@ dependencies = [
  "flate2",
  "getrandom 0.2.17",
  "h5i-error",
+ "h5i-wire",
  "httpdate",
  "image",
  "libc",
@@ -2024,6 +2026,22 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "h5i-recon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "h5i-core",
+ "h5i-error",
+ "h5i-wire",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "url",
 ]
 
 [[package]]
@@ -2092,7 +2110,23 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "h5i-core",
+ "h5i-wire",
+ "regex",
+ "serde",
  "serde_json",
+ "url",
+]
+
+[[package]]
+name = "h5i-wire"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

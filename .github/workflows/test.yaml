@@ -104,6 +104,43 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 
+  # The two smoke suites, driven against a real server by real binaries.
+  #
+  # Its own job because it needs release binaries: a debug build of this
+  # workspace carries a browser engine and a JavaScript engine, and a suite that
+  # drove one would spend the runner's half hour rendering pages. Built lean
+  # (`--no-default-features --features browser`), so no Node, no console, no
+  # tunnel, and no runner.
+  #
+  # These suites exist for the bugs unit tests cannot see: a verb wired
+  # everywhere and refused at the session, an `accept-encoding` duplicated on
+  # every replay, receipts numbered from zero so a session's first request was
+  # dropped, a probe that inherited a POST and asked for robots.txt with a body.
+  # Every one of them was invisible above and obvious here.
+  smoke:
+    name: smoke · websec + recon end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the binaries the suites drive
+        env:
+          H5I_SKIP_WEB_BUILD: "1"
+        run: >-
+          cargo build --release --locked --no-default-features
+          --features browser -p h5i -p h5i-websec -p h5i-recon
+
+      - name: websec smoke
+        run: ./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec
+
+      - name: recon smoke
+        run: ./scripts/recon/smoke.sh target/release/h5i target/release/h5i-recon
+
   # The runtime-detection lane (docs/design/design-detect.md D1–D14). Its own job because it needs
   # a toolchain the other jobs do not — a clang that can target BPF — and
   # because `bpf` is off by default, so nothing above would notice it rotting.
@@ -414,3 +451,4 @@ jobs:
           cargo check --locked --target ${{ matrix.target }}
           cargo check --locked --target ${{ matrix.target }} -p h5i-browser
           cargo check --locked --target ${{ matrix.target }} -p h5i-websec
+          cargo check --locked --target ${{ matrix.target }} -p h5i-recon

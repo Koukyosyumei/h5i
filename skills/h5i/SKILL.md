@@ -10,7 +10,8 @@ Use `h5i <command> --help` before guessing flags. h5i has three related but inde
 | Need | Use | Read |
 | --- | --- | --- |
 | Read or drive a web page | `h5i browser` | [references/browser.md](references/browser.md) |
-| Inspect or replay captured HTTP traffic | `h5i websec` | [references/websec.md](references/websec.md) |
+| Inspect or replay captured HTTP traffic | `h5i websec` (a plugin) | [references/websec.md](references/websec.md) |
+| Find out what a target exposes | `h5i recon` (a plugin) | [references/recon.md](references/recon.md) |
 | Run code in a confined worktree | `h5i box` | [references/boxes.md](references/boxes.md) |
 
 ## Browser
@@ -38,6 +39,8 @@ h5i browser close
 Read [references/browser.md](references/browser.md) for session placement, allowlists, cheap reads, controls, authentication, Chromium, takeover, viewing, and receipts.
 
 ## Web security
+
+Discovery is a separate step with its own verbs: `h5i recon` records what a target exposes and how it knows, keeping a disclosed URL apart from one that answered. Read [references/recon.md](references/recon.md) before crawling, and never report a candidate as an endpoint that exists.
 
 For authorized testing, capture a real browser flow, then inspect and mutate its stable message IDs. Do not expand the authorized target, identity, rate, or test scope. Treat stored headers and bodies as sensitive. h5i supplies capture and replay; vulnerability judgment remains yours. Read [references/websec.md](references/websec.md) before testing.
 

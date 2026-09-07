@@ -17,6 +17,8 @@
 //! `h5i browser`, and defaults chosen for a loop rather than for a person
 //! reading a page.
 
+mod read;
+
 use std::ffi::OsString;
 use std::process::Command;
 
@@ -239,7 +241,109 @@ fn main() {
     }
 }
 
+/// Ask the running engine for something only it has: a live session's log is
+/// in its memory, not in a file.
+pub fn ask_browser(args: &[&str], session: Option<&str>) -> anyhow::Result<serde_json::Value> {
+    let mut command = Command::new(h5i());
+    command.arg("browser").args(args).arg("--json");
+    if let Some(name) = session {
+        command.arg("--session").arg(name);
+    }
+    let out = command
+        .output()
+        .map_err(|e| anyhow::anyhow!("could not run h5i: {e}"))?;
+    serde_json::from_slice(&out.stdout).map_err(|e| anyhow::anyhow!("h5i answered oddly: {e}"))
+}
+
 fn run(cli: Cli) -> anyhow::Result<()> {
+    // The reading verbs are this binary's, and they read the store directly.
+    // Everything that sends is still `h5i browser`, below.
+    let root = h5i_core::browser_session::root()?;
+    let session = cli.session.clone();
+    let json_out = !cli.human;
+    match &cli.command {
+        Verb::Show { id, raw, body_to } => {
+            let seq = sequence_of(id)?.parse::<u64>()?;
+            let part = if id.starts_with("res_") {
+                read::Part::Response
+            } else if id.starts_with("req_") {
+                read::Part::Request
+            } else {
+                read::Part::Both
+            };
+            return read::show(
+                &root,
+                session.as_deref(),
+                seq,
+                part,
+                *raw,
+                body_to.as_deref().map(std::path::Path::new),
+                json_out,
+            );
+        }
+        Verb::Diff { left, right } => {
+            return read::diff(
+                &root,
+                session.as_deref(),
+                sequence_of(left)?.parse::<u64>()?,
+                sequence_of(right)?.parse::<u64>()?,
+                json_out,
+            );
+        }
+        Verb::Match {
+            id,
+            regex,
+            contains,
+            json_path,
+            header,
+            status,
+            longer_than,
+            shorter_than,
+        } => {
+            // `name=value` splits on the first `=`, like an edit does, so a
+            // value containing one needs no escaping.
+            let split = |spec: &str| -> (String, Option<String>) {
+                match spec.split_once('=') {
+                    Some((name, value)) => (name.to_string(), Some(value.to_string())),
+                    None => (spec.to_string(), None),
+                }
+            };
+            let mut conditions = Vec::new();
+            if let Some(pattern) = regex {
+                conditions.push(read::Condition::Regex(pattern.clone()));
+            }
+            if let Some(text) = contains {
+                conditions.push(read::Condition::Contains(text.clone()));
+            }
+            if let Some(spec) = json_path {
+                let (path, value) = split(spec);
+                conditions.push(read::Condition::Json { path, value });
+            }
+            if let Some(spec) = header {
+                let (name, value) = split(spec);
+                conditions.push(read::Condition::Header { name, value });
+            }
+            if let Some(status) = status {
+                conditions.push(read::Condition::Status(*status));
+            }
+            if let Some(bytes) = longer_than {
+                conditions.push(read::Condition::LongerThan(*bytes));
+            }
+            if let Some(bytes) = shorter_than {
+                conditions.push(read::Condition::ShorterThan(*bytes));
+            }
+            return read::matches(
+                &root,
+                session.as_deref(),
+                sequence_of(id)?.parse::<u64>()?,
+                &conditions,
+                json_out,
+            );
+        }
+        Verb::Sitemap => return read::sitemap(&root, session.as_deref(), json_out),
+        _ => {}
+    }
+
     let mut argv: Vec<String> = vec!["browser".to_string()];
     fn push(argv: &mut Vec<String>, args: &[&str]) {
         argv.extend(args.iter().map(|arg| (*arg).to_string()));
@@ -270,22 +374,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 argv.push("--denied-only".into());
             }
         }
-        Verb::Show { id, raw, body_to } => {
-            let seq = sequence_of(&id)?;
-            push(&mut argv, &["message"]);
-            argv.push(seq);
-            // `res_42` asks about the response half and `req_42` the request
-            // half. Naming a half and being shown both would make the prefix
-            // decorative.
-            if id.starts_with("res_") {
-                push(&mut argv, &["--part", "response"]);
-            } else if id.starts_with("req_") {
-                push(&mut argv, &["--part", "request"]);
-            }
-            if raw {
-                argv.push("--raw".into());
-            }
-            flag(&mut argv, "body-to", body_to);
+        // Handled above, in this process: these read the store rather than
+        // send anything.
+        Verb::Show { .. } | Verb::Diff { .. } | Verb::Match { .. } | Verb::Sitemap => {
+            unreachable!("the reading verbs return before this")
         }
         Verb::Replay {
             id,
@@ -350,32 +442,6 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             flag(&mut argv, "wait-ms", wait_ms.map(|ms| ms.to_string()));
         }
-        Verb::Diff { left, right } => {
-            push(&mut argv, &["diff"]);
-            argv.push(sequence_of(&left)?);
-            argv.push(sequence_of(&right)?);
-        }
-        Verb::Match {
-            id,
-            regex,
-            contains,
-            json_path,
-            header,
-            status,
-            longer_than,
-            shorter_than,
-        } => {
-            push(&mut argv, &["match"]);
-            argv.push(sequence_of(&id)?);
-            flag(&mut argv, "regex", regex);
-            flag(&mut argv, "contains", contains);
-            flag(&mut argv, "json-path", json_path);
-            flag(&mut argv, "header", header);
-            flag(&mut argv, "status", status.map(|s| s.to_string()));
-            flag(&mut argv, "longer-than", longer_than.map(|s| s.to_string()));
-            flag(&mut argv, "shorter-than", shorter_than.map(|s| s.to_string()));
-        }
-        Verb::Sitemap => push(&mut argv, &["sitemap"]),
         Verb::Sequence {
             file,
             vars,

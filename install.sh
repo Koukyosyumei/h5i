@@ -26,22 +26,28 @@ main() {
       # linked into the process that enforces policy. Off by default because an
       # install should not quietly include everything that could be built on a
       # browser.
-      --websec | --with-websec) BINARIES="h5i h5i-websec" ;;
+      --websec | --with-websec) BINARIES="${BINARIES} h5i-websec" ;;
+      # `recon` is the endpoint ledger: what a target exposes, where each
+      # candidate came from, and which message confirmed it. Same posture as
+      # websec, and the same reason to be off by default.
+      --recon | --with-recon) BINARIES="${BINARIES} h5i-recon" ;;
       # Both accepted and both no-ops: there is one binary now, and quietly
       # rejecting a flag that used to work breaks scripts for no gain.
       --with-browser | --no-browser | --browser-only) ;;
       -h | --help)
-        echo "Usage: install.sh [--websec]"
+        echo "Usage: install.sh [--websec] [--recon]"
         echo
         echo "  Installs h5i, which includes the browser engine."
         echo
         echo "  --websec        also install the websec plugin (the HTTP"
         echo "                  workbench), then register it as \`h5i websec\`."
+        echo "  --recon         also install the recon plugin (the endpoint"
+        echo "                  ledger), then register it as \`h5i recon\`."
         echo "  --with-browser, --no-browser and --browser-only are accepted"
         echo "  and do nothing: the engine is part of the binary now."
         echo
         echo "Piped into a shell, options go after \`sh -s --\`:"
-        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec"
+        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon"
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         exit 0
@@ -135,11 +141,12 @@ main() {
     ARCHIVE="${BINARY}-${VERSION}-${target}.tar.gz"
     URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
 
-    if [ "$BINARY" = "h5i-websec" ]; then
-      echo "Installing ${BINARY} ${VERSION} (${target}) → h5i's plugin directory"
-    else
-      echo "Installing ${BINARY} ${VERSION} (${target}) → ${INSTALL_DIR}/${BINARY}"
-    fi
+    case "$BINARY" in
+    h5i-websec | h5i-recon)
+      echo "Installing ${BINARY} ${VERSION} (${target}) → h5i's plugin directory" ;;
+    *)
+      echo "Installing ${BINARY} ${VERSION} (${target}) → ${INSTALL_DIR}/${BINARY}" ;;
+    esac
 
     if ! curl -fsSL "$URL" -o "${TMP}/${ARCHIVE}"; then
       echo "Could not download ${ARCHIVE}." >&2
@@ -197,11 +204,13 @@ main() {
     #
     # `--force` because an installer that is re-run should converge rather than
     # fail on the copy it put there last time.
-    if [ "$BINARY" = "h5i-websec" ]; then
-      "${INSTALL_DIR}/h5i" plugin install websec --from "${TMP}/${BINARY}" --force
-      echo "✔  websec ${VERSION} installed: run h5i websec --help"
-      continue
-    fi
+    case "$BINARY" in
+    h5i-websec | h5i-recon)
+      NAME="${BINARY#h5i-}"
+      "${INSTALL_DIR}/h5i" plugin install "$NAME" --from "${TMP}/${BINARY}" --force
+      echo "✔  ${NAME} ${VERSION} installed: run h5i ${NAME} --help"
+      continue ;;
+    esac
 
     # `install` rather than `mv`: `mv` preserves the *invoking user's* ownership,
     # which under sudo leaves a user-writable h5i sitting in a root-owned PATH
