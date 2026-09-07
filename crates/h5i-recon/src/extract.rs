@@ -80,7 +80,7 @@ pub fn from_html(base: &Url, html: &str) -> Vec<Found> {
                 push(&mut found, &resolve_base, tag.attr("src"), "GET", "media");
                 if let Some(srcset) = tag.attr("srcset") {
                     for candidate in srcset.split(',') {
-                        let url = candidate.trim().split_whitespace().next();
+                        let url = candidate.split_whitespace().next();
                         push(&mut found, &resolve_base, url, "GET", "srcset");
                     }
                 }

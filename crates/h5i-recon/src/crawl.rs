@@ -104,7 +104,7 @@ impl Frontier {
     }
 
     /// The next URL to ask for, oldest first, or `None` when the walk is done.
-    pub fn next(&mut self) -> Option<(Url, usize)> {
+    pub fn take_next(&mut self) -> Option<(Url, usize)> {
         if self.spent >= self.bounds.max_requests {
             return None;
         }
@@ -288,8 +288,8 @@ mod tests {
         let mut frontier = Frontier::new(bounds);
         frontier.offer(&url("https://t.test/a"), 0);
         frontier.offer(&url("https://t.test/b"), 0);
-        assert!(frontier.next().is_some());
-        assert!(frontier.next().is_none());
+        assert!(frontier.take_next().is_some());
+        assert!(frontier.take_next().is_none());
         assert!(frontier.exhausted(), "the caller has to be able to say which it was");
     }
 

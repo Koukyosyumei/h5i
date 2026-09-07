@@ -605,7 +605,7 @@ fn crawl(
     let mut since_check = 0usize;
     let mut checks = 0usize;
 
-    while let Some((url, depth)) = frontier.next() {
+    while let Some((url, depth)) = frontier.take_next() {
         if !pause.is_zero() {
             std::thread::sleep(pause);
         }
