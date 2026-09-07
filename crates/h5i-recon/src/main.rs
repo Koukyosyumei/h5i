@@ -1132,6 +1132,7 @@ fn triage(
             } else {
                 String::new()
             },
+            text: h5i_recon::triage::text_digest(&body, &endpoint.path),
         });
     }
 
@@ -1165,6 +1166,9 @@ fn triage(
                 if baseline.skeleton.is_empty() && content_type.to_ascii_lowercase().contains("html")
                 {
                     baseline.skeleton = h5i_recon::extract::skeleton(&body);
+                    // The probe's own path comes out, so two probes of two
+                    // invented paths hash to the same sentence.
+                    baseline.text = h5i_recon::triage::text_digest(&body, &target);
                 }
                 baseline.samples.push(h5i_recon::crawl::Fingerprint::of(
                     message.response.status,

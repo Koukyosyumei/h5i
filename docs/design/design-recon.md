@@ -441,11 +441,19 @@ confirmed endpoint, and hand its `req_<n>` to `h5i websec replay`, with every
 request in the session's receipts and no second HTTP client anywhere in the
 path. Anything that cannot be done that way in phase 1 is not in phase 1.
 
-**And a measured one.** websec's benchmark discipline applies here: a corpus of
-targets, at least one of which answers 200 for every path, scored on endpoints
-confirmed, requests spent per confirmed endpoint, and false confirmations. A
-feature that does not move those numbers is not finished, whatever its tests
-say. The corpus is not built.
+**And a measured one.** websec's benchmark discipline applies here: targets
+scored on endpoints confirmed, requests spent per confirmed endpoint, and false
+confirmations. A feature that does not move those numbers is not finished,
+whatever its tests say.
+
+Built 2026-09-07: `scripts/recon/bench/run.sh` and
+[`docs/benchmarks/recon.md`](../benchmarks/recon.md). Four targets that declare
+what they have, including one that answers 200 for every path and one where
+everything real is behind the wordlist. The first run scored 17 of 20 and found
+two defects in a day-old implementation: triage read a shared template as a
+missing page, and `paths` asked for `/admin` but never `/admin/`. Both are
+fixed, and the run is 20 of 20 with no false confirmations. A corpus of real
+applications is still not built.
 
 The smoke suite is: `scripts/recon/smoke.sh` drives every verb against
 `scripts/websec/server.py`, whose `/site/` tree now includes a directory that

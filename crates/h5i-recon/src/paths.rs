@@ -72,7 +72,10 @@ pub fn words_from_paths<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String>
 /// The request targets one word becomes, under one directory.
 pub fn expand(directory: &str, word: &str, shapes: &Shapes) -> Vec<String> {
     let base = directory.trim_end_matches('/');
-    let mut out: Vec<String> = vec![format!("{base}/{word}")];
+    // The word, and the word as a directory. A server that answers `/admin/`
+    // and 404s `/admin` is ordinary, and asking only one of the two is how a
+    // run misses the page it was looking for.
+    let mut out: Vec<String> = vec![format!("{base}/{word}"), format!("{base}/{word}/")];
     for extension in &shapes.extensions {
         let extension = extension.trim().trim_start_matches('.');
         let candidate = format!("{base}/{word}.{extension}");
@@ -82,8 +85,8 @@ pub fn expand(directory: &str, word: &str, shapes: &Shapes) -> Vec<String> {
     }
     if shapes.backups {
         // Backups of the word and of each extended form, which is where
-        // `config.php.bak` lives.
-        for stem in out.clone() {
+        // `config.php.bak` lives. A directory has no backup.
+        for stem in out.clone().into_iter().filter(|s| !s.ends_with('/')) {
             for form in BACKUP_FORMS {
                 let candidate = format!("{stem}{form}");
                 if !out.contains(&candidate) {
@@ -140,6 +143,14 @@ mod tests {
         };
         let targets = expand("/admin/", "config", &shapes);
         assert!(targets.contains(&"/admin/config".to_string()));
+        assert!(
+            targets.contains(&"/admin/config/".to_string()),
+            "a server that answers `/admin/config/` and 404s `/admin/config` is ordinary"
+        );
+        assert!(
+            !targets.contains(&"/admin/config/.bak".to_string()),
+            "a directory has no backup: {targets:?}"
+        );
         assert!(targets.contains(&"/admin/config.php".to_string()));
         assert!(targets.contains(&"/admin/config.json".to_string()));
         assert!(
@@ -156,7 +167,14 @@ mod tests {
             ..Shapes::default()
         };
         let targets = expand("/", "index", &shapes);
-        assert_eq!(targets, vec!["/index".to_string(), "/index.php".to_string()]);
+        assert_eq!(
+            targets,
+            vec![
+                "/index".to_string(),
+                "/index/".to_string(),
+                "/index.php".to_string()
+            ]
+        );
     }
 
     #[test]

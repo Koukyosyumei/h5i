@@ -20,6 +20,46 @@ pub struct Sample {
     pub fingerprint: Fingerprint,
     /// The document's tag shape, when it was a document.
     pub skeleton: String,
+    /// What the document says, with the asked-for path taken out. Two pages
+    /// from one template differ here and nowhere else.
+    pub text: String,
+}
+
+/// What a document says, hashed, with the asked-for path taken out.
+///
+/// Tags, digits and whitespace go, because a template is not content and a
+/// timestamp is not a difference. The path goes because a soft 404 that echoes
+/// it would otherwise look like a different page every time.
+pub fn text_digest(body: &str, path: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut text = String::with_capacity(body.len().min(64 * 1024));
+    let mut inside_tag = false;
+    for c in body.chars().take(64 * 1024) {
+        match c {
+            '<' => inside_tag = true,
+            '>' => inside_tag = false,
+            c if inside_tag => {}
+            c if c.is_ascii_digit() => {}
+            c if c.is_whitespace() => text.push(' '),
+            c => text.push(c.to_ascii_lowercase()),
+        }
+    }
+    // The path is normalised the same way before it is taken out, or the
+    // digits stripped from the body would leave half of it behind.
+    let needle: String = path
+        .chars()
+        .filter(|c| !c.is_ascii_digit())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    let without_path = if needle.len() > 1 {
+        text.replace(&needle, " ")
+    } else {
+        text
+    };
+    let words: Vec<&str> = without_path.split_whitespace().collect();
+    let digest = Sha256::digest(words.join(" ").as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The directory a path belongs to, which is the unit calibration works in.
@@ -43,16 +83,23 @@ pub struct Baseline {
     /// The tag shape of the not-found document, when it is one.
     #[serde(default)]
     pub skeleton: String,
+    /// What the not-found document says, with the probed path removed. A soft
+    /// 404 that echoes the path says the same thing every time once it is.
+    #[serde(default)]
+    pub text: String,
 }
 
 impl Baseline {
     /// Whether a response is this directory's way of saying nothing is there.
     ///
     /// Not status alone: the case this exists for answers 200 with a "not
-    /// found" page, so a matching skeleton is enough.
+    /// found" page. But a matching shape is not enough either, because most
+    /// sites build every page from one template. When the shape matches, what
+    /// the page *says* decides, with the asked-for path removed so that a soft
+    /// 404 echoing it still reads as the same sentence.
     pub fn says_nothing_here(&self, sample: &Sample) -> bool {
         if !self.skeleton.is_empty() && self.skeleton == sample.skeleton {
-            return true;
+            return self.text.is_empty() || self.text == sample.text;
         }
         self.samples
             .iter()
@@ -163,19 +210,50 @@ mod tests {
             req: req.to_string(),
             fingerprint: Fingerprint::of(Some(status), "text/html", bytes, None),
             skeleton: skeleton.to_string(),
+            text: String::new(),
         }
     }
 
     #[test]
-    fn a_soft_404_is_recognised_by_shape_rather_than_by_status() {
+    fn a_soft_404_is_recognised_by_shape_and_by_what_it_says() {
+        let missing = "<html><body><div><span>no such page: %s</span></div></body></html>";
         let baseline = Baseline {
             samples: vec![Fingerprint::of(Some(200), "text/html", 2000, None)],
             skeleton: "aaaa".to_string(),
+            text: text_digest(&missing.replace("%s", "/h5i-not-here-1"), "/h5i-not-here-1"),
         };
-        // The application answers 200 for everything, and the sizes differ
-        // because the page echoes the path.
-        assert!(baseline.says_nothing_here(&sample("/nope", "req_1", 200, 3500, "aaaa")));
-        assert!(!baseline.says_nothing_here(&sample("/admin", "req_2", 200, 3500, "bbbb")));
+
+        // The application answers 200 for everything, and echoes the path, so
+        // no two of its refusals are the same length.
+        let mut echoed = sample("/nope", "req_1", 200, 3500, "aaaa");
+        echoed.text = text_digest(&missing.replace("%s", "/nope"), "/nope");
+        assert!(baseline.says_nothing_here(&echoed));
+
+        // A real page built from the same template is not a refusal. This is
+        // the ordinary case on any site: every page shares a shape.
+        let mut real = sample("/admin", "req_2", 200, 3400, "aaaa");
+        real.text = text_digest(
+            "<html><body><div><span>user accounts</span></div></body></html>",
+            "/admin",
+        );
+        assert!(
+            !baseline.says_nothing_here(&real),
+            "a shared template is not a missing page"
+        );
+    }
+
+    #[test]
+    fn a_page_whose_only_difference_is_its_words_is_still_a_page() {
+        // The case the benchmark found: a one-line page and a one-line 404,
+        // same tags, sizes within a few bytes of each other.
+        let baseline = Baseline {
+            samples: vec![Fingerprint::of(Some(404), "text/html", 48, None)],
+            skeleton: "aaaa".to_string(),
+            text: text_digest("<html><body><p>not found</p></body></html>", "/h5i-not-here"),
+        };
+        let mut home = sample("/", "req_0", 200, 52, "aaaa");
+        home.text = text_digest("<html><body><p>nothing to see</p></body></html>", "/");
+        assert!(!baseline.says_nothing_here(&home));
     }
 
     #[test]
@@ -186,6 +264,7 @@ mod tests {
                 Fingerprint::of(Some(404), "text/html", 520, None),
             ],
             skeleton: String::new(),
+            text: String::new(),
         };
         assert!(steady.is_stable());
 
@@ -195,6 +274,7 @@ mod tests {
                 Fingerprint::of(Some(200), "text/html", 9000, None),
             ],
             skeleton: String::new(),
+            text: String::new(),
         };
         assert!(
             !noisy.is_stable(),
