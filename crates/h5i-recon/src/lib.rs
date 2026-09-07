@@ -13,6 +13,7 @@
 pub mod extract;
 pub mod ingest;
 pub mod js;
+pub mod known;
 pub mod ledger;
 pub mod store;
 

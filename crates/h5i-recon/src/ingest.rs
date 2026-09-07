@@ -14,8 +14,10 @@ use crate::ledger::{Observation, Param, Source, State, Where};
 pub struct Ingested {
     pub observations: Vec<Observation>,
     /// The highest receipt `seq` whose request *and* response were both in
-    /// hand. A fetch still in flight is not folded, so the next sync sees it.
-    pub through_seq: u64,
+    /// hand, or `None` when nothing was folded. An `Option` rather than a
+    /// number because receipts start at `seq 0`: a zero meaning "nothing yet"
+    /// dropped every session's first request, which is its navigation.
+    pub through_seq: Option<u64>,
 }
 
 /// `scheme://host[:port]`, the origin a policy grants and a ledger groups by.
@@ -34,11 +36,11 @@ pub fn origin_of(url: &url::Url) -> String {
 /// Ordered by `seq` and stopped at the first fetch whose response has not been
 /// written, so the caller's cursor never skips a request that was in flight
 /// when it read.
-pub fn from_receipts(records: &[RequestRecord], identity: &str, since: u64) -> Ingested {
+pub fn from_receipts(records: &[RequestRecord], identity: &str, since: Option<u64>) -> Ingested {
     let mut by_seq: std::collections::BTreeMap<u64, (Option<&RequestRecord>, Option<&RequestRecord>)> =
         std::collections::BTreeMap::new();
     for record in records {
-        if record.seq <= since {
+        if since.is_some_and(|folded| record.seq <= folded) {
             continue;
         }
         let slot = by_seq.entry(record.seq).or_default();
@@ -56,7 +58,7 @@ pub fn from_receipts(records: &[RequestRecord], identity: &str, since: u64) -> I
             break;
         };
         let Ok(url) = url::Url::parse(&request.url) else {
-            out.through_seq = seq;
+            out.through_seq = Some(seq);
             continue;
         };
 
@@ -100,7 +102,7 @@ pub fn from_receipts(records: &[RequestRecord], identity: &str, since: u64) -> I
         }
 
         out.observations.push(observation);
-        out.through_seq = seq;
+        out.through_seq = Some(seq);
     }
     out
 }
@@ -120,7 +122,7 @@ mod tests {
     #[test]
     fn a_fetch_becomes_an_observed_endpoint_that_names_its_message() {
         let records = pair(4, "GET", "https://target.test/api/users?id=7&page=2", 200);
-        let ingested = from_receipts(&records, "alice", 0);
+        let ingested = from_receipts(&records, "alice", None);
 
         assert_eq!(ingested.observations.len(), 1);
         let obs = &ingested.observations[0];
@@ -134,7 +136,7 @@ mod tests {
             obs.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             vec!["id", "page"]
         );
-        assert_eq!(ingested.through_seq, 4);
+        assert_eq!(ingested.through_seq, Some(4));
     }
 
     #[test]
@@ -143,7 +145,7 @@ mod tests {
         records[0] = records[0]
             .clone()
             .denied("origin `https://elsewhere.test` is not in the allowlist");
-        let ingested = from_receipts(&records, "anonymous", 0);
+        let ingested = from_receipts(&records, "anonymous", None);
 
         let obs = &ingested.observations[0];
         assert_eq!(obs.state, State::Refused);
@@ -162,12 +164,25 @@ mod tests {
         ));
         records.extend(pair(3, "GET", "https://target.test/c", 200));
 
-        let ingested = from_receipts(&records, "anonymous", 0);
+        let ingested = from_receipts(&records, "anonymous", None);
         assert_eq!(ingested.observations.len(), 1);
         assert_eq!(
-            ingested.through_seq, 1,
+            ingested.through_seq, Some(1),
             "seq 3 is complete, but folding it would leave seq 2 behind forever"
         );
+    }
+
+    #[test]
+    fn the_first_request_of_a_session_is_not_dropped() {
+        // Receipts are numbered from zero, and the first one is the
+        // navigation: the whole reason the session exists.
+        let records = pair(0, "GET", "https://target.test/", 200);
+        let ingested = from_receipts(&records, "anonymous", None);
+        assert_eq!(ingested.observations.len(), 1);
+        assert_eq!(ingested.through_seq, Some(0));
+
+        let again = from_receipts(&records, "anonymous", ingested.through_seq);
+        assert!(again.observations.is_empty());
     }
 
     #[test]
@@ -175,10 +190,10 @@ mod tests {
         let mut records = pair(1, "GET", "https://target.test/a", 200);
         records.extend(pair(2, "POST", "https://target.test/login", 302));
 
-        let first = from_receipts(&records, "anonymous", 0);
+        let first = from_receipts(&records, "anonymous", None);
         assert_eq!(first.observations.len(), 2);
         let second = from_receipts(&records, "anonymous", first.through_seq);
         assert!(second.observations.is_empty());
-        assert_eq!(second.through_seq, 0, "nothing new to report");
+        assert_eq!(second.through_seq, None, "nothing new to report");
     }
 }

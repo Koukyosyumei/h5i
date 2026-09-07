@@ -22,7 +22,6 @@ use serde_json::{Value, json};
 ///
 /// Passed in rather than found on `$PATH`, so a plugin cannot compose verbs
 /// from a different build than the one the user ran.
-#[allow(dead_code)]
 fn h5i() -> std::ffi::OsString {
     std::env::var_os("H5I_BIN").unwrap_or_else(|| std::ffi::OsString::from("h5i"))
 }
@@ -102,6 +101,23 @@ enum ReconCommands {
         json: bool,
     },
 
+    /// Ask for the files an application publishes about itself.
+    ///
+    /// robots.txt, sitemap.xml and its index chain, security.txt and the
+    /// OpenID discovery document. Each one is a request the engine sends, so
+    /// policy decides it and the receipt is written first. `robots.txt` is read
+    /// for candidates, never as permission (design-recon.md N8).
+    Known {
+        #[arg(long)]
+        session: Option<String>,
+        /// Which origin to ask. Defaults to the one this session has reached
+        /// most recently.
+        #[arg(long)]
+        origin: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// One endpoint: its sources, its evidence, and what it answered.
     Show {
         /// The `ep_…` id, as `h5i recon endpoints` prints it.
@@ -142,6 +158,11 @@ fn run(action: ReconCommands) -> anyhow::Result<()> {
             kind,
             json,
         } => extract(&root, session.as_deref(), from.as_deref(), &kind, json),
+        ReconCommands::Known {
+            session,
+            origin,
+            json,
+        } => known(&root, session.as_deref(), origin.as_deref(), json),
         ReconCommands::Show { id, session, json } => show(&root, session.as_deref(), &id, json),
     }
 }
@@ -294,6 +315,255 @@ fn endpoints(
             inventory.unreadable
         );
     }
+    Ok(())
+}
+
+/// One request, as the engine sent it.
+struct Sent {
+    seq: u64,
+    status: Option<u16>,
+    error: Option<String>,
+}
+
+/// Send a stored request again with its target replaced.
+///
+/// Through `h5i browser resend`, which is the same verb a person types: the
+/// fetch is the engine's, the policy decides it, the budget pays for it and the
+/// receipt is written before the bytes move. This plugin has no other way to
+/// reach the network, and that is the point of it being a plugin at all.
+fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyhow::Result<Sent> {
+    let mut command = std::process::Command::new(h5i());
+    command
+        .arg("browser")
+        .arg("resend")
+        .arg(from.to_string())
+        // The method is named rather than inherited: a seed that happened to
+        // be a POST would ask for `/robots.txt` with a body, and the answer to
+        // that is about the method, not about the file.
+        .arg("--set")
+        .arg(format!("method={method}"))
+        .arg("--raw-target")
+        .arg(target)
+        .arg("--json");
+    if let Some(name) = selector {
+        command.arg("--session").arg(name);
+    }
+    let output = command
+        .output()
+        .map_err(|e| anyhow::anyhow!("`h5i browser resend` could not be run: {e}"))?;
+    let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        anyhow::anyhow!(
+            "`h5i browser resend` answered something this could not read: {}",
+            String::from_utf8_lossy(&output.stdout).chars().take(200).collect::<String>()
+        )
+    })?;
+    if reply.get("ok").and_then(Value::as_bool) == Some(false) {
+        anyhow::bail!(
+            "{}",
+            reply
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("the engine refused the request")
+        );
+    }
+    Ok(Sent {
+        seq: reply.get("seq").and_then(Value::as_u64).unwrap_or_default(),
+        status: reply
+            .pointer("/response/status")
+            .and_then(Value::as_u64)
+            .map(|s| s as u16),
+        error: reply
+            .pointer("/response/error")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+/// The stored request a probe is built from.
+///
+/// A probe is an edit of a real request, so it inherits that request's
+/// authority, cookies and headers rather than inventing them. The newest `GET`
+/// is preferred: a `POST` seed carries a body that has nothing to do with the
+/// file being asked for, and the answer would be about the body.
+fn seed(store: &Path, origin: Option<&str>) -> Option<(u64, String)> {
+    let mut fallback = None;
+    for seq in h5i_recon::store::sequences(store).into_iter().rev() {
+        let Some(message) = h5i_recon::store::read(store, seq) else {
+            continue;
+        };
+        let Ok(url) = url::Url::parse(&message.request.url) else {
+            continue;
+        };
+        let seen = h5i_recon::ingest::origin_of(&url);
+        if origin.is_some_and(|wanted| wanted != seen) {
+            continue;
+        }
+        if message.request.method.eq_ignore_ascii_case("GET") {
+            return Some((seq, seen));
+        }
+        fallback.get_or_insert((seq, seen));
+    }
+    fallback
+}
+
+/// `h5i recon known`.
+fn known(
+    root: &Path,
+    selector: Option<&str>,
+    origin: Option<&str>,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let (session, ledger) = open_ledger(root, selector)?;
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let Some((from, origin)) = seed(&store, origin) else {
+        anyhow::bail!(
+            "this session has no stored request to send again. `h5i browser open <url> \
+             --capture` first: a probe is an edit of a real request, so it carries that \
+             request's authority and cookies rather than inventing them"
+        );
+    };
+    let identity = identity_of(&session).to_string();
+
+    let mut observations = Vec::new();
+    let mut asked: Vec<Value> = Vec::new();
+    let mut queue: Vec<String> = h5i_recon::known::WELL_KNOWN
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    let mut followed = 0usize;
+    let mut done: Vec<String> = Vec::new();
+
+    while let Some(target) = queue.pop() {
+        if done.contains(&target) {
+            continue;
+        }
+        done.push(target.clone());
+        let sent = match probe(selector, from, &target, "GET") {
+            Ok(sent) => sent,
+            Err(why) => {
+                // A refusal is a fact about the scope, not a reason to stop.
+                asked.push(json!({"path": target, "refused": why.to_string()}));
+                observations.push(
+                    h5i_recon::Observation::new(
+                        &origin,
+                        &target,
+                        "GET",
+                        &identity,
+                        h5i_recon::State::Candidate,
+                        h5i_recon::Source::KnownFile {
+                            req: format!("req_{from}"),
+                        },
+                    )
+                    .refused(why.to_string()),
+                );
+                continue;
+            }
+        };
+        let req = format!("req_{}", sent.seq);
+        asked.push(json!({
+            "path": target,
+            "req": req,
+            "status": sent.status,
+            "error": sent.error,
+        }));
+        observations.push(
+            h5i_recon::Observation::new(
+                &origin,
+                &target,
+                "GET",
+                &identity,
+                h5i_recon::State::Observed,
+                h5i_recon::Source::KnownFile { req: req.clone() },
+            )
+            .with_req(req.clone())
+            .with_status(sent.status),
+        );
+
+        // What the file says, read from the store rather than from the reply:
+        // the bytes are already written down, and reading them twice would be
+        // two answers that can disagree.
+        if sent.status.is_none_or(|status| !(200..300).contains(&status)) {
+            continue;
+        }
+        let Some(message) = h5i_recon::store::read(&store, sent.seq) else {
+            continue;
+        };
+        let Some(body) = h5i_recon::store::body_text(&store, &message.response.body) else {
+            continue;
+        };
+        let Ok(base) = url::Url::parse(&message.response.url) else {
+            continue;
+        };
+        let source = h5i_recon::Source::KnownFile { req };
+        let (found, sitemaps) = if target.ends_with("robots.txt") {
+            h5i_recon::known::from_robots(&base, &body)
+        } else if body.contains("<urlset") || body.contains("<sitemapindex") {
+            h5i_recon::known::from_sitemap(&base, &body)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        observations.extend(h5i_recon::extract::candidates(&found, &identity, &source));
+
+        for sitemap in sitemaps {
+            if followed >= h5i_recon::known::MAX_SITEMAP_DEPTH {
+                break;
+            }
+            if h5i_recon::ingest::origin_of(&sitemap) != origin {
+                // Another origin is another policy decision. It goes into the
+                // ledger as a candidate and is not chased from here.
+                observations.extend(h5i_recon::extract::candidates(
+                    &[h5i_recon::Found {
+                        url: sitemap,
+                        method: "GET".to_string(),
+                        params: Vec::new(),
+                        how: "sitemap-index",
+                    }],
+                    &identity,
+                    &source,
+                ));
+                continue;
+            }
+            followed += 1;
+            queue.push(sitemap.path().to_string());
+        }
+    }
+
+    let written = ledger.append(&observations)?;
+    let inventory = ledger.read()?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "origin": origin,
+                "asked": asked,
+                "written": written,
+                "cursor": inventory.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+    println!("  origin   : {origin}");
+    for item in &asked {
+        match item.get("refused").and_then(Value::as_str) {
+            Some(why) => println!(
+                "  refused  : {} — {}",
+                item["path"].as_str().unwrap_or_default(),
+                preview(why)
+            ),
+            None => println!(
+                "  {:<8} {:<36} {}",
+                item["status"]
+                    .as_u64()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                item["path"].as_str().unwrap_or_default(),
+                item["req"].as_str().unwrap_or_default()
+            ),
+        }
+    }
+    println!("  written  : {written} row(s)");
+    println!("  cursor   : {}", inventory.cursor);
     Ok(())
 }
 

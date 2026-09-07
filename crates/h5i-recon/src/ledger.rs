@@ -336,9 +336,10 @@ pub struct Inventory {
 /// How much of the session's own evidence this ledger has already absorbed.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Progress {
-    /// The highest receipt `seq` folded. See `ingest::from_receipts`.
+    /// The highest receipt `seq` folded, or `None` when none has been. Not a
+    /// bare number: receipts start at zero.
     #[serde(default)]
-    pub receipts_through: u64,
+    pub receipts_through: Option<u64>,
 }
 
 /// A session's ledger.
@@ -768,6 +769,6 @@ mod sync_tests {
         let inventory = ledger.read().expect("read");
         assert_eq!(inventory.endpoints.len(), 1);
         assert_eq!(inventory.cursor, 1);
-        assert_eq!(ledger.progress().receipts_through, 1);
+        assert_eq!(ledger.progress().receipts_through, Some(1));
     }
 }
