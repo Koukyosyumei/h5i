@@ -1983,6 +1983,24 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fISEQ\fR>
 The sequence number to send again, as `requests` lists them
+.SH "H5I BROWSER RPC"
+Speak one line-delimited request per line, and answer one per line
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrpc\fR [\fB\-\-stdio\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-stdio\fR
+Read requests from stdin and write replies to stdout
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER ENV"
 Which credentials this session can use, by name. Never their values
 .ie \n(.g .ds Aq \(aq

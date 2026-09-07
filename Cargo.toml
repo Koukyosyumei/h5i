@@ -43,7 +43,10 @@ default = ["web", "share", "runner", "browser", "ytdlp", "identity"]
 web = ["h5i-core/web"]
 # `browser` links the rendering engine into this binary, which is what `h5i browser` execs
 # itself to become (`h5i __engine`).
-browser = ["dep:h5i-browser"]
+# `url` with it: the workbench's readers parse a stored URL, and they are
+# gated with `browser` rather than with `ytdlp`, which is where the dependency
+# used to arrive by accident.
+browser = ["dep:h5i-browser", "dep:url"]
 # `identity` adds `--identity` and `h5i browser identity`: one coherent browser
 # identity, read by the header layer and the script realm from the same object.
 # See `crates/h5i-browser/src/identity.rs`.
