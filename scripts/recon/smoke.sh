@@ -68,6 +68,17 @@ is "it spent no more than it was allowed" \
    "$(echo "$OUT" | py "d['requests'] <= 12")" "True"
 has "and it walked a disclosed page" "$OUT" "/site/one"
 
+echo "── paths asks with a list the operator brings ───────────────────────"
+printf 'help\nadmin\n' > "${TMPDIR:-/tmp}/recon-words.$$"
+OUT=$("$RECON" paths --session "$SESSION" --wordlist "${TMPDIR:-/tmp}/recon-words.$$" \
+        --under /site --extensions php --max-requests 10 --rate 0 --json)
+rm -f "${TMPDIR:-/tmp}/recon-words.$$"
+is "it asked, and stayed inside its allowance" \
+   "$(echo "$OUT" | py "0 < d['requests'] <= 10")" "True"
+is "and it used one process for the run" "$(echo "$OUT" | py "d['one_process']")" "True"
+is "a word list with no words is refused, not guessed at" \
+   "$("$RECON" paths --session "$SESSION" --under /site >/dev/null 2>&1; echo $?)" "2"
+
 echo "── triage tells a soft 404 from a page ──────────────────────────────"
 OUT=$("$RECON" triage --session "$SESSION" --calibrate --json)
 is "the baseline is stable" "$(echo "$OUT" | py "d['calibrated'][0]['stable']")" "True"

@@ -584,9 +584,8 @@ Still open:
    and policy, and wrong for a target inventory that spans a week. A
    `recon merge` verb folding several sessions' ledgers by identity is the
    likely answer and is not designed here.
-2. **Path discovery and job control**, N10 and N12, are the two phase 1
-   features not built. They are also the two that spend the most requests, and
-   `--max-requests` and `--rate` on `crawl` are the shape their flags should
-   take.
+2. **Job control**, N12, is the phase 1 feature still missing: `recon jobs`
+   with resume, progress and a stop that finishes in flight. `--max-requests`
+   and `--rate` on `crawl` and `paths` are the shape its flags should take.
 3. **Section prefix.** `N` here, and now cited by code. Moving it costs a
    sweep.

@@ -306,6 +306,15 @@ h5i websec rpc --stdio
 {"id":2,"method":"replay","request":"req_42","set":{"query.id":124}}
 ```
 
+Built 2026-09-07 as `h5i browser rpc --stdio`, engine-side, speaking `ping` and
+`resend`: one JSON object per line in, one per line out, ids matched, every
+request through the same `ask_session` a typed verb uses, so the control lock,
+the policy and the receipts see no difference. Measured on 200 path probes
+against a local target: 6.1s through the loop against 10.1s spawning `h5i` per
+request. Less than the startup cost alone predicts, because each call still
+resolves the session and opens the control channel; holding that connection
+open across a run is the next saving and is not built.
+
 One JSONL request per line, one reply per line, ids for correlation, and the
 same schema as `--json`. A Python client is then roughly 150 lines wrapping that
 pipe, with `requests()`, `inspect()`, `replay()`, `compare()` and nothing else.

@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use clap::Subcommand;
 use console::style;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use h5i_core::browser_session as bs;
 use h5i_core::ui::SUCCESS;
@@ -1074,6 +1074,24 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Speak one line-delimited request per line, and answer one per line.
+    ///
+    /// The same verbs, without paying process startup for each one. A blind
+    /// extraction is hundreds of sends of a few milliseconds each, and starting
+    /// `h5i` costs tens of milliseconds every time (design-websec.md W10).
+    /// Recon's path discovery is the same shape.
+    ///
+    /// Each line is an object with an `id` and a `verb`; the reply carries the
+    /// same `id`. Everything else is the verb's own flags, named as fields.
+    Rpc {
+        /// Read requests from stdin and write replies to stdout.
+        #[arg(long)]
+        stdio: bool,
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+    },
+
     /// Which credentials this session can use, by name. Never their values.
     Env {
         /// Which session, when more than one is open. A name from
@@ -1764,6 +1782,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 audit(&root, session.as_deref(), json)
             }
         }
+        BrowserCommands::Rpc { stdio, session } => rpc(&root, session.as_deref(), stdio),
         BrowserCommands::Env { session, json } => {
             verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
@@ -3047,6 +3066,117 @@ fn verb(
 /// at the same place: this assembles the same command line `BrowserCommands::
 /// Resend` does, so the control lock, the receipts and the policy see a
 /// sequence exactly as they see somebody typing the steps one at a time.
+/// `h5i browser rpc --stdio`.
+///
+/// One JSON object per line in, one per line out, ids matched. Every request
+/// goes through `ask_session` like a typed verb: same resolution, same control
+/// lock, same receipts. What it saves is the process, not a check.
+fn rpc(root: &Path, selector: Option<&str>, stdio: bool) -> anyhow::Result<()> {
+    if !stdio {
+        anyhow::bail!("`rpc` speaks over stdin and stdout: pass `--stdio`");
+    }
+    let input = std::io::stdin();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        // A line is a request an agent composed, so it is bounded like any
+        // other input this process reads.
+        let read = std::io::BufRead::read_line(&mut input.lock(), &mut line)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.len() > RPC_MAX_LINE {
+            println!(
+                "{}",
+                json!({"error": {"code": "too-long", "message": format!(
+                    "a request line may be at most {RPC_MAX_LINE} bytes"
+                )}})
+            );
+            continue;
+        }
+        let reply = match serde_json::from_str::<Value>(&line) {
+            Ok(request) => rpc_one(root, selector, &request),
+            Err(why) => json!({"error": {"code": "unreadable", "message": why.to_string()}}),
+        };
+        println!("{reply}");
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// The longest request line the loop will read.
+const RPC_MAX_LINE: usize = 1024 * 1024;
+
+/// One RPC request, answered.
+fn rpc_one(root: &Path, selector: Option<&str>, request: &Value) -> Value {
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let answer = match verb {
+        // Cheap, and the way a caller finds out whether this build speaks the
+        // protocol at all before it commits a run to it.
+        "ping" => Ok(json!({"ok": true, "verb": "ping"})),
+        "resend" => rpc_resend(root, selector, request),
+        other => Err(anyhow::anyhow!(
+            "`{other}` is not a verb this speaks. It speaks: ping, resend"
+        )),
+    };
+    match answer {
+        Ok(mut value) => {
+            if let Some(map) = value.as_object_mut() {
+                map.insert("id".to_string(), id);
+            }
+            value
+        }
+        Err(why) => json!({"id": id, "error": {"code": "verb", "message": why.to_string()}}),
+    }
+}
+
+fn rpc_resend(root: &Path, selector: Option<&str>, request: &Value) -> anyhow::Result<Value> {
+    let from = request
+        .get("from")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("resend needs `from`: the sequence number to send again"))?;
+    let mut argv = vec!["resend".to_string(), "--from".to_string(), from.to_string()];
+    let strings = |field: &str| -> Vec<String> {
+        request
+            .get(field)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for spec in strings("set") {
+        argv.push("--set".into());
+        argv.push(spec);
+    }
+    for spec in strings("unset") {
+        argv.push("--unset".into());
+        argv.push(spec);
+    }
+    if let Some(target) = request.get("raw_target").and_then(Value::as_str) {
+        argv.push("--raw-target".into());
+        argv.push(target.to_string());
+    }
+    for (field, flag) in [
+        ("create", "--create"),
+        ("no_follow", "--no-follow"),
+        ("reset_budget", "--reset-budget"),
+    ] {
+        if request.get(field).and_then(Value::as_bool) == Some(true) {
+            argv.push(flag.into());
+        }
+    }
+    ask_session(root, selector, argv, true)
+}
+
 pub(crate) fn resend_step(
     root: &Path,
     selector: Option<&str>,

@@ -168,6 +168,13 @@ is "so can a URL"                   "$(narrowed --url-contains .css)" "2"
 is "a limit is a narrowing"         "$("$H5I" browser requests --session ws-smoke-log --limit 2 --json 2>/dev/null | jqp 'd["narrowed"]')" "True"
 
 echo
+echo "── the line protocol ────────────────────────────────────────────────"
+RPC=$(printf '{"id":1,"verb":"ping"}\n{"id":2,"verb":"resend","from":0,"raw_target":"/page"}\n{"id":3,"verb":"nope"}\n' \
+      | "$H5I" browser rpc --stdio --session ws-smoke-a)
+is "ping is answered, with its id" "$(echo "$RPC" | sed -n 1p | jqp "d['id'], d['ok']")" "1 True"
+is "a resend answers with the receipt it made" "$(echo "$RPC" | sed -n 2p | jqp "d['response']['status']")" "200"
+is "an unknown verb is an error carrying the same id" "$(echo "$RPC" | sed -n 3p | jqp "d['id'], d['error']['code']")" "3 verb"
+
 echo "── the plugin ───────────────────────────────────────────────────────"
 PLUGIN="$(dirname "$H5I")/h5i-websec"
 if [ -x "$PLUGIN" ]; then

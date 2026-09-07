@@ -10,6 +10,7 @@ pub mod ingest;
 pub mod js;
 pub mod known;
 pub mod ledger;
+pub mod paths;
 pub mod store;
 pub mod triage;
 

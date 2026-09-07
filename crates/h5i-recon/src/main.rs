@@ -5,6 +5,7 @@
 //! reads the session's log, store and ledger, and anything it sends is an `h5i
 //! browser` verb in a subprocess, so the fetch is the engine's (N13).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use clap::{Parser, Subcommand};
@@ -125,6 +126,39 @@ enum ReconCommands {
         check_login_every: usize,
     },
 
+    /// Ask for paths the application never disclosed, from a list you bring.
+    ///
+    /// h5i ships no wordlist and generates no payloads: the list is yours, and
+    /// the shapes are mechanical (extensions, backup forms, words this session
+    /// has already seen). Nothing is confirmed until `triage` (N10).
+    Paths {
+        /// One entry per line. `#` comments and blank lines are dropped.
+        #[arg(long, value_name = "PATH")]
+        wordlist: Option<String>,
+        /// Also use the words this session has already seen, which usually
+        /// beat a generic list.
+        #[arg(long = "reuse-words")]
+        reuse_words: bool,
+        /// Ask under these directories. Repeatable; the default is `/`.
+        #[arg(long, value_name = "DIR")]
+        under: Vec<String>,
+        /// Append these to each word: `php,json,bak`.
+        #[arg(long, value_name = "LIST", default_value = "")]
+        extensions: String,
+        /// Also ask for `.bak`, `~`, `.old` and the rest of the backup forms.
+        #[arg(long)]
+        backups: bool,
+        /// How many requests this run may spend.
+        #[arg(long = "max-requests", default_value_t = 500)]
+        max_requests: usize,
+        /// Requests per second.
+        #[arg(long, default_value_t = 4.0)]
+        rate: f64,
+        /// Which origin to ask. Defaults to the one this session reached last.
+        #[arg(long)]
+        origin: Option<String>,
+    },
+
     /// Ask for the files an application publishes about itself: robots.txt,
     /// sitemap.xml and its index chain, security.txt, OpenID discovery.
     ///
@@ -204,6 +238,37 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
         ReconCommands::Triage { calibrate, probes } => {
             triage(&root, session, calibrate, probes, json)
         }
+        ReconCommands::Paths {
+            wordlist,
+            reuse_words,
+            under,
+            extensions,
+            backups,
+            max_requests,
+            rate,
+            origin,
+        } => paths(
+            &root,
+            session,
+            PathRun {
+                wordlist: wordlist.as_deref().map(Path::new),
+                reuse_words,
+                under: &under,
+                shapes: h5i_recon::paths::Shapes {
+                    extensions: extensions
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|e| !e.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                    backups,
+                },
+                max_requests,
+                rate,
+                origin: origin.as_deref(),
+            },
+            json,
+        ),
         ReconCommands::Known { origin } => known(&root, session, origin.as_deref(), json),
         ReconCommands::Show { id } => show(&root, session, &id, json),
     }
@@ -384,10 +449,156 @@ struct Sent {
     error: Option<String>,
 }
 
-/// Send a stored request again with its target replaced.
+/// How this run reaches the engine.
 ///
-/// Through `h5i browser resend`, the verb a person types: the fetch is the
-/// engine's, and this plugin has no other route to the network.
+/// One `h5i browser rpc --stdio` for the whole run when the engine speaks it,
+/// because a discovery run is hundreds of sends of a few milliseconds each and
+/// starting `h5i` costs tens of milliseconds every time (design-websec.md W10).
+/// A build that does not speak it still works, one process per request.
+enum Sender {
+    Rpc {
+        child: std::process::Child,
+        replies: std::io::BufReader<std::process::ChildStdout>,
+        next_id: u64,
+    },
+    PerCall,
+}
+
+impl Sender {
+    /// Open the fast path, or say so and take the slow one.
+    fn open(selector: Option<&str>) -> Self {
+        let mut command = std::process::Command::new(h5i());
+        command
+            .arg("browser")
+            .arg("rpc")
+            .arg("--stdio")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        if let Some(name) = selector {
+            command.arg("--session").arg(name);
+        }
+        let Ok(mut child) = command.spawn() else {
+            return Sender::PerCall;
+        };
+        let Some(stdout) = child.stdout.take() else {
+            return Sender::PerCall;
+        };
+        let mut sender = Sender::Rpc {
+            child,
+            replies: std::io::BufReader::new(stdout),
+            next_id: 1,
+        };
+        // A build too old to speak it answers nothing, and the read ends.
+        match sender.ask(json!({"verb": "ping"})) {
+            Ok(_) => sender,
+            Err(_) => Sender::PerCall,
+        }
+    }
+
+    /// Send one request again with its target and method replaced.
+    ///
+    /// Either way it is `h5i browser resend`, the verb a person types: the
+    /// fetch is the engine's, and this plugin has no other route to the
+    /// network.
+    fn probe(
+        &mut self,
+        selector: Option<&str>,
+        from: u64,
+        target: &str,
+        method: &str,
+    ) -> anyhow::Result<Sent> {
+        match self {
+            Sender::PerCall => probe(selector, from, target, method),
+            Sender::Rpc { .. } => {
+                let reply = self.ask(json!({
+                    "verb": "resend",
+                    "from": from,
+                    // The method is named rather than inherited: a POST seed
+                    // would ask for a path with a body.
+                    "set": [format!("method={method}")],
+                    "raw_target": target,
+                }))?;
+                sent_from(&reply)
+            }
+        }
+    }
+
+    /// One line out, one line back.
+    fn ask(&mut self, mut request: Value) -> anyhow::Result<Value> {
+        let Sender::Rpc {
+            child,
+            replies,
+            next_id,
+        } = self
+        else {
+            anyhow::bail!("not speaking the line protocol");
+        };
+        let id = *next_id;
+        *next_id += 1;
+        if let Some(map) = request.as_object_mut() {
+            map.insert("id".to_string(), json!(id));
+        }
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("the engine's rpc closed its input"))?;
+        use std::io::Write as _;
+        writeln!(stdin, "{request}")?;
+        stdin.flush()?;
+
+        let mut line = String::new();
+        use std::io::BufRead as _;
+        if replies.read_line(&mut line)? == 0 {
+            anyhow::bail!("the engine's rpc ended without answering");
+        }
+        let reply: Value = serde_json::from_str(&line)?;
+        if let Some(message) = reply.pointer("/error/message").and_then(Value::as_str) {
+            anyhow::bail!("{message}");
+        }
+        Ok(reply)
+    }
+
+    /// Whether the fast path is in use, for the caller that reports it.
+    fn is_rpc(&self) -> bool {
+        matches!(self, Sender::Rpc { .. })
+    }
+}
+
+impl Drop for Sender {
+    fn drop(&mut self) {
+        if let Sender::Rpc { child, .. } = self {
+            drop(child.stdin.take());
+            let _ = child.wait();
+        }
+    }
+}
+
+/// The parts of a reply this plugin acts on.
+fn sent_from(reply: &Value) -> anyhow::Result<Sent> {
+    if reply.get("ok").and_then(Value::as_bool) == Some(false) {
+        anyhow::bail!(
+            "{}",
+            reply
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("the engine refused the request")
+        );
+    }
+    Ok(Sent {
+        seq: reply.get("seq").and_then(Value::as_u64).unwrap_or_default(),
+        status: reply
+            .pointer("/response/status")
+            .and_then(Value::as_u64)
+            .map(|s| s as u16),
+        error: reply
+            .pointer("/response/error")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+/// One request, one process. The fallback path.
 fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyhow::Result<Sent> {
     let mut command = std::process::Command::new(h5i());
     command
@@ -414,26 +625,7 @@ fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyho
             String::from_utf8_lossy(&output.stdout).chars().take(200).collect::<String>()
         )
     })?;
-    if reply.get("ok").and_then(Value::as_bool) == Some(false) {
-        anyhow::bail!(
-            "{}",
-            reply
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("the engine refused the request")
-        );
-    }
-    Ok(Sent {
-        seq: reply.get("seq").and_then(Value::as_u64).unwrap_or_default(),
-        status: reply
-            .pointer("/response/status")
-            .and_then(Value::as_u64)
-            .map(|s| s as u16),
-        error: reply
-            .pointer("/response/error")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
+    sent_from(&reply)
 }
 
 /// The stored request a probe is built from, so it inherits real authority,
@@ -474,6 +666,7 @@ struct Visited {
 /// uses: a crawl with its own parser would be a second opinion.
 fn visit(
     store: &Path,
+    sender: &mut Sender,
     selector: Option<&str>,
     from: u64,
     url: &url::Url,
@@ -484,7 +677,7 @@ fn visit(
         None => url.path().to_string(),
     };
     let origin = h5i_recon::ingest::origin_of(url);
-    let sent = probe(selector, from, &target, "GET")?;
+    let sent = sender.probe(selector, from, &target, "GET")?;
     let req = format!("req_{}", sent.seq);
 
     let mut visited = Visited {
@@ -598,6 +791,7 @@ fn crawl(
     } else {
         std::time::Duration::ZERO
     };
+    let mut sender = Sender::open(selector);
     let mut observations = Vec::new();
     let mut walked: Vec<Value> = Vec::new();
     let mut login: Option<(url::Url, h5i_recon::crawl::Fingerprint)> = None;
@@ -609,7 +803,7 @@ fn crawl(
         if !pause.is_zero() {
             std::thread::sleep(pause);
         }
-        let visited = match visit(&store, selector, from, &url, &identity) {
+        let visited = match visit(&store, &mut sender, selector, from, &url, &identity) {
             Ok(visited) => visited,
             Err(why) => {
                 // Refused, or the engine could not send it. Either way it is a
@@ -654,7 +848,7 @@ fn crawl(
             // The check is a request like any other, so it is counted and it
             // stops when the allowance does.
             checks += 1;
-            match visit(&store, selector, from, probe_url, &identity) {
+            match visit(&store, &mut sender, selector, from, probe_url, &identity) {
                 Ok(now) if h5i_recon::crawl::identity_lost(before, &now.fingerprint) => {
                     stopped = Some(format!(
                         "the page this walk started from answers differently now, so the                          session is no longer logged in as `{identity}`. Nothing after this                          point would be that identity's answer. Log in again and re-run"
@@ -776,6 +970,7 @@ fn triage(
 
     let mut calibrated: Vec<Value> = Vec::new();
     let mut probes_sent: Vec<h5i_recon::Observation> = Vec::new();
+    let mut sender = Sender::open(selector);
     if calibrate {
         let Some((from, _origin)) = seed(&store, None) else {
             anyhow::bail!("this session has no stored request to calibrate from");
@@ -791,7 +986,7 @@ fn triage(
             let mut baseline = h5i_recon::triage::Baseline::default();
             for n in 0..probes.max(1) {
                 let target = format!("{}/{}", directory.trim_end_matches('/'), improbable(n));
-                let Ok(sent) = probe(selector, from, &target, "GET") else {
+                let Ok(sent) = sender.probe(selector, from, &target, "GET") else {
                     continue;
                 };
                 let Some(message) = h5i_recon::store::read(&store, sent.seq) else {
@@ -945,6 +1140,193 @@ fn triage(
     Ok(())
 }
 
+/// What one `paths` run was asked to do.
+struct PathRun<'a> {
+    wordlist: Option<&'a Path>,
+    reuse_words: bool,
+    under: &'a [String],
+    shapes: h5i_recon::paths::Shapes,
+    max_requests: usize,
+    rate: f64,
+    origin: Option<&'a str>,
+}
+
+/// `h5i recon paths`.
+fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) -> anyhow::Result<()> {
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let Some((from, origin)) = seed(&store, run.origin) else {
+        anyhow::bail!(
+            "this session has no stored request to ask from. `h5i browser open <url> \
+             --capture` first"
+        );
+    };
+    let identity = identity_of(&session).to_string();
+    let inventory = ledger.read()?;
+
+    let mut words = match run.wordlist {
+        Some(path) => h5i_recon::paths::read_wordlist(path)?,
+        None => Vec::new(),
+    };
+    if run.reuse_words {
+        let seen = h5i_recon::paths::words_from_paths(
+            inventory
+                .endpoints
+                .iter()
+                .filter(|e| e.origin == origin)
+                .map(|e| e.path.as_str()),
+        );
+        for word in seen {
+            if !words.contains(&word) {
+                words.push(word);
+            }
+        }
+    }
+    if words.is_empty() {
+        anyhow::bail!(
+            "no words to ask with. Name a list with `--wordlist <path>`, or pass \
+             `--reuse-words` to use the words this session has already seen. h5i ships no \
+             wordlist: the list is yours, the same way payloads are (design-recon.md N10)"
+        );
+    }
+
+    let directories: Vec<String> = if run.under.is_empty() {
+        vec!["/".to_string()]
+    } else {
+        run.under.to_vec()
+    };
+    // Everything this session already asked for, so a run does not re-spend a
+    // request on an answer the ledger holds.
+    let asked_before: Vec<&str> = inventory
+        .endpoints
+        .iter()
+        .filter(|e| e.origin == origin && e.state != h5i_recon::State::Candidate)
+        .map(|e| e.path.as_str())
+        .collect();
+
+    let pause = if run.rate > 0.0 {
+        std::time::Duration::from_secs_f64(1.0 / run.rate)
+    } else {
+        std::time::Duration::ZERO
+    };
+    let list_name = run
+        .wordlist
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "session words".to_string());
+
+    let mut sender = Sender::open(selector);
+    let mut observations = Vec::new();
+    let mut spent = 0usize;
+    let mut answered: BTreeMap<String, usize> = BTreeMap::new();
+    let mut skipped = 0usize;
+    let mut stopped = None;
+
+    'outer: for directory in &directories {
+        for word in &words {
+            for target in h5i_recon::paths::expand(directory, word, &run.shapes) {
+                if asked_before.contains(&target.as_str()) {
+                    skipped += 1;
+                    continue;
+                }
+                if spent >= run.max_requests {
+                    stopped = Some(format!(
+                        "spent its allowance of {} requests. This is what {} requests \
+                         reached, not the whole list",
+                        run.max_requests, run.max_requests
+                    ));
+                    break 'outer;
+                }
+                if !pause.is_zero() {
+                    std::thread::sleep(pause);
+                }
+                spent += 1;
+                match sender.probe(selector, from, &target, "GET") {
+                    Ok(sent) => {
+                        let req = format!("req_{}", sent.seq);
+                        *answered
+                            .entry(
+                                sent.status
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| "no answer".to_string()),
+                            )
+                            .or_default() += 1;
+                        observations.push(
+                            h5i_recon::Observation::new(
+                                &origin,
+                                &target,
+                                "GET",
+                                &identity,
+                                h5i_recon::State::Observed,
+                                h5i_recon::Source::Wordlist {
+                                    list: list_name.clone(),
+                                },
+                            )
+                            .with_req(req)
+                            .with_status(sent.status),
+                        );
+                    }
+                    Err(why) => {
+                        observations.push(
+                            h5i_recon::Observation::new(
+                                &origin,
+                                &target,
+                                "GET",
+                                &identity,
+                                h5i_recon::State::Candidate,
+                                h5i_recon::Source::Wordlist {
+                                    list: list_name.clone(),
+                                },
+                            )
+                            .refused(why.to_string()),
+                        );
+                        // A budget that ran out or a policy that refused will
+                        // refuse the next one too.
+                        stopped = Some(why.to_string());
+                        break 'outer;
+                    }
+                }
+            }
+        }
+    }
+
+    let written = ledger.append(&observations)?;
+    let after = ledger.read()?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "origin": origin,
+                "words": words.len(),
+                "requests": spent,
+                "one_process": sender.is_rpc(),
+                "skipped": skipped,
+                "answered": answered,
+                "written": written,
+                "stopped": stopped,
+                "cursor": after.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+    println!("  origin   : {origin}");
+    println!("  words    : {} from {}", words.len(), preview(&list_name));
+    println!("  requests : {spent} ({skipped} already answered, not asked again)");
+    if !sender.is_rpc() {
+        println!("  note     : this engine has no `browser rpc`, so each request was its own process");
+    }
+    for (status, count) in &answered {
+        println!("  {status:<9}: {count}");
+    }
+    println!("  written  : {written} row(s)");
+    if let Some(why) = &stopped {
+        println!("  stopped  : {}", preview(why));
+    }
+    println!("  next     : h5i recon triage --calibrate confirms which of these are real");
+    Ok(())
+}
+
 /// `h5i recon known`.
 fn known(
     root: &Path,
@@ -964,6 +1346,7 @@ fn known(
     };
     let identity = identity_of(&session).to_string();
 
+    let mut sender = Sender::open(selector);
     let mut observations = Vec::new();
     let mut asked: Vec<Value> = Vec::new();
     let mut queue: Vec<String> = h5i_recon::known::WELL_KNOWN
@@ -978,7 +1361,7 @@ fn known(
             continue;
         }
         done.push(target.clone());
-        let sent = match probe(selector, from, &target, "GET") {
+        let sent = match sender.probe(selector, from, &target, "GET") {
             Ok(sent) => sent,
             Err(why) => {
                 // A refusal is a fact about the scope, not a reason to stop.
