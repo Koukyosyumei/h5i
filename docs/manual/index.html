@@ -324,9 +324,14 @@ git apply --3way ./review/patch.diff       # apply it where you want
 </code></pre>
 <hr />
 <h2 id="install">Install</h2>
-<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
-cargo install --path .                         # from source
+<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh                      # prebuilt binary
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon  # with both plugins
+cargo install --path .                                          # from source
 </code></pre>
+<p>The plugins are not in the default install. <code>--websec</code> adds the HTTP workbench
+and <code>--recon</code> the endpoint ledger; each is fetched as its own archive and
+registered with <code>h5i plugin install</code>, so <code>h5i plugin list</code> stays the whole truth
+about what is there.</p>
 <p><code>h5i.dev/install.sh</code> and <code>raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</code>
 are the same file, and CI fails if they ever stop being. Use the second one if
 you would rather the install path not depend on the domain.</p>

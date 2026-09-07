@@ -47,7 +47,7 @@ main() {
         echo "  and do nothing: the engine is part of the binary now."
         echo
         echo "Piped into a shell, options go after \`sh -s --\`:"
-        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec"
+        echo "  curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon"
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         exit 0

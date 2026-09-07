@@ -109,9 +109,15 @@ agent edits code -> starts dev server -> opens a session against it
 ## Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
-cargo install --path .                         # from source
+curl -fsSL https://h5i.dev/install.sh | sh                      # prebuilt binary
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon  # with both plugins
+cargo install --path .                                          # from source
 ```
+
+The plugins are not in the default install. `--websec` adds the HTTP workbench
+and `--recon` the endpoint ledger; each is fetched as its own archive and
+registered with `h5i plugin install`, so `h5i plugin list` stays the whole truth
+about what is there.
 
 `h5i.dev/install.sh` and `raw.githubusercontent.com/h5i-dev/h5i/main/install.sh`
 are the same file, and CI fails if they ever stop being. Use the second one if
