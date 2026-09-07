@@ -246,69 +246,76 @@ enum Token {
 /// Comments, regex literals and template substitutions are skipped rather than
 /// mis-read, which is the whole reason this is a scan and not a pattern match.
 fn tokenize(source: &str) -> Vec<Token> {
-    let bytes = source.as_bytes();
     let mut tokens = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
+    let mut at = 0;
+    while at < source.len() {
+        let rest = &source[at..];
+        let Some(c) = rest.chars().next() else { break };
+        let width = c.len_utf8();
         match c {
-            '/' if bytes.get(i + 1) == Some(&b'/') => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
+            '/' if rest.starts_with("//") => {
+                at += rest.find('\n').map(|end| end + 1).unwrap_or(rest.len());
             }
-            '/' if bytes.get(i + 1) == Some(&b'*') => {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i += 2;
+            '/' if rest.starts_with("/*") => {
+                at += rest.find("*/").map(|end| end + 2).unwrap_or(rest.len());
             }
             '"' | '\'' | '`' => {
-                let quote = bytes[i];
-                let start = i + 1;
-                let mut j = start;
-                while j < bytes.len() && bytes[j] != quote {
-                    if bytes[j] == b'\\' {
-                        j += 1;
-                    }
-                    j += 1;
-                }
-                let literal = source
-                    .get(start..j.min(source.len()))
-                    .unwrap_or_default()
-                    .to_string();
-                // A template with a substitution is assembled at runtime, so
-                // it is a prefix and not a URL. `${` is the marker.
-                if quote == b'`' && literal.contains("${") {
-                    let prefix = literal.split("${").next().unwrap_or_default().to_string();
-                    tokens.push(Token::Str(prefix));
+                let (literal, next) = quoted(rest, c);
+                // A template with a substitution is assembled at runtime, so it
+                // is a prefix and not a URL. `${` is the marker.
+                if c == '`' && literal.contains("${") {
+                    tokens.push(Token::Str(
+                        literal.split("${").next().unwrap_or_default().to_string(),
+                    ));
                     tokens.push(Token::Punct('+'));
                 } else {
-                    tokens.push(Token::Str(unescape(&literal)));
+                    tokens.push(Token::Str(unescape(literal)));
                 }
-                i = j + 1;
+                at += next;
             }
             c if c.is_alphanumeric() || c == '_' || c == '$' => {
-                let start = i;
-                while i < bytes.len() {
-                    let c = bytes[i] as char;
-                    if c.is_alphanumeric() || c == '_' || c == '$' {
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
-                tokens.push(Token::Ident(source[start..i].to_string()));
+                let end = rest
+                    .char_indices()
+                    .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+                    .map(|(at, _)| at)
+                    .unwrap_or(rest.len());
+                tokens.push(Token::Ident(rest[..end].to_string()));
+                at += end;
             }
-            c if c.is_whitespace() => i += 1,
+            c if c.is_whitespace() => at += width,
             c => {
                 tokens.push(Token::Punct(c));
-                i += 1;
+                at += width;
             }
         }
     }
     tokens
+}
+
+/// The body of a quoted string, and how far past it to continue.
+///
+/// Char-wise throughout: every index here lands in text a target wrote, and a
+/// byte offset into the middle of a character is a crash on the first bundle
+/// with a name in Japanese.
+fn quoted(rest: &str, quote: char) -> (&str, usize) {
+    let open = quote.len_utf8();
+    let mut at = open;
+    while at < rest.len() {
+        let Some(c) = rest[at..].chars().next() else { break };
+        if c == '\\' {
+            at += c.len_utf8();
+            if let Some(escaped) = rest[at..].chars().next() {
+                at += escaped.len_utf8();
+            }
+            continue;
+        }
+        if c == quote {
+            return (&rest[open..at], at + c.len_utf8());
+        }
+        at += c.len_utf8();
+    }
+    // Unterminated, which a capped read of a body produces every time.
+    (&rest[open..], rest.len())
 }
 
 /// The escapes that change what a URL is. Everything else is left as written.
@@ -441,6 +448,17 @@ mod tests {
     fn an_escaped_url_reads_as_the_url_it_is() {
         let script = from_js(&base(), r#"fetch("\/api\/escaped");"#);
         assert_eq!(script.found[0].url.as_str(), "https://target.test/api/escaped");
+    }
+
+    #[test]
+    fn a_bundle_that_is_not_ascii_does_not_panic() {
+        let source = "const 名前 = \"値\"; fetch(\"/api/日本語\"); // コメント\nfetch(`/api/${値}/x`);";
+        let script = from_js(&base(), source);
+        assert_eq!(script.found.len(), 1, "{:?}", script.found);
+        assert_eq!(script.partial.len(), 1);
+
+        // A string the read stopped inside, and a regex that is not a comment.
+        let _ = from_js(&base(), "var r = /\\/api\\//; var s = \"/api/日");
     }
 
     #[test]

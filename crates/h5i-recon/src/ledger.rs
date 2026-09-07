@@ -55,11 +55,16 @@ pub enum State {
 }
 
 impl State {
-    /// Whether `self` may overwrite `prior`. One rule, and it is the ledger's
-    /// discipline: nothing that never sent a request overwrites something that
-    /// did.
+    /// Whether `self` may overwrite `prior`. Two rules, and both are the
+    /// ledger's discipline: a disclosure never overwrites evidence, and a plain
+    /// sighting never undoes a verdict triage reached against a baseline.
     pub fn advances_over(self, prior: State) -> bool {
-        !(self == State::Candidate && prior != State::Candidate)
+        match (self, prior) {
+            (State::Candidate, State::Candidate) => true,
+            (State::Candidate, _) => false,
+            (State::Observed, State::Confirmed | State::Gone) => false,
+            _ => true,
+        }
     }
 }
 
@@ -283,15 +288,22 @@ impl Endpoint {
     }
 
     fn absorb(&mut self, obs: Observation, line: u64) {
+        // The newest answer, whatever the state did: a fresh status is a fact
+        // even when it changes nothing about what this endpoint is.
+        if obs.status.is_some() {
+            self.status = obs.status;
+        }
+        if obs.cluster.is_some() {
+            self.cluster = obs.cluster;
+        }
         if obs.state.advances_over(self.state) {
             self.state = obs.state;
-            if obs.status.is_some() {
-                self.status = obs.status;
-            }
-            if obs.cluster.is_some() {
-                self.cluster = obs.cluster;
-            }
             self.reason = obs.reason;
+            if obs.state == State::Refused {
+                // Nothing reached the wire, so the status belongs to a request
+                // that is no longer the last word on this endpoint.
+                self.status = None;
+            }
         }
         if !self.sources.contains(&obs.source) {
             self.sources.push(obs.source);
@@ -386,11 +398,19 @@ impl Ledger {
             .unwrap_or_default()
     }
 
+    /// Write the state file whole, or not at all.
+    ///
+    /// Through a temporary beside it: a crash partway through a truncating
+    /// write would leave a state file that parses as nothing, and the next run
+    /// would re-fold the log and re-spend the calibration.
     pub fn set_progress(&self, progress: &Progress) -> Result<(), H5iError> {
         let text = serde_json::to_string(progress).map_err(H5iError::Serialization)?;
-        let mut file = open_owner_only_truncating(&self.state)?;
+        let staging = self.state.with_extension("json.new");
+        let mut file = open_owner_only_truncating(&staging)?;
         file.write_all(text.as_bytes())
-            .map_err(|e| H5iError::with_path(e, &self.state))
+            .map_err(|e| H5iError::with_path(e, &staging))?;
+        drop(file);
+        std::fs::rename(&staging, &self.state).map_err(|e| H5iError::with_path(e, &self.state))
     }
 
     /// Fold this session's request log in, and remember how far it got.
@@ -422,8 +442,12 @@ impl Ledger {
 
     /// Append observations. Returns how many were written.
     ///
-    /// Oversized rows are dropped and reported rather than written, and the
-    /// caller is told the difference between what it offered and what landed.
+    /// Oversized rows are dropped and reported rather than written, so the
+    /// caller learns the difference between what it offered and what landed.
+    /// One `write_all` on an append-only file, so two recon processes on one
+    /// session interleave whole batches rather than lines; a line that lands
+    /// torn anyway is counted as unreadable by [`Ledger::read`] and not guessed
+    /// at.
     pub fn append(&self, observations: &[Observation]) -> Result<usize, H5iError> {
         let kept: Vec<&Observation> = observations.iter().filter(|o| o.is_bounded()).collect();
         if kept.is_empty() {
@@ -606,6 +630,42 @@ mod tests {
             "identity is in the key, so the anonymous and logged-in answers are two observations"
         );
         assert_ne!(inventory.endpoints[0].id, inventory.endpoints[1].id);
+    }
+
+    #[test]
+    fn a_plain_sighting_does_not_undo_a_verdict() {
+        let (_dir, ledger) = ledger();
+        let mut confirmed = observed("/admin", "alice");
+        confirmed.state = State::Confirmed;
+        ledger.append(&[confirmed]).expect("append");
+        ledger
+            .append(&[observed("/admin", "alice").with_status(Some(500))])
+            .expect("append");
+
+        let endpoint = &ledger.read().expect("read").endpoints[0];
+        assert_eq!(
+            endpoint.state,
+            State::Confirmed,
+            "only triage, which has the baseline, may retire a confirmation"
+        );
+        assert_eq!(
+            endpoint.status,
+            Some(500),
+            "and the newest answer is still the newest answer"
+        );
+    }
+
+    #[test]
+    fn a_refusal_after_an_answer_drops_the_status_it_no_longer_describes() {
+        let (_dir, ledger) = ledger();
+        ledger.append(&[observed("/admin", "alice")]).expect("append");
+        ledger
+            .append(&[observed("/admin", "alice").refused("origin is not in the allowlist")])
+            .expect("append");
+
+        let endpoint = &ledger.read().expect("read").endpoints[0];
+        assert_eq!(endpoint.state, State::Refused);
+        assert_eq!(endpoint.status, None, "nothing reached the wire this time");
     }
 
     #[test]

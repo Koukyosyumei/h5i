@@ -431,10 +431,16 @@ path. Anything that cannot be done that way in phase 1 is not in phase 1.
 targets, at least one of which answers 200 for every path, scored on endpoints
 confirmed, requests spent per confirmed endpoint, and false confirmations. A
 feature that does not move those numbers is not finished, whatever its tests
-say. `scripts/recon/smoke.sh` against `scripts/websec/server.py` extended with
-a soft-404 mode is the first piece, committed, for the reason the websec smoke
-script earned its place: the seams between CLI, control channel, engine and
-store are where the bugs live.
+say. The corpus is not built.
+
+The smoke suite is: `scripts/recon/smoke.sh` drives every verb against
+`scripts/websec/server.py`, whose `/site/` tree now includes a directory that
+answers 200 with its own "not found" page. It earned its place immediately.
+Both bugs it exists for were invisible to the unit tests and obvious on the
+first real run: receipts are numbered from **zero**, so every session's first
+request, its navigation, was dropped from the ledger; and a probe built from
+the newest stored request inherited a `POST` and asked for `robots.txt` with a
+body, which the target answered `501` four times over.
 
 ## N16. Phase 2, more discovery
 

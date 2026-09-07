@@ -54,6 +54,13 @@ h5i websec show req_42 --raw                              # inspect one request
 h5i websec replay req_42 --set query.id=456               # edit and resend it
 h5i websec diff res_42 res_43                             # compare the responses
 h5i websec match res_43 --status 200 --contains "ok"      # assert a condition
+
+# Find out what is there before testing it.
+h5i recon extract                                         # endpoints the pages and bundles disclosed
+h5i recon known                                           # robots.txt, sitemap.xml, security.txt
+h5i recon crawl --max-requests 200                        # walk it, logged in, bounded
+h5i recon triage --calibrate                              # fold the noise, confirm what is real
+h5i recon endpoints --state confirmed                     # the inventory, with the message id for each
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
@@ -76,11 +83,11 @@ npx skills add h5i-dev/h5i         # if you do not have the binary yet
 # h5i skill show policy            # or just read a page
 ```
 
-The optional `websec` plugin ships as its own archive. The installer can fetch
-and register it in the same pass:
+The optional `websec` and `recon` plugins ship as their own archives. The
+installer can fetch and register them in the same pass:
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon
 # h5i plugin list                  # says what is installed
 ```
 
@@ -123,6 +130,12 @@ h5i websec show req_42 --raw                         # inspect a request
 h5i websec replay req_42 --set query.id=456          # edit and resend it
 h5i websec diff res_42 res_43                        # compare responses
 h5i websec match res_43 --status 200 --contains "ok" # assert a condition
+
+# Discovery, kept apart from testing: recon says what exists and how it knows.
+h5i recon extract                                    # read what the session already fetched
+h5i recon crawl --max-requests 200 --rate 4          # walk it under this session's login
+h5i recon triage --calibrate                         # soft 404s folded, the rest confirmed
+h5i recon endpoints --state confirmed --json         # each row names the message that proves it
 h5i websec sequence flow.json                        # run a multi-step test
 ```
 

@@ -333,7 +333,13 @@ fn decode_entities(raw: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let Some(end) = rest[..rest.len().min(12)].find(';') else {
+        // An entity is short, so only look a little way ahead, and only as far
+        // as a character boundary: the text came off a target.
+        let mut window = rest.len().min(12);
+        while !rest.is_char_boundary(window) {
+            window -= 1;
+        }
+        let Some(end) = rest[..window].find(';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -458,14 +464,19 @@ fn split_case_insensitive<'a>(haystack: &'a str, needle: &str) -> Option<(&'a st
 /// Attribute values, quoted or bare.
 fn attributes(text: &str) -> Vec<(String, String)> {
     let mut attrs = Vec::new();
+    // Byte-wise, but only ever comparing ASCII: a `b as char` test would read a
+    // UTF-8 continuation byte as U+00A0 and slice inside a character.
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
         let name_start = i;
-        while i < bytes.len() && !matches!(bytes[i], b'=' | b'/' | b'>') && !(bytes[i] as char).is_whitespace() {
+        while i < bytes.len()
+            && !matches!(bytes[i], b'=' | b'/' | b'>')
+            && !bytes[i].is_ascii_whitespace()
+        {
             i += 1;
         }
         if name_start == i {
@@ -473,7 +484,7 @@ fn attributes(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let name = text[name_start..i].to_ascii_lowercase();
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
         if i >= bytes.len() || bytes[i] != b'=' {
@@ -481,7 +492,7 @@ fn attributes(text: &str) -> Vec<(String, String)> {
             continue;
         }
         i += 1;
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
         if i >= bytes.len() {
@@ -501,7 +512,7 @@ fn attributes(text: &str) -> Vec<(String, String)> {
             }
             _ => {
                 let start = i;
-                while i < bytes.len() && !(bytes[i] as char).is_whitespace() && bytes[i] != b'>' {
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
                     i += 1;
                 }
                 &text[start..i.min(text.len())]
@@ -662,6 +673,49 @@ mod tests {
         assert!(urls.contains(&"https://target.test/api/v2/users".to_string()));
         assert!(urls.contains(&"https://target.test/help".to_string()));
         assert_eq!(urls.len(), 2, "a date is not an endpoint: {urls:?}");
+    }
+
+    /// Cheap deterministic noise: enough to find an index that assumes ASCII.
+    fn noise(seed: u64, len: usize) -> String {
+        let alphabet: Vec<char> = "<>\"'=/&#;{}[]()`\\ \n\tabAZ09日本語é🙂".chars().collect();
+        let mut state = seed | 1;
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                alphabet[(state >> 33) as usize % alphabet.len()]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn noise_does_not_panic_any_reader() {
+        for seed in 0..200u64 {
+            let text = noise(seed, 400);
+            let _ = from_html(&base(), &text);
+            let _ = from_json(&base(), &text);
+            let _ = crate::js::from_js(&base(), &text);
+            let _ = skeleton(&text);
+            let _ = crate::known::from_robots(&base(), &text);
+            let _ = crate::known::from_sitemap(&base(), &text);
+        }
+    }
+
+    #[test]
+    fn text_that_is_not_ascii_does_not_panic_any_reader() {
+        // Everything here came off a target, so a byte index into it is a
+        // crash waiting for the first page in Japanese.
+        let html = "<a href=\"/日本語?q=値\">リンク</a><form action=\"/送信\"><input name=\"名前\"></form>";
+        let found = from_html(&base(), html);
+        assert!(found.len() >= 2, "{found:?}");
+
+        let json = r#"{"次":"/api/日本語","メモ":"値/値"}"#;
+        assert_eq!(from_json(&base(), json).len(), 1);
+
+        // Truncated in the middle of a multi-byte character, as a capped read
+        // of a body hands it over.
+        let cut = "<a href=\"/ok\">x</a>{\"u\":\"/api/x\",\"t\":\"日";
+        let _ = from_html(&base(), cut);
+        let _ = from_json(&base(), cut);
     }
 
     #[test]

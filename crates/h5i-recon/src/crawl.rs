@@ -4,7 +4,7 @@
 //! worth testing alone: what is somewhere new, what is the same page again,
 //! and how a run notices it has been logged out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use url::Url;
 
@@ -65,8 +65,8 @@ pub fn template_of(path: &str) -> String {
 /// What a crawl has visited, and what it has left.
 pub struct Frontier {
     bounds: Bounds,
-    queue: Vec<(Url, usize)>,
-    seen: Vec<String>,
+    queue: VecDeque<(Url, usize)>,
+    seen: BTreeSet<String>,
     templates: BTreeMap<String, usize>,
     spent: usize,
 }
@@ -75,8 +75,8 @@ impl Frontier {
     pub fn new(bounds: Bounds) -> Self {
         Self {
             bounds,
-            queue: Vec::new(),
-            seen: Vec::new(),
+            queue: VecDeque::new(),
+            seen: BTreeSet::new(),
             templates: BTreeMap::new(),
             spent: 0,
         }
@@ -98,8 +98,8 @@ impl Frontier {
             return Offer::SameShape;
         }
         *count += 1;
-        self.seen.push(key);
-        self.queue.push((url.clone(), depth));
+        self.seen.insert(key);
+        self.queue.push_back((url.clone(), depth));
         Offer::Queued
     }
 
@@ -108,11 +108,9 @@ impl Frontier {
         if self.spent >= self.bounds.max_requests {
             return None;
         }
-        if self.queue.is_empty() {
-            return None;
-        }
+        let next = self.queue.pop_front()?;
         self.spent += 1;
-        Some(self.queue.remove(0))
+        Some(next)
     }
 
     pub fn spent(&self) -> usize {

@@ -30,18 +30,30 @@ fn h5i() -> std::ffi::OsString {
 struct Cli {
     #[command(subcommand)]
     command: ReconCommands,
+
+    /// Which session, when more than one is open.
+    #[arg(long, short = 's', global = true, value_name = "NAME")]
+    session: Option<String>,
+
+    /// Emit JSON. Every verb answers in the same envelope (`schema:
+    /// "recon/1"`), errors included.
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
-    if let Err(error) = run(cli.command) {
-        // The JSON envelope on the way out too, so a caller parsing stdout is
-        // never handed a bare string on stderr (design-websec.md W9).
+    let (session, json) = (cli.session.clone(), cli.json);
+    if let Err(error) = run(cli.command, session.as_deref(), json) {
+        // The envelope on stdout for the caller parsing it, the sentence on
+        // stderr for the one reading it (design-websec.md W9). Exit 2 is what
+        // the sibling plugin uses; 69 stays "the session is gone".
         println!(
             "{}",
             json!({"error": {"code": "recon", "message": error.to_string()}})
         );
-        std::process::exit(1);
+        eprintln!("{error}");
+        std::process::exit(2);
     }
 }
 
@@ -56,9 +68,6 @@ enum ReconCommands {
     /// Reads the session's request log first, so the inventory never disagrees
     /// with the receipts beside it.
     Endpoints {
-        /// Session name or id. Defaults to the default session.
-        #[arg(long)]
-        session: Option<String>,
         /// Only endpoints in this state: candidate, observed, confirmed,
         /// refused or gone.
         #[arg(long)]
@@ -73,8 +82,6 @@ enum ReconCommands {
         /// Only what changed after this cursor, as returned by a previous run.
         #[arg(long)]
         since: Option<u64>,
-        #[arg(long)]
-        json: bool,
     },
 
     /// Read what this session already fetched, and record what it disclosed.
@@ -82,8 +89,6 @@ enum ReconCommands {
     /// Sends nothing, so it works after the budget is spent, and everything it
     /// writes is a candidate: a URL in a bundle was not visited (N8).
     Extract {
-        #[arg(long)]
-        session: Option<String>,
         /// Only this message, as `req_42`. The default is every message the
         /// store holds.
         #[arg(long, value_name = "REQ")]
@@ -91,8 +96,6 @@ enum ReconCommands {
         /// Which readers to run: any of `html`, `js`, `json`, `headers`.
         #[arg(long, value_name = "LIST", default_value = "html,js,json,headers")]
         kind: String,
-        #[arg(long)]
-        json: bool,
     },
 
     /// Walk the application under this session's identity.
@@ -100,8 +103,6 @@ enum ReconCommands {
     /// Every request is an `h5i browser resend`, so it carries the session's
     /// cookies and its policy. Stops on frontier, allowance or login (N9).
     Crawl {
-        #[arg(long)]
-        session: Option<String>,
         /// Start here as well as from the ledger's candidates. Repeatable.
         #[arg(long, value_name = "URL")]
         seed: Vec<String>,
@@ -122,8 +123,6 @@ enum ReconCommands {
         /// Re-check the login every N requests. `0` turns the check off.
         #[arg(long = "check-login-every", default_value_t = 25)]
         check_login_every: usize,
-        #[arg(long)]
-        json: bool,
     },
 
     /// Ask for the files an application publishes about itself: robots.txt,
@@ -131,14 +130,10 @@ enum ReconCommands {
     ///
     /// `robots.txt` is read for candidates, never as permission (N8).
     Known {
-        #[arg(long)]
-        session: Option<String>,
         /// Which origin to ask. Defaults to the one this session has reached
         /// most recently.
         #[arg(long)]
         origin: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
 
     /// Sort what came back: calibrate a not-found baseline, then cluster.
@@ -146,8 +141,6 @@ enum ReconCommands {
     /// Confirmation happens here and nowhere else: `confirmed` means the answer
     /// differs from what this directory says about a path that is not there.
     Triage {
-        #[arg(long)]
-        session: Option<String>,
         /// Learn what each directory answers for a path that is not there,
         /// which costs a couple of requests per directory.
         #[arg(long)]
@@ -155,36 +148,28 @@ enum ReconCommands {
         /// How many probes per directory when calibrating.
         #[arg(long, default_value_t = 2)]
         probes: usize,
-        #[arg(long)]
-        json: bool,
     },
 
     /// One endpoint: its sources, its evidence, and what it answered.
     Show {
         /// The `ep_…` id, as `h5i recon endpoints` prints it.
         id: String,
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
 }
 
-fn run(action: ReconCommands) -> anyhow::Result<()> {
+fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Result<()> {
     let root = bs::root()?;
     let _ = bs::expire_due(&root);
 
     match action {
         ReconCommands::Endpoints {
-            session,
             state,
             origin,
             identity,
             since,
-            json,
         } => endpoints(
             &root,
-            session.as_deref(),
+            session,
             Filter {
                 state: state.as_deref().map(parse_state).transpose()?,
                 origin: origin.as_deref(),
@@ -193,24 +178,19 @@ fn run(action: ReconCommands) -> anyhow::Result<()> {
             },
             json,
         ),
-        ReconCommands::Extract {
-            session,
-            from,
-            kind,
-            json,
-        } => extract(&root, session.as_deref(), from.as_deref(), &kind, json),
+        ReconCommands::Extract { from, kind } => {
+            extract(&root, session, from.as_deref(), &kind, json)
+        }
         ReconCommands::Crawl {
-            session,
             seed,
             depth,
             max_requests,
             per_shape,
             rate,
             check_login_every,
-            json,
         } => crawl(
             &root,
-            session.as_deref(),
+            session,
             &seed,
             h5i_recon::crawl::Bounds {
                 depth,
@@ -221,18 +201,11 @@ fn run(action: ReconCommands) -> anyhow::Result<()> {
             check_login_every,
             json,
         ),
-        ReconCommands::Triage {
-            session,
-            calibrate,
-            probes,
-            json,
-        } => triage(&root, session.as_deref(), calibrate, probes, json),
-        ReconCommands::Known {
-            session,
-            origin,
-            json,
-        } => known(&root, session.as_deref(), origin.as_deref(), json),
-        ReconCommands::Show { id, session, json } => show(&root, session.as_deref(), &id, json),
+        ReconCommands::Triage { calibrate, probes } => {
+            triage(&root, session, calibrate, probes, json)
+        }
+        ReconCommands::Known { origin } => known(&root, session, origin.as_deref(), json),
+        ReconCommands::Show { id } => show(&root, session, &id, json),
     }
 }
 
@@ -284,7 +257,7 @@ fn parse_state(name: &str) -> anyhow::Result<State> {
 ///
 /// Every read syncs, because an inventory that disagreed with the receipts
 /// beside it would be answering a question nobody asked.
-fn open_ledger(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, Ledger)> {
+fn open_ledger(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, Ledger, bool)> {
     let session = resolve_for_reading(root, selector)?;
     if !bs::id_is_one_component(&session.id) {
         anyhow::bail!(
@@ -295,8 +268,9 @@ fn open_ledger(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Sessi
     }
     let dir = bs::dir(root, &session.id);
     let ledger = Ledger::open(&dir)?;
-    ledger.sync_receipts(&receipts(&dir), identity_of(&session))?;
-    Ok((session, ledger))
+    let (records, capped) = receipts(&dir);
+    ledger.sync_receipts(&records, identity_of(&session))?;
+    Ok((session, ledger, capped))
 }
 
 /// Who this session presents itself as. `anonymous` is a name, not an absence:
@@ -309,15 +283,29 @@ fn identity_of(session: &bs::Session) -> &str {
     }
 }
 
-/// The session's request log, as records. Off the log rather than out of the
-/// engine, because the fold wants the whole run and not just this process's
-/// part of it.
-fn receipts(dir: &Path) -> Vec<RequestRecord> {
+/// The session's request log, and whether the read stopped at the cap.
+///
+/// The cap reads the *head* of the log, so a long run's later requests are not
+/// there and never will be. A caller that did not say so would report an
+/// inventory of the first part of a run as the inventory.
+fn receipts(dir: &Path) -> (Vec<RequestRecord>, bool) {
     let path = dir.join(bs::RECEIPTS_FILE);
-    let (text, _cut) = bs::read_log_capped_saying(&path).unwrap_or_default();
-    text.lines()
+    let (text, capped) = bs::read_log_capped_saying(&path).unwrap_or_default();
+    let records = text
+        .lines()
         .filter_map(|line| serde_json::from_str::<RequestRecord>(line).ok())
-        .collect()
+        .collect();
+    (records, capped)
+}
+
+/// Said once, wherever a verb read a log that was too long to read whole.
+fn note_capped(capped: bool) {
+    if capped {
+        eprintln!(
+            "  note     : this session's request log is longer than the cap on reading it, \
+             so this covers the start of the run and not all of it"
+        );
+    }
 }
 
 fn endpoints(
@@ -326,7 +314,8 @@ fn endpoints(
     filter: Filter<'_>,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    let (_session, ledger) = open_ledger(root, selector)?;
+    let (_session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let inventory = ledger.read()?;
     let shown: Vec<&Endpoint> = inventory
         .endpoints
@@ -338,7 +327,10 @@ fn endpoints(
         .collect();
 
     if json_out {
-        println!("{}", serde_json::to_string_pretty(&envelope(&inventory, &shown))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&envelope(&inventory, &shown, capped))?
+        );
         return Ok(());
     }
 
@@ -558,7 +550,8 @@ fn crawl(
     check_login_every: usize,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    let (session, ledger) = open_ledger(root, selector)?;
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let Some((from, origin)) = seed(&store, None) else {
         anyhow::bail!(
@@ -610,6 +603,7 @@ fn crawl(
     let mut login: Option<(url::Url, h5i_recon::crawl::Fingerprint)> = None;
     let mut stopped: Option<String> = None;
     let mut since_check = 0usize;
+    let mut checks = 0usize;
 
     while let Some((url, depth)) = frontier.next() {
         if !pause.is_zero() {
@@ -657,6 +651,9 @@ fn crawl(
             let Some((probe_url, before)) = &login else {
                 continue;
             };
+            // The check is a request like any other, so it is counted and it
+            // stops when the allowance does.
+            checks += 1;
             match visit(&store, selector, from, probe_url, &identity) {
                 Ok(now) if h5i_recon::crawl::identity_lost(before, &now.fingerprint) => {
                     stopped = Some(format!(
@@ -689,7 +686,8 @@ fn crawl(
             serde_json::to_string_pretty(&json!({
                 "schema": SCHEMA,
                 "origin": origin,
-                "requests": frontier.spent(),
+                "requests": frontier.spent() + checks,
+                "login_checks": checks,
                 "queued": frontier.remaining(),
                 "walked": walked,
                 "written": written,
@@ -700,7 +698,11 @@ fn crawl(
         return Ok(());
     }
     println!("  origin   : {origin}");
-    println!("  requests : {}", frontier.spent());
+    println!(
+        "  requests : {} ({} of them login checks)",
+        frontier.spent() + checks,
+        checks
+    );
     println!("  queued   : {} left unwalked", frontier.remaining());
     println!("  written  : {written} row(s)");
     if let Some(why) = &stopped {
@@ -732,7 +734,8 @@ fn triage(
     probes: usize,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    let (session, ledger) = open_ledger(root, selector)?;
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let identity = identity_of(&session).to_string();
     let inventory = ledger.read()?;
@@ -949,7 +952,8 @@ fn known(
     origin: Option<&str>,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    let (session, ledger) = open_ledger(root, selector)?;
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     let Some((from, origin)) = seed(&store, origin) else {
         anyhow::bail!(
@@ -1111,7 +1115,8 @@ fn extract(
     kinds: &str,
     json_out: bool,
 ) -> anyhow::Result<()> {
-    let (session, ledger) = open_ledger(root, selector)?;
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
     if !store.is_dir() {
         anyhow::bail!(
@@ -1238,7 +1243,8 @@ fn is_script(content_type: &str) -> bool {
 }
 
 fn show(root: &Path, selector: Option<&str>, id: &str, json_out: bool) -> anyhow::Result<()> {
-    let (_session, ledger) = open_ledger(root, selector)?;
+    let (_session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
     let inventory = ledger.read()?;
     let Some(endpoint) = inventory.endpoints.iter().find(|e| e.id == id) else {
         anyhow::bail!(
@@ -1289,12 +1295,15 @@ fn show(root: &Path, selector: Option<&str>, id: &str, json_out: bool) -> anyhow
     Ok(())
 }
 
-fn envelope(inventory: &Inventory, shown: &[&Endpoint]) -> Value {
+fn envelope(inventory: &Inventory, shown: &[&Endpoint], capped: bool) -> Value {
     json!({
         "schema": SCHEMA,
         "cursor": inventory.cursor,
         "unreadable": inventory.unreadable,
-        "truncated": inventory.truncated,
+        // Two different partial reads, and a caller has to be able to tell
+        // them apart: the ledger was too long, or the request log was.
+        "ledger_truncated": inventory.truncated,
+        "log_truncated": capped,
         "endpoints": shown,
     })
 }
