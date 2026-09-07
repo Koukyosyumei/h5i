@@ -704,9 +704,15 @@ the enforcement in W16 depends on it.
 
 Each of these is a decision to be defended in review, not a gap to be filled.
 
-- **A scanner.** No crawl-and-flag mode, no severity ratings.
+- **A scanner.** No crawl-and-flag mode, no severity ratings. Crawling itself
+  moved out rather than staying refused: it belongs to recon
+  ([`design-recon.md`](design-recon.md) N9), which discovers and never flags.
+  The *and-flag* half is what this file still refuses, wherever the crawl lives.
 - **Payload generation.** No SQL injection strings, no XSS vectors, no
-  wordlists, no encoders beyond the ones an edit needs to be correct.
+  encoders beyond the ones an edit needs to be correct. Wordlists are input,
+  never cargo: recon's path discovery (N10) takes `--wordlist PATH` and h5i
+  ships no corpus, exactly as W15 takes payloads from the caller and generates
+  none.
 - **Vulnerability verdicts.** h5i reports differences. Calling one a
   vulnerability is the agent's claim, made in a finding it writes and signs.
 - **An exploit database or plugin marketplace.**

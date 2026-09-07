@@ -27,6 +27,8 @@ essential to this one.
 | policy resolution | P1 shipped; P2 shipped, opt-in; P3 and P4 designed, not built | [`docs/design/design-policy.md`](docs/design/design-policy.md) |
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](docs/design/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](docs/design/design-detect.md) |
+| HTTP workbench | phases A and B built, benchmarked; installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](docs/design/design-websec.md) |
+| reconnaissance | proposed 2026-09-07, nothing built. Phase 1 is N15 | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
 
 ## The three decisions the pivot rests on
 
@@ -84,6 +86,8 @@ of it whether you need the rest.
 | P1 to P4 | `docs/design/design-policy.md` | resolution, the authority validator, mount realization |
 | R1 to R13 | `docs/design/design-runner.md` | placement, transport, the frame protocol, export |
 | D1 to D14 | `docs/design/design-detect.md` | the kernel-observed lane |
+| W1 to W21 | `docs/design/design-websec.md` | capture, replay, diff, and the plugin the workbench ships as |
+| N1 to N21 | `docs/design/design-recon.md` | the endpoint ledger, discovery, triage, and where recon stops |
 
 Live code cites these section numbers. The prefixes do not collide with
 [`docs/roadmap-history.md`](docs/roadmap-history.md), which holds the superseded
