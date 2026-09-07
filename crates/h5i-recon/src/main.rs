@@ -63,6 +63,22 @@ fn main() {
 const SCHEMA: &str = "recon/1";
 
 #[derive(Subcommand)]
+enum JobCommands {
+    /// Every run this session has recorded, oldest first.
+    List,
+    /// One run: what it was asked to do, and how far it got.
+    Show {
+        /// The job id. The newest run when this is left out.
+        id: Option<String>,
+    },
+    /// Run it again with the same parameters, continuing where it stopped.
+    Resume {
+        /// The job id. The newest run when this is left out.
+        id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ReconCommands {
     /// The endpoint ledger: what this session knows about, and how it knows.
     ///
@@ -124,6 +140,9 @@ enum ReconCommands {
         /// Re-check the login every N requests. `0` turns the check off.
         #[arg(long = "check-login-every", default_value_t = 25)]
         check_login_every: usize,
+        /// Start the page's network allowance again before each send.
+        #[arg(long = "reset-budget")]
+        reset_budget: bool,
     },
 
     /// Ask for paths the application never disclosed, from a list you bring.
@@ -157,6 +176,16 @@ enum ReconCommands {
         /// Which origin to ask. Defaults to the one this session reached last.
         #[arg(long)]
         origin: Option<String>,
+        /// Start the page's network allowance again before each send.
+        ///
+        /// A page's budget is there to bound page code. A discovery run is the
+        /// opposite, so raising it is said out loud rather than assumed.
+        #[arg(long = "reset-budget")]
+        reset_budget: bool,
+        /// Write one JSON line per probe as it happens, rather than a summary
+        /// at the end.
+        #[arg(long)]
+        stream: bool,
     },
 
     /// Ask for the files an application publishes about itself: robots.txt,
@@ -182,6 +211,16 @@ enum ReconCommands {
         /// How many probes per directory when calibrating.
         #[arg(long, default_value_t = 2)]
         probes: usize,
+    },
+
+    /// What this session's runs did, and running one again.
+    ///
+    /// A job record holds the parameters, so a resume runs the same job rather
+    /// than a similar one. Nothing is asked for twice: a resume skips what the
+    /// ledger already answered (N12).
+    Jobs {
+        #[command(subcommand)]
+        action: JobCommands,
     },
 
     /// One endpoint: its sources, its evidence, and what it answered.
@@ -222,6 +261,7 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
             per_shape,
             rate,
             check_login_every,
+            reset_budget,
         } => crawl(
             &root,
             session,
@@ -231,8 +271,11 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
                 max_requests,
                 per_template: per_shape,
             },
-            rate,
-            check_login_every,
+            CrawlRun {
+                rate,
+                check_login_every,
+                reset_budget,
+            },
             json,
         ),
         ReconCommands::Triage { calibrate, probes } => {
@@ -247,6 +290,8 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
             max_requests,
             rate,
             origin,
+            reset_budget,
+            stream,
         } => paths(
             &root,
             session,
@@ -266,10 +311,13 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
                 max_requests,
                 rate,
                 origin: origin.as_deref(),
+                reset_budget,
+                stream,
             },
             json,
         ),
         ReconCommands::Known { origin } => known(&root, session, origin.as_deref(), json),
+        ReconCommands::Jobs { action } => jobs(&root, session, action, json),
         ReconCommands::Show { id } => show(&root, session, &id, json),
     }
 }
@@ -508,8 +556,24 @@ impl Sender {
         target: &str,
         method: &str,
     ) -> anyhow::Result<Sent> {
+        self.probe_with(selector, from, target, method, false)
+    }
+
+    /// The same, with the page's network allowance started again first.
+    ///
+    /// The budget bounds page code; a run that deliberately sends hundreds of
+    /// requests is the opposite case, and asking for it is the operator's
+    /// decision rather than this plugin's (N12).
+    fn probe_with(
+        &mut self,
+        selector: Option<&str>,
+        from: u64,
+        target: &str,
+        method: &str,
+        reset_budget: bool,
+    ) -> anyhow::Result<Sent> {
         match self {
-            Sender::PerCall => probe(selector, from, target, method),
+            Sender::PerCall => probe(selector, from, target, method, reset_budget),
             Sender::Rpc { .. } => {
                 let reply = self.ask(json!({
                     "verb": "resend",
@@ -518,6 +582,7 @@ impl Sender {
                     // would ask for a path with a body.
                     "set": [format!("method={method}")],
                     "raw_target": target,
+                    "reset_budget": reset_budget,
                 }))?;
                 sent_from(&reply)
             }
@@ -599,7 +664,13 @@ fn sent_from(reply: &Value) -> anyhow::Result<Sent> {
 }
 
 /// One request, one process. The fallback path.
-fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyhow::Result<Sent> {
+fn probe(
+    selector: Option<&str>,
+    from: u64,
+    target: &str,
+    method: &str,
+    reset_budget: bool,
+) -> anyhow::Result<Sent> {
     let mut command = std::process::Command::new(h5i());
     command
         .arg("browser")
@@ -613,6 +684,9 @@ fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyho
         .arg("--raw-target")
         .arg(target)
         .arg("--json");
+    if reset_budget {
+        command.arg("--reset-budget");
+    }
     if let Some(name) = selector {
         command.arg("--session").arg(name);
     }
@@ -671,13 +745,14 @@ fn visit(
     from: u64,
     url: &url::Url,
     identity: &str,
+    reset_budget: bool,
 ) -> anyhow::Result<Visited> {
     let target = match url.query() {
         Some(query) => format!("{}?{query}", url.path()),
         None => url.path().to_string(),
     };
     let origin = h5i_recon::ingest::origin_of(url);
-    let sent = sender.probe(selector, from, &target, "GET")?;
+    let sent = sender.probe_with(selector, from, &target, "GET", reset_budget)?;
     let req = format!("req_{}", sent.seq);
 
     let mut visited = Visited {
@@ -734,13 +809,19 @@ fn visit(
 }
 
 /// `h5i recon crawl`.
+/// The parts of a crawl that are not bounds.
+struct CrawlRun {
+    rate: f64,
+    check_login_every: usize,
+    reset_budget: bool,
+}
+
 fn crawl(
     root: &Path,
     selector: Option<&str>,
     seeds: &[String],
     bounds: h5i_recon::crawl::Bounds,
-    rate: f64,
-    check_login_every: usize,
+    run: CrawlRun,
     json_out: bool,
 ) -> anyhow::Result<()> {
     let (session, ledger, capped) = open_ledger(root, selector)?;
@@ -786,13 +867,27 @@ fn crawl(
         );
     }
 
-    let pause = if rate > 0.0 {
-        std::time::Duration::from_secs_f64(1.0 / rate)
+    let pause = if run.rate > 0.0 {
+        std::time::Duration::from_secs_f64(1.0 / run.rate)
     } else {
         std::time::Duration::ZERO
     };
     let mut sender = Sender::open(selector);
-    let mut observations = Vec::new();
+    let mut pending = Pending::new(&ledger);
+    let recon = bs::dir(root, &session.id).join(h5i_recon::ledger::RECON_DIR);
+    let mut job = h5i_recon::jobs::Job::new(
+        "crawl",
+        json!({
+            "seed": seeds,
+            "depth": bounds.depth,
+            "max_requests": bounds.max_requests,
+            "per_shape": bounds.per_template,
+            "rate": run.rate,
+            "check_login_every": run.check_login_every,
+            "reset_budget": run.reset_budget,
+        }),
+    );
+    h5i_recon::jobs::save(&recon, &job)?;
     let mut walked: Vec<Value> = Vec::new();
     let mut login: Option<(url::Url, h5i_recon::crawl::Fingerprint)> = None;
     let mut stopped: Option<String> = None;
@@ -803,12 +898,20 @@ fn crawl(
         if !pause.is_zero() {
             std::thread::sleep(pause);
         }
-        let visited = match visit(&store, &mut sender, selector, from, &url, &identity) {
+        let visited = match visit(
+            &store,
+            &mut sender,
+            selector,
+            from,
+            &url,
+            &identity,
+            run.reset_budget,
+        ) {
             Ok(visited) => visited,
             Err(why) => {
                 // Refused, or the engine could not send it. Either way it is a
                 // fact about this walk and goes in the ledger as one.
-                observations.push(
+                pending.push(
                     h5i_recon::Observation::new(
                         &h5i_recon::ingest::origin_of(&url),
                         url.path(),
@@ -820,7 +923,7 @@ fn crawl(
                         },
                     )
                     .refused(why.to_string()),
-                );
+                )?;
                 walked.push(json!({"url": url.to_string(), "refused": why.to_string()}));
                 continue;
             }
@@ -836,11 +939,11 @@ fn crawl(
                 frontier.offer(disclosed, depth + 1);
             }
         }
-        observations.extend(visited.observations);
+        pending.extend(visited.observations)?;
         login.get_or_insert_with(|| (url.clone(), visited.fingerprint.clone()));
 
         since_check += 1;
-        if check_login_every > 0 && since_check >= check_login_every {
+        if run.check_login_every > 0 && since_check >= run.check_login_every {
             since_check = 0;
             let Some((probe_url, before)) = &login else {
                 continue;
@@ -848,7 +951,15 @@ fn crawl(
             // The check is a request like any other, so it is counted and it
             // stops when the allowance does.
             checks += 1;
-            match visit(&store, &mut sender, selector, from, probe_url, &identity) {
+            match visit(
+                &store,
+                &mut sender,
+                selector,
+                from,
+                probe_url,
+                &identity,
+                run.reset_budget,
+            ) {
                 Ok(now) if h5i_recon::crawl::identity_lost(before, &now.fingerprint) => {
                     stopped = Some(format!(
                         "the page this walk started from answers differently now, so the                          session is no longer logged in as `{identity}`. Nothing after this                          point would be that identity's answer. Log in again and re-run"
@@ -872,13 +983,20 @@ fn crawl(
         ));
     }
 
-    let written = ledger.append(&observations)?;
+    pending.flush()?;
+    let written = pending.written;
     let inventory = ledger.read()?;
+    job.ended_at = Some(h5i_wire::record::now_rfc3339());
+    job.requests = (frontier.spent() + checks) as u64;
+    job.written = written as u64;
+    job.stopped = stopped.clone();
+    h5i_recon::jobs::save(&recon, &job)?;
     if json_out {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "schema": SCHEMA,
+                "job": job.id,
                 "origin": origin,
                 "requests": frontier.spent() + checks,
                 "login_checks": checks,
@@ -891,6 +1009,7 @@ fn crawl(
         );
         return Ok(());
     }
+    println!("  job      : {}", job.id);
     println!("  origin   : {origin}");
     println!(
         "  requests : {} ({} of them login checks)",
@@ -1140,6 +1259,59 @@ fn triage(
     Ok(())
 }
 
+/// How many observations to hold before writing them down.
+///
+/// The ledger is append-only so a run that dies has still earned what it
+/// found, which is only true if it writes as it goes.
+const FLUSH_EVERY: usize = 25;
+
+/// How often a long run says where it has got to, on stderr.
+const PROGRESS_EVERY: usize = 25;
+
+/// Observations on their way to the ledger, written in batches.
+struct Pending<'a> {
+    ledger: &'a Ledger,
+    held: Vec<h5i_recon::Observation>,
+    written: usize,
+}
+
+impl<'a> Pending<'a> {
+    fn new(ledger: &'a Ledger) -> Self {
+        Self {
+            ledger,
+            held: Vec::new(),
+            written: 0,
+        }
+    }
+
+    fn push(&mut self, observation: h5i_recon::Observation) -> anyhow::Result<()> {
+        self.held.push(observation);
+        if self.held.len() >= FLUSH_EVERY {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn extend(
+        &mut self,
+        observations: impl IntoIterator<Item = h5i_recon::Observation>,
+    ) -> anyhow::Result<()> {
+        for observation in observations {
+            self.push(observation)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> anyhow::Result<()> {
+        if self.held.is_empty() {
+            return Ok(());
+        }
+        self.written += self.ledger.append(&self.held)?;
+        self.held.clear();
+        Ok(())
+    }
+}
+
 /// What one `paths` run was asked to do.
 struct PathRun<'a> {
     wordlist: Option<&'a Path>,
@@ -1149,6 +1321,14 @@ struct PathRun<'a> {
     max_requests: usize,
     rate: f64,
     origin: Option<&'a str>,
+    /// Start the page's network allowance again before each send.
+    ///
+    /// Off by default. The budget bounds page code; a discovery run is the
+    /// opposite, and raising it is the operator's decision to make out loud
+    /// (N12).
+    reset_budget: bool,
+    /// Write one JSON line per probe as it happens.
+    stream: bool,
 }
 
 /// `h5i recon paths`.
@@ -1216,11 +1396,28 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
         .unwrap_or_else(|| "session words".to_string());
 
     let mut sender = Sender::open(selector);
-    let mut observations = Vec::new();
+    let mut pending = Pending::new(&ledger);
     let mut spent = 0usize;
     let mut answered: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped = 0usize;
     let mut stopped = None;
+
+    let recon = bs::dir(root, &session.id).join(h5i_recon::ledger::RECON_DIR);
+    let mut job = h5i_recon::jobs::Job::new(
+        "paths",
+        json!({
+            "wordlist": run.wordlist.map(|p| p.display().to_string()),
+            "reuse_words": run.reuse_words,
+            "under": directories,
+            "extensions": run.shapes.extensions,
+            "backups": run.shapes.backups,
+            "max_requests": run.max_requests,
+            "rate": run.rate,
+            "origin": origin,
+            "reset_budget": run.reset_budget,
+        }),
+    );
+    h5i_recon::jobs::save(&recon, &job)?;
 
     'outer: for directory in &directories {
         for word in &words {
@@ -1241,9 +1438,19 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
                     std::thread::sleep(pause);
                 }
                 spent += 1;
-                match sender.probe(selector, from, &target, "GET") {
+                if spent.is_multiple_of(PROGRESS_EVERY) {
+                    // Progress to stderr, results to stdout (W9).
+                    eprintln!("  {spent}/{} asked", run.max_requests);
+                }
+                match sender.probe_with(selector, from, &target, "GET", run.reset_budget) {
                     Ok(sent) => {
                         let req = format!("req_{}", sent.seq);
+                        if run.stream {
+                            println!(
+                                "{}",
+                                json!({"path": target, "status": sent.status, "req": req})
+                            );
+                        }
                         *answered
                             .entry(
                                 sent.status
@@ -1251,7 +1458,7 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
                                     .unwrap_or_else(|| "no answer".to_string()),
                             )
                             .or_default() += 1;
-                        observations.push(
+                        pending.push(
                             h5i_recon::Observation::new(
                                 &origin,
                                 &target,
@@ -1264,10 +1471,10 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
                             )
                             .with_req(req)
                             .with_status(sent.status),
-                        );
+                        )?;
                     }
                     Err(why) => {
-                        observations.push(
+                        pending.push(
                             h5i_recon::Observation::new(
                                 &origin,
                                 &target,
@@ -1279,7 +1486,7 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
                                 },
                             )
                             .refused(why.to_string()),
-                        );
+                        )?;
                         // A budget that ran out or a policy that refused will
                         // refuse the next one too.
                         stopped = Some(why.to_string());
@@ -1290,13 +1497,21 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
         }
     }
 
-    let written = ledger.append(&observations)?;
+    pending.flush()?;
+    let written = pending.written;
     let after = ledger.read()?;
+    job.ended_at = Some(h5i_wire::record::now_rfc3339());
+    job.requests = spent as u64;
+    job.written = written as u64;
+    job.stopped = stopped.clone();
+    h5i_recon::jobs::save(&recon, &job)?;
+
     if json_out {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "schema": SCHEMA,
+                "job": job.id,
                 "origin": origin,
                 "words": words.len(),
                 "requests": spent,
@@ -1310,6 +1525,7 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
         );
         return Ok(());
     }
+    println!("  job      : {}", job.id);
     println!("  origin   : {origin}");
     println!("  words    : {} from {}", words.len(), preview(&list_name));
     println!("  requests : {spent} ({skipped} already answered, not asked again)");
@@ -1489,6 +1705,154 @@ fn known(
     println!("  written  : {written} row(s)");
     println!("  cursor   : {}", inventory.cursor);
     Ok(())
+}
+
+/// `h5i recon jobs`.
+fn jobs(
+    root: &Path,
+    selector: Option<&str>,
+    action: JobCommands,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let session = resolve_for_reading(root, selector)?;
+    let recon = bs::dir(root, &session.id).join(h5i_recon::ledger::RECON_DIR);
+
+    match action {
+        JobCommands::List => {
+            let jobs = h5i_recon::jobs::list(&recon);
+            if json_out {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({"schema": SCHEMA, "jobs": jobs}))?
+                );
+                return Ok(());
+            }
+            if jobs.is_empty() {
+                println!("  this session has run nothing that spends requests");
+                return Ok(());
+            }
+            for job in jobs {
+                println!(
+                    "  {:<28} {:<6} {:>5} requests  {:>5} rows  {}",
+                    job.id,
+                    job.verb,
+                    job.requests,
+                    job.written,
+                    if job.is_finished() {
+                        "finished"
+                    } else {
+                        "did not finish"
+                    }
+                );
+            }
+            Ok(())
+        }
+        JobCommands::Show { id } => {
+            let Some(job) = h5i_recon::jobs::find(&recon, id.as_deref()) else {
+                anyhow::bail!("no such job. `h5i recon jobs list` says what there is");
+            };
+            if json_out {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({"schema": SCHEMA, "job": job}))?
+                );
+                return Ok(());
+            }
+            println!("  {} {}", job.id, job.verb);
+            println!("  started  : {}", job.started_at);
+            println!(
+                "  ended    : {}",
+                job.ended_at.as_deref().unwrap_or("it did not")
+            );
+            println!("  requests : {}", job.requests);
+            println!("  rows     : {}", job.written);
+            if let Some(why) = &job.stopped {
+                println!("  stopped  : {}", preview(why));
+            }
+            println!("  asked for: {}", job.args);
+            Ok(())
+        }
+        JobCommands::Resume { id } => {
+            let Some(job) = h5i_recon::jobs::find(&recon, id.as_deref()) else {
+                anyhow::bail!("no such job. `h5i recon jobs list` says what there is");
+            };
+            resume(root, selector, &job, json_out)
+        }
+    }
+}
+
+/// Run a recorded job again, with what it was given the first time.
+fn resume(
+    root: &Path,
+    selector: Option<&str>,
+    job: &h5i_recon::jobs::Job,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let args = &job.args;
+    let string = |name: &str| args.get(name).and_then(Value::as_str).map(str::to_string);
+    let number = |name: &str, fallback: usize| {
+        args.get(name)
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(fallback)
+    };
+    let flag = |name: &str| args.get(name).and_then(Value::as_bool).unwrap_or(false);
+    let rate = args.get("rate").and_then(Value::as_f64).unwrap_or(4.0);
+    let list = |name: &str| -> Vec<String> {
+        args.get(name)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    eprintln!("  resuming : {} ({})", job.id, job.verb);
+    match job.verb.as_str() {
+        "paths" => {
+            let wordlist = string("wordlist");
+            paths(
+                root,
+                selector,
+                PathRun {
+                    wordlist: wordlist.as_deref().map(Path::new),
+                    reuse_words: flag("reuse_words"),
+                    under: &list("under"),
+                    shapes: h5i_recon::paths::Shapes {
+                        extensions: list("extensions"),
+                        backups: flag("backups"),
+                    },
+                    max_requests: number("max_requests", 500),
+                    rate,
+                    origin: string("origin").as_deref(),
+                    reset_budget: flag("reset_budget"),
+                    stream: false,
+                },
+                json_out,
+            )
+        }
+        "crawl" => crawl(
+            root,
+            selector,
+            &list("seed"),
+            h5i_recon::crawl::Bounds {
+                depth: number("depth", 3),
+                max_requests: number("max_requests", 200),
+                per_template: number("per_shape", 20),
+            },
+            CrawlRun {
+                rate,
+                check_login_every: number("check_login_every", 25),
+                reset_budget: flag("reset_budget"),
+            },
+            json_out,
+        ),
+        other => anyhow::bail!("`{other}` is not a verb this can run again"),
+    }
 }
 
 /// `h5i recon extract`.

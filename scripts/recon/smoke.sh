@@ -23,6 +23,7 @@ PORT=$((20000 + RANDOM % 10000))
 # A name of its own per run: a leftover session from a previous run would be
 # reused by `browser open --session`, and the suite would test that one.
 SESSION="recon-smoke-$$"
+WORDS="${TMPDIR:-/tmp}/recon-words.$$"
 FAILED=0
 
 python3 "$HERE/../websec/server.py" "$PORT" &
@@ -30,6 +31,7 @@ SERVER=$!
 cleanup() {
     kill "$SERVER" 2>/dev/null
     "$H5I" browser close --session "$SESSION" >/dev/null 2>&1
+    rm -f "$WORDS"
 }
 trap cleanup EXIT
 sleep 1
@@ -69,15 +71,24 @@ is "it spent no more than it was allowed" \
 has "and it walked a disclosed page" "$OUT" "/site/one"
 
 echo "── paths asks with a list the operator brings ───────────────────────"
-printf 'help\nadmin\n' > "${TMPDIR:-/tmp}/recon-words.$$"
-OUT=$("$RECON" paths --session "$SESSION" --wordlist "${TMPDIR:-/tmp}/recon-words.$$" \
+# The list lives until cleanup: a job records the path it was given, so a
+# resume needs the file to still be there.
+printf 'help\nadmin\n' > "$WORDS"
+OUT=$("$RECON" paths --session "$SESSION" --wordlist "$WORDS" \
         --under /site --extensions php --max-requests 10 --rate 0 --json)
-rm -f "${TMPDIR:-/tmp}/recon-words.$$"
 is "it asked, and stayed inside its allowance" \
    "$(echo "$OUT" | py "0 < d['requests'] <= 10")" "True"
 is "and it used one process for the run" "$(echo "$OUT" | py "d['one_process']")" "True"
 is "a word list with no words is refused, not guessed at" \
    "$("$RECON" paths --session "$SESSION" --under /site >/dev/null 2>&1; echo $?)" "2"
+
+echo "── a run is a job, and a job can be run again ───────────────────────"
+JOBS=$("$RECON" jobs list --session "$SESSION" --json)
+is "the paths run was recorded" "$(echo "$JOBS" | py "len([j for j in d['jobs'] if j['verb'] == 'paths'])")" "1"
+is "and it says it finished" "$(echo "$JOBS" | py "[j['ended_at'] is not None for j in d['jobs'] if j['verb'] == 'paths'][0]")" "True"
+AGAIN=$("$RECON" jobs resume --session "$SESSION" --json 2>/dev/null)
+is "resuming asks only for what is not answered yet" \
+   "$(echo "$AGAIN" | py "d['skipped'] > 0")" "True"
 
 echo "── triage tells a soft 404 from a page ──────────────────────────────"
 OUT=$("$RECON" triage --session "$SESSION" --calibrate --json)

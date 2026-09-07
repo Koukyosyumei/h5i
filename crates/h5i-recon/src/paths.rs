@@ -32,7 +32,15 @@ pub struct Shapes {
 /// Read a wordlist: one entry per line, `#` comments and blanks dropped.
 pub fn read_wordlist(path: &Path) -> Result<Vec<String>, H5iError> {
     let size = std::fs::metadata(path)
-        .map_err(|e| H5iError::with_path(e, path))?
+        .map_err(|e| match e.kind() {
+            // A resume names the list the first run was given, so a list that
+            // has since moved is the ordinary way this fails.
+            std::io::ErrorKind::NotFound => H5iError::Metadata(format!(
+                "no wordlist at {}. h5i ships none: name a list you have, and keep it                  where a resume can find it again",
+                path.display()
+            )),
+            _ => H5iError::with_path(e, path),
+        })?
         .len();
     if size > MAX_LIST_BYTES {
         return Err(H5iError::Metadata(format!(

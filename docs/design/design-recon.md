@@ -375,6 +375,20 @@ there, while the two real pages confirmed.
   ledger, so a stopped job and a completed job differ in coverage and not in
   integrity.
 
+Built 2026-09-07, with one deviation and one addition. The deviation: there is
+no `jobs stop`, because a run is a foreground process and the way to stop it is
+to stop it. What the design was really asking for is that stopping costs
+nothing, so observations are written in batches of 25 as the run goes rather
+than at the end; a killed run keeps what it found, which is what the ledger
+being append-only was for. The addition: `--reset-budget` is a flag on `paths`
+and `crawl` rather than something either does on its own. A page's allowance
+bounds page code; a discovery run is the opposite case, and raising it is the
+operator saying so out loud.
+
+`jobs list`, `jobs show` and `jobs resume` are built. A resume reads the
+recorded parameters and skips whatever the ledger has already answered, so it
+continues a run rather than repeating one.
+
 ## N13. Scope, policy and authorisation
 
 Recon inherits W16 unchanged, and adds one rule of its own.
@@ -584,8 +598,7 @@ Still open:
    and policy, and wrong for a target inventory that spans a week. A
    `recon merge` verb folding several sessions' ledgers by identity is the
    likely answer and is not designed here.
-2. **Job control**, N12, is the phase 1 feature still missing: `recon jobs`
-   with resume, progress and a stop that finishes in flight. `--max-requests`
-   and `--rate` on `crawl` and `paths` are the shape its flags should take.
+2. **Phase 1 is built.** What is left of N12 is a per-host rate rather than a
+   per-run one, which only matters once a run reaches more than one host.
 3. **Section prefix.** `N` here, and now cited by code. Moving it costs a
    sweep.

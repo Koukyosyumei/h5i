@@ -7,6 +7,7 @@
 pub mod crawl;
 pub mod extract;
 pub mod ingest;
+pub mod jobs;
 pub mod js;
 pub mod known;
 pub mod ledger;
