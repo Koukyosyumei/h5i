@@ -8468,6 +8468,25 @@
     forward() { history.go(1); },
   };
 
+  /// A same-document navigation, driven from the verb layer.
+  ///
+  /// Following `<a href="#year">` by *fetching* the page again is a reload, and
+  /// it throws away everything the click's own handler just built. Here the
+  /// address moves and the page hears `hashchange`, which is the pair a router
+  /// or a jQuery gallery is written against.
+  globalThis.__h5iFragmentNavigate = function (href) {
+    const from = currentAddress;
+    const to = String(href);
+    if (to === from) return false;
+    currentAddress = to;
+    entries[entryAt] = { state: entries[entryAt]?.state ?? null, url: to };
+    const event = new Event("hashchange", { bubbles: false });
+    event.oldURL = from;
+    event.newURL = to;
+    dispatch(wrap(api.root()), event);
+    return true;
+  };
+
   // `now()` returns the *virtual* clock, deliberately: everything else in this
   // engine measures a page's own timeline rather than the wall, and a page that
   // computed a duration from a real clock would get a number about how loaded
