@@ -9,10 +9,17 @@ h5i browser open https://target.example --capture --script
 h5i recon extract                            # what the pages and bundles disclosed
 h5i recon known                              # robots.txt, sitemap.xml, security.txt
 h5i recon crawl --max-requests 200 --rate 4  # walk it, under this session's login
+h5i recon paths --wordlist ./words.txt       # ask for what was never disclosed
 h5i recon triage --calibrate                 # fold the noise, confirm what is real
 h5i recon endpoints --state confirmed --json
 h5i recon show ep_1af62d68                   # sources, evidence, what it answered
 ```
+
+`paths` takes a list you bring: h5i ships none, and `--reuse-words` adds the words this session has already seen. `--extensions php,bak` and `--backups` are the mechanical shapes; `--under /admin` narrows where it asks.
+
+Runs that spend requests are jobs. `h5i recon jobs list`, `jobs show`, and `jobs resume`, which repeats the recorded parameters and skips whatever the ledger already answered. The ledger is written as a run goes, so stopping one keeps what it found. `--reset-budget` starts the page's network allowance again when a long run needs it; say it out loud rather than assuming it.
+
+`h5i recon import --format urls|katana|subfinder|httpx|openapi <file>` reads what another tool produced. Those rows are candidates and stay candidates: h5i does not run the tools, and never records what one of them saw as an answer. `h5i recon export` writes the inventory as JSONL, and `h5i recon merge --from <session>` folds another session's ledger in, keeping each identity's observations apart.
 
 ## What each state means
 

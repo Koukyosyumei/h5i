@@ -1418,8 +1418,10 @@ path looks like in each directory. Against an application that answers <code>200
 for everything, nothing is confirmed without it.</p>
 <p>h5i ships no wordlist and generates no payloads: <code>paths --wordlist</code> takes a list
 you bring, <code>--reuse-words</code> uses the words the session has already seen, and
-<code>recon import</code> reads a file another tool produced as candidates that stay
-candidates until an h5i request answers.</p>
+<code>recon import --format urls|katana|subfinder|httpx|openapi</code> reads a file another
+tool produced as candidates that stay candidates until an h5i request answers.
+<code>recon export</code> writes the inventory as JSONL; <code>recon merge --from &lt;session&gt;</code>
+folds another session's ledger in, keeping each identity's observations apart.</p>
 <p>Runs that spend requests are jobs: <code>h5i recon jobs list</code>, <code>jobs show</code>, and
 <code>jobs resume</code>, which re-runs the same parameters and skips what the ledger has
 already answered. The ledger is written as a run goes, so a run that is killed

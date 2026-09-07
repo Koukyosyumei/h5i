@@ -1426,8 +1426,9 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
         run.under.to_vec()
     };
     // Everything this session already asked for, so a run does not re-spend a
-    // request on an answer the ledger holds.
-    let asked_before: Vec<&str> = inventory
+    // request on an answer the ledger holds. A set, because a resume checks it
+    // once per generated target and a ledger runs to thousands of rows.
+    let asked_before: std::collections::BTreeSet<&str> = inventory
         .endpoints
         .iter()
         .filter(|e| e.origin == origin && e.state != h5i_recon::State::Candidate)
@@ -1471,7 +1472,7 @@ fn paths(root: &Path, selector: Option<&str>, run: PathRun<'_>, json_out: bool) 
     'outer: for directory in &directories {
         for word in &words {
             for target in h5i_recon::paths::expand(directory, word, &run.shapes) {
-                if asked_before.contains(&target.as_str()) {
+                if asked_before.contains(target.as_str()) {
                     skipped += 1;
                     continue;
                 }

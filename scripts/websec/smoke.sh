@@ -179,6 +179,12 @@ RPC=$(printf '{"id":1,"verb":"ping"}\n{"id":2,"verb":"resend","from":0,"raw_targ
 is "ping is answered, with its id" "$(echo "$RPC" | sed -n 1p | jqp "d['id'], d['ok']")" "1 True"
 is "a resend answers with the receipt it made" "$(echo "$RPC" | sed -n 2p | jqp "d['response']['status']")" "200"
 is "an unknown verb is an error carrying the same id" "$(echo "$RPC" | sed -n 3p | jqp "d['id'], d['error']['code']")" "3 verb"
+# A line longer than the cap is refused without being held: the loop reads the
+# bound, not past it.
+HUGE=$(python3 -c "print('{\"id\":4,\"verb\":\"ping\",\"pad\":\"' + 'a' * 2000000 + '\"}')")
+OVER=$(printf '%s\n{"id":5,"verb":"ping"}\n' "$HUGE" | "$H5I" browser rpc --stdio --session ws-smoke-a)
+is "an oversized line is refused" "$(echo "$OVER" | sed -n 1p | jqp "d['error']['code']")" "too-long"
+is "and the next line is still read" "$(echo "$OVER" | sed -n 2p | jqp "d['id']")" "5"
 
 echo "── the plugin ───────────────────────────────────────────────────────"
 PLUGIN="$WEBSEC"

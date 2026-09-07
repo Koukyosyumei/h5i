@@ -2915,26 +2915,32 @@ fn rpc(root: &Path, selector: Option<&str>, stdio: bool) -> anyhow::Result<()> {
     if !stdio {
         anyhow::bail!("`rpc` speaks over stdin and stdout: pass `--stdio`");
     }
-    let input = std::io::stdin();
+    use std::io::{BufRead, Read};
+
+    let stdin = std::io::stdin();
+    let mut reader = std::io::BufReader::new(stdin.lock());
     let mut line = String::new();
     loop {
         line.clear();
-        // A line is a request an agent composed, so it is bounded like any
-        // other input this process reads.
-        let read = std::io::BufRead::read_line(&mut input.lock(), &mut line)?;
+        // Read the cap, not past it: checking the length afterwards would mean
+        // holding whatever was sent before deciding it was too much.
+        let read = (&mut reader)
+            .take(RPC_MAX_LINE as u64 + 1)
+            .read_line(&mut line)?;
         if read == 0 {
             return Ok(());
         }
-        if line.trim().is_empty() {
-            continue;
-        }
-        if line.len() > RPC_MAX_LINE {
+        if !line.ends_with('\n') && read > RPC_MAX_LINE {
+            drain_line(&mut reader)?;
             println!(
                 "{}",
                 json!({"error": {"code": "too-long", "message": format!(
                     "a request line may be at most {RPC_MAX_LINE} bytes"
                 )}})
             );
+            continue;
+        }
+        if line.trim().is_empty() {
             continue;
         }
         let reply = match serde_json::from_str::<Value>(&line) {
@@ -2949,6 +2955,23 @@ fn rpc(root: &Path, selector: Option<&str>, stdio: bool) -> anyhow::Result<()> {
 
 /// The longest request line the loop will read.
 const RPC_MAX_LINE: usize = 1024 * 1024;
+
+/// Throw away the rest of a line that was too long, in bounded pieces, so the
+/// next read starts on a request rather than in the middle of one.
+fn drain_line(reader: &mut impl std::io::BufRead) -> std::io::Result<()> {
+    use std::io::Read;
+    loop {
+        let mut chunk = Vec::new();
+        let read = std::io::BufRead::read_until(
+            &mut reader.by_ref().take(64 * 1024),
+            b'\n',
+            &mut chunk,
+        )?;
+        if read == 0 || chunk.ends_with(b"\n") {
+            return Ok(());
+        }
+    }
+}
 
 /// One RPC request, answered.
 fn rpc_one(root: &Path, selector: Option<&str>, request: &Value) -> Value {

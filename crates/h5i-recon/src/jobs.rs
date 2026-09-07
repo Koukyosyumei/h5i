@@ -33,8 +33,13 @@ pub struct Job {
 impl Job {
     pub fn new(verb: &str, args: Value) -> Self {
         let at = h5i_wire::record::now_rfc3339();
-        // The clock makes the name, so jobs sort in the order they ran.
-        let id = format!("job_{}", at.replace([':', '-', '.', 'T', 'Z'], ""));
+        // The clock names it, so jobs sort in the order they ran; the pid ends
+        // it, so two runs starting in the same microsecond are two records.
+        let id = format!(
+            "job_{}_{}",
+            at.replace([':', '-', '.', 'T', 'Z'], ""),
+            std::process::id()
+        );
         Self {
             id,
             verb: verb.to_string(),
@@ -74,7 +79,11 @@ pub fn save(recon: &Path, job: &Job) -> Result<(), H5iError> {
     std::fs::rename(&staging, &path).map_err(|e| H5iError::with_path(e, &path))
 }
 
-/// Every job this session has recorded, oldest first.
+/// The most job records one listing reads.
+pub const MAX_JOBS_LISTED: usize = 500;
+
+/// Every job this session has recorded, oldest first, newest kept when there
+/// are more than [`MAX_JOBS_LISTED`].
 pub fn list(recon: &Path) -> Vec<Job> {
     let mut jobs: Vec<Job> = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir(recon)) else {
@@ -92,6 +101,9 @@ pub fn list(recon: &Path) -> Vec<Job> {
         }
     }
     jobs.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    if jobs.len() > MAX_JOBS_LISTED {
+        jobs.drain(..jobs.len() - MAX_JOBS_LISTED);
+    }
     jobs
 }
 
@@ -118,6 +130,24 @@ mod tests {
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].args["wordlist"], "words.txt");
         assert!(!read[0].is_finished(), "a job that never ended says so");
+    }
+
+    #[test]
+    fn a_listing_keeps_the_newest_and_says_nothing_about_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for n in 0..MAX_JOBS_LISTED + 10 {
+            let mut job = Job::new("paths", Value::Null);
+            job.id = format!("job_{n:06}");
+            job.started_at = format!("2026-01-01T00:00:{n:06}Z");
+            save(dir.path(), &job).expect("save");
+        }
+        let listed = list(dir.path());
+        assert_eq!(listed.len(), MAX_JOBS_LISTED);
+        assert_eq!(
+            listed.last().expect("newest").id,
+            format!("job_{:06}", MAX_JOBS_LISTED + 9),
+            "a resume with no id means the newest run"
+        );
     }
 
     #[test]

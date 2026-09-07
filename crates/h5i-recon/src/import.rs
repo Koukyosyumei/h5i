@@ -113,7 +113,13 @@ fn lines(format: Format, base: &Url, text: &str) -> Imported {
             ),
             (None, Format::Subfinder) => {
                 // A bare host, which is what subfinder prints without `-json`.
-                (Some(format!("https://{line}/")), "GET".to_string())
+                // A URL in this file is a file in the wrong format, and
+                // `https://https://x/` is not a host anyone should chase.
+                if line.contains("://") || line.contains('/') {
+                    (None, "GET".to_string())
+                } else {
+                    (Some(format!("https://{line}/")), "GET".to_string())
+                }
             }
             (None, _) => (Some(line.to_string()), "GET".to_string()),
         };
@@ -305,6 +311,23 @@ mod tests {
                 "https://api.target.test/".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn a_url_in_a_host_list_is_refused_rather_than_mangled() {
+        let text = "admin.target.test\nhttps://target.test/a\n";
+        let imported = read(Format::Subfinder, &base(), text);
+        assert_eq!(urls(&imported), vec!["https://admin.target.test/".to_string()]);
+        assert_eq!(imported.unreadable, 1, "that line belongs in `--format urls`");
+    }
+
+    #[test]
+    fn an_empty_file_reads_as_nothing_rather_than_an_error() {
+        for format in [Format::Urls, Format::Katana, Format::Subfinder, Format::Httpx] {
+            let imported = read(format, &base(), "");
+            assert!(imported.found.is_empty());
+            assert_eq!(imported.unreadable, 0);
+        }
     }
 
     #[test]

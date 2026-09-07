@@ -1220,8 +1220,10 @@ for everything, nothing is confirmed without it.
 
 h5i ships no wordlist and generates no payloads: `paths --wordlist` takes a list
 you bring, `--reuse-words` uses the words the session has already seen, and
-`recon import` reads a file another tool produced as candidates that stay
-candidates until an h5i request answers.
+`recon import --format urls|katana|subfinder|httpx|openapi` reads a file another
+tool produced as candidates that stay candidates until an h5i request answers.
+`recon export` writes the inventory as JSONL; `recon merge --from <session>`
+folds another session's ledger in, keeping each identity's observations apart.
 
 Runs that spend requests are jobs: `h5i recon jobs list`, `jobs show`, and
 `jobs resume`, which re-runs the same parameters and skips what the ledger has
