@@ -81,7 +81,7 @@ and register it in the same pass:
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec
-# h5i plugin install               # says what is installed
+# h5i plugin list                  # says what is installed
 ```
 
 ---
