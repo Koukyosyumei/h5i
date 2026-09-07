@@ -2360,6 +2360,24 @@ impl Page {
         self.dispatch_event(root, "scroll")
     }
 
+    /// Follow a link that only moves the fragment, without refetching.
+    ///
+    /// What a browser calls a same-document navigation: the address moves, the
+    /// page hears `hashchange`, and the DOM it has already built survives.
+    /// Opening it as a fresh page instead discarded whatever the click's own
+    /// handler had just done, which is most of what `href="#"` is for.
+    pub fn navigate_fragment(&mut self, to: &Url) -> Option<Vec<crate::script::host::RequestLink>> {
+        self.url = to.clone();
+        let script = self.script.as_mut()?;
+        let address = serde_json::to_string(to.as_str()).ok()?;
+        let _ = script.eval(&format!("__h5iFragmentNavigate({address})"));
+        let settled = script.settle();
+        self.after_script(settled);
+        self.deliver_resource_events();
+        let requests = self.script.as_mut()?.take_requests();
+        Some(requests)
+    }
+
     /// The link at a viewport coordinate, resolved against the page's base.
     ///
     /// Hit-testing takes the scroll offset into account because the viewer

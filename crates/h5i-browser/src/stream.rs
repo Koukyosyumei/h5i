@@ -1443,6 +1443,10 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
             );
         }
     };
+    if same_document(session.page.url(), &resolved) {
+        follow_fragment(session, &resolved, None);
+        return Ok(());
+    }
     match session.factory.open(&resolved) {
         Ok(page) => {
             // Which drops the refs the caller last read, because they describe a
@@ -1458,6 +1462,49 @@ fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
         // engine working, and the agent needs to read it as one.
         Err(error) => Err(VerbError::refused(format!("{error}")).reply()),
     }
+}
+
+/// Do these two addresses name the same document?
+///
+/// Everything but the fragment, which is what the HTML spec means by a
+/// same-document navigation: the bytes are already here, only the anchor moved.
+fn same_document(here: &Url, there: &Url) -> bool {
+    here.scheme() == there.scheme()
+        && here.authority() == there.authority()
+        && here.path() == there.path()
+        && here.query() == there.query()
+        && here.fragment() != there.fragment()
+}
+
+/// Move to a fragment of the page already loaded, as a browser does.
+///
+/// Nothing is refetched: the address moves, `hashchange` fires, and the DOM
+/// stays. The history entry is recorded, so `back` steps over the anchor the
+/// way it does in a browser.
+fn follow_fragment(session: &mut Session, to: &Url, reference: Option<&str>) -> (Value, bool) {
+    let caused = session.page.navigate_fragment(to).unwrap_or_default();
+    session.history.visit(to.clone());
+    // The tree did not change identity, but a `hashchange` handler may have
+    // rewritten it, so the handles the caller is holding describe a page that
+    // has moved on.
+    session.served_refs = None;
+    session.hint_refs = None;
+    let settled = session
+        .page
+        .settled()
+        .map(|s| s.render())
+        .unwrap_or_default();
+    let mut reply = json!({
+        "ok": true,
+        "url": session.page.url().to_string(),
+        "same_document": true,
+        "settled": settled,
+        "caused_requests": caused,
+    });
+    if let Some(reference) = reference {
+        reply["ref"] = json!(reference);
+    }
+    (reply, true)
 }
 
 /// How many a page may chain in one verb. One that keeps going is looping.
@@ -2507,11 +2554,16 @@ fn control_verb_inner(
                 {
                     return submit_the_form(session, node_id, reference);
                 }
-                if href.is_none() {
+                // `!proceed` is a handler that called `preventDefault`: it has
+                // taken the click, and following the href anyway would reload
+                // over the state it just built. That is the whole shape of a
+                // single-page app, and it read as "the click did nothing".
+                if href.is_none() || !proceed {
                     return (
                         json!({
                             "ok": true,
                             "ref": reference,
+                            "url": session.page.url().to_string(),
                             "settled": settled,
                             // Strict causation, from the one component that can
                             // know it: this handler dispatched, these fetches.
@@ -2520,6 +2572,10 @@ fn control_verb_inner(
                             // the action log attribute every fetch to the verb
                             // that merely read them.
                             "caused_requests": caused,
+                            // Said rather than inferred from the unchanged URL:
+                            // an agent that cannot tell a handled click from a
+                            // failed one retries the click.
+                            "default_prevented": !proceed,
                         }),
                         true,
                     );
@@ -2553,6 +2609,9 @@ fn control_verb_inner(
                     );
                 }
             };
+            if same_document(session.page.url(), &resolved) {
+                return follow_fragment(session, &resolved, Some(reference));
+            }
             match session.factory.open(&resolved) {
                 Ok(page) => {
                     session.land(page);
@@ -5715,6 +5774,77 @@ mod tests {
             session.page.snapshot().render()
         );
         assert!(reply["settled"].is_string(), "the reply says whether it finished");
+    }
+
+    /// A handler that took the click keeps it.
+    ///
+    /// `preventDefault` is how a page says "I have handled this, do not follow
+    /// the link". The engine dispatched the event, read the answer, and
+    /// navigated anyway — so every single-page app reloaded over the state its
+    /// own handler had just built, and read as a click that did nothing.
+    #[test]
+    fn a_handler_that_prevents_the_default_keeps_the_page() {
+        let mut session = scripted_session_with(
+            "<html><body><a id='go' href='/elsewhere'>go</a><div id='out'>nothing</div>\
+             <script>document.querySelector('#go').addEventListener('click', (e) => { \
+               e.preventDefault(); \
+               document.querySelector('#out').textContent = 'handler took it'; });\
+             </script></body></html>",
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "selector": "#go"}),
+        );
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["default_prevented"], true, "{reply:?}");
+        assert_eq!(
+            reply["url"], "https://app.example/",
+            "the link was followed over a handler that had taken it: {reply:?}"
+        );
+        assert!(
+            session.page.snapshot().render().contains("handler took it"),
+            "the handler's work was thrown away:\n{}",
+            session.page.snapshot().render()
+        );
+    }
+
+    /// `href="#"` is a same-document navigation, not a reload.
+    ///
+    /// The commonest shape of a scripted link on the web: the href is a
+    /// placeholder and the handler is the point. Refetching the page discarded
+    /// everything the handler had built, which looked exactly like a click that
+    /// was never wired up.
+    #[test]
+    fn a_link_to_a_fragment_moves_without_reloading() {
+        let mut session = scripted_session_with(
+            "<html><body><a id='go' href='#year'>2015</a><div id='out'></div>\
+             <script>document.querySelector('#go').addEventListener('click', () => { \
+               const p = document.createElement('p'); p.textContent = 'films arrived'; \
+               document.querySelector('#out').appendChild(p); });\
+             window.addEventListener('hashchange', () => { \
+               const p = document.createElement('p'); p.textContent = 'hash heard'; \
+               document.querySelector('#out').appendChild(p); });\
+             </script></body></html>",
+        );
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "selector": "#go"}),
+        );
+
+        assert_eq!(reply["same_document"], true, "{reply:?}");
+        assert_eq!(reply["url"], "https://app.example/#year", "{reply:?}");
+        let rendered = session.page.snapshot().render();
+        assert!(
+            rendered.contains("films arrived"),
+            "the click's own work did not survive the anchor:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("hash heard"),
+            "the page was never told the fragment moved:\n{rendered}"
+        );
     }
 
     /// The gesture a lazy-loading page is written against.
