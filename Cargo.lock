@@ -1963,6 +1963,7 @@ dependencies = [
  "flate2",
  "getrandom 0.2.17",
  "h5i-error",
+ "h5i-wire",
  "httpdate",
  "image",
  "libc",
@@ -2092,6 +2093,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
+]
+
+[[package]]
+name = "h5i-wire"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
  "serde_json",
 ]
 

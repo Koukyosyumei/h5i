@@ -14,23 +14,14 @@ use h5i_error::H5iError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Maximum body stored without truncation.
-pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
-
-/// Maximum total body storage per session.
-pub const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
-
-/// The file a body hash names inside a store, or `None` when it is not a hash.
-///
-/// A boxed session's store is on a filesystem the boxed code can write to, so a
-/// `..` in that field would name a path outside it. Hex and length are the
-/// whole check. Public so h5i's own reader shares the rule rather than drifting.
-pub fn body_file(store: &Path, sha256: &str) -> Option<PathBuf> {
-    if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(store.join("bodies").join(sha256))
-}
+// The stored shapes are data, and their readers (the websec plugin, recon's
+// ledger) have no business linking an engine to name them. They live in
+// `h5i-wire`; the writer below stays here, because writing them is the
+// engine's job and nobody else's.
+pub use h5i_wire::message::{
+    Body, Health, MAX_BODY_BYTES, MAX_STORE_BYTES, Skip, StoredRequest, StoredResponse, body_file,
+};
+use h5i_wire::record::now_rfc3339;
 
 /// Skip large media unlikely to aid inspection. Images remain capturable for
 /// upload analysis.
@@ -45,86 +36,9 @@ fn is_skipped_type(content_type: Option<&str>) -> bool {
         || kind.starts_with("application/font")
 }
 
-/// Why a body is not in the store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Skip {
-    /// A media type from the skip list.
-    Media,
-    /// The session store is full. Oversized individual bodies are truncated.
-    StoreFull,
-    /// The engine did not read the body.
-    NotRead,
-    /// Storage failed; the evidence gap remains visible.
-    Failed,
-}
 
-/// Where a message's body went.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Body {
-    /// There was no body. A GET's request body, or a 204.
-    Empty,
-    /// In the store, under `sha256`, which is also its file name.
-    Stored {
-        sha256: String,
-        /// How many bytes are in the store.
-        bytes: u64,
-        /// How many bytes there were, when that is a larger number.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        of_bytes: Option<u64>,
-        /// Set when only the head was kept.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        truncated: bool,
-    },
-    /// Not stored, and why.
-    Skipped {
-        reason: Skip,
-        /// How large it was, when the engine had it in hand to measure.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bytes: Option<u64>,
-    },
-}
 
-/// One request as sent, including client- and cookie-added headers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StoredRequest {
-    pub seq: u64,
-    pub at: String,
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Body,
-}
 
-/// One response, as the engine received it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StoredResponse {
-    pub seq: u64,
-    pub at: String,
-    /// URL for this redirect hop.
-    pub url: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<u16>,
-    pub headers: Vec<(String, String)>,
-    /// Wire encoding; stored bodies are decoded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content_encoding: Option<String>,
-    /// What crossed the wire, when that is a different number from the body's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wire_bytes: Option<u64>,
-    pub body: Body,
-    /// Bytes the connection carried after this response ended.
-    ///
-    /// Empty for every ordinary fetch, because one request gets one response.
-    /// A raw send that desynchronised a proxy from its backend gets two, and
-    /// the second is the smuggled request's answer — the evidence the attack
-    /// worked. Kept beside the response rather than merged into its body,
-    /// because it is not this response's body; it is a different message that
-    /// arrived on the same socket.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trailing: Option<Body>,
-}
 
 /// Response data offered to the store.
 #[derive(Debug, Clone)]
@@ -153,21 +67,7 @@ pub enum Received<'a> {
     NotRead,
 }
 
-/// The engine's clock, matching the receipt's to the microsecond.
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
-}
 
-/// Store counters, including evidence gaps in `errors`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Health {
-    /// Message files written, both phases.
-    pub messages: u64,
-    /// Bytes of body held.
-    pub bytes: u64,
-    /// Messages this store could not write.
-    pub errors: u64,
-}
 
 /// A session's stored messages.
 pub struct Capture {
@@ -710,6 +610,7 @@ mod tests {
         let reopened = Capture::open(&path).expect("reopens");
         assert_eq!(reopened.used(), 4, "the earlier session's bytes still count");
     }
+
 
     #[test]
     fn a_hash_that_is_not_one_names_nothing() {
