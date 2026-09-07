@@ -6,6 +6,7 @@
 
 pub mod crawl;
 pub mod extract;
+pub mod import;
 pub mod ingest;
 pub mod jobs;
 pub mod js;

@@ -24,6 +24,7 @@ PORT=$((20000 + RANDOM % 10000))
 # reused by `browser open --session`, and the suite would test that one.
 SESSION="recon-smoke-$$"
 WORDS="${TMPDIR:-/tmp}/recon-words.$$"
+IMPORTS="${TMPDIR:-/tmp}/recon-import.$$"
 FAILED=0
 
 python3 "$HERE/../websec/server.py" "$PORT" &
@@ -31,7 +32,8 @@ SERVER=$!
 cleanup() {
     kill "$SERVER" 2>/dev/null
     "$H5I" browser close --session "$SESSION" >/dev/null 2>&1
-    rm -f "$WORDS"
+    "$H5I" browser close --session "${SESSION}-b" >/dev/null 2>&1
+    rm -f "$WORDS" "$IMPORTS"
 }
 trap cleanup EXIT
 sleep 1
@@ -98,6 +100,24 @@ is "a 200 that means nothing is not confirmed" \
    "$("$RECON" endpoints --session "$SESSION" --state confirmed --json | py "len([e for e in d['endpoints'] if 'admin' in e['path']])")" "0"
 is "every confirmed row names the message that proves it" \
    "$("$RECON" endpoints --session "$SESSION" --state confirmed --json | py "all(e['evidence'] for e in d['endpoints'])")" "True"
+
+echo "── another tool's file is testimony, not evidence ───────────────────"
+printf '/site/from-a-list\nhttps://elsewhere.test/x\n' > "$IMPORTS"
+OUT=$("$RECON" import --session "$SESSION" --format urls "$IMPORTS" --json)
+is "both lines were read" "$(echo "$OUT" | py "d['read']")" "2"
+is "and every one of them is a candidate" \
+   "$("$RECON" endpoints --session "$SESSION" --json | py "[e['state'] for e in d['endpoints'] if e['path'] == '/site/from-a-list'][0]")" "candidate"
+is "an unknown format is refused" \
+   "$("$RECON" import --session "$SESSION" --format nmap "$IMPORTS" >/dev/null 2>&1; echo $?)" "2"
+
+echo "── the inventory outlives the session ───────────────────────────────"
+is "export writes one endpoint per line" \
+   "$("$RECON" export --session "$SESSION" | wc -l | tr -d ' ' | awk '{print ($1 > 0) ? "yes" : "no"}')" "yes"
+"$H5I" browser open "http://127.0.0.1:$PORT/site/one" --session "${SESSION}-b" --capture --json >/dev/null 2>&1
+OUT=$("$RECON" merge --session "${SESSION}-b" --from "$SESSION" --json)
+is "merging carries the other session's endpoints" "$(echo "$OUT" | py "d['written'] > 0")" "True"
+is "and their evidence keeps the session it belongs to" \
+   "$("$RECON" endpoints --session "${SESSION}-b" --json | py "any('/req_' in (e['evidence'][-1] if e['evidence'] else '') for e in d['endpoints'])")" "True"
 
 echo "── the contract ─────────────────────────────────────────────────────"
 is "an unknown endpoint exits 2" "$("$RECON" show ep_nope --session "$SESSION" >/dev/null 2>&1; echo $?)" "2"

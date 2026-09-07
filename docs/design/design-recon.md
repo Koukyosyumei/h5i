@@ -485,6 +485,13 @@ probing are deliberately deferred and may never be built. An archived URL is a
 claim about the past, and h5i's whole posture is about what this machine
 observed now.
 
+Built 2026-09-07: `recon import --format urls|katana|subfinder|httpx|openapi`.
+Two things it refuses to do. It never records what another tool saw: an httpx
+row carries its URL and not its status, because a status is an answer and only
+an h5i request can produce one here. And OpenAPI is read as JSON only; a YAML
+document is one `yq` away and converting it stays the operator's job, for the
+reason N19 gives about parsers standing where someone else's bytes arrive.
+
 ## N18. What belongs to websec, not here
 
 Listed so the boundary can be defended in review rather than re-argued.
@@ -594,10 +601,11 @@ in 2.4 MB. It also unblocks the step W21 called next for the workbench.
 
 Still open:
 
-1. **Where the ledger's scope ends.** Per session is right for identity, jar
-   and policy, and wrong for a target inventory that spans a week. A
-   `recon merge` verb folding several sessions' ledgers by identity is the
-   likely answer and is not designed here.
+1. ~~**Where the ledger's scope ends.**~~ Answered 2026-09-07: `recon merge
+   --from <session>` folds another session's ledger in, and `recon export`
+   writes the inventory out as JSONL. Identity stays in the key, so what each
+   session saw stays apart, and carried evidence is qualified with the session
+   that made it.
 2. **Phase 1 is built.** What is left of N12 is a per-host rate rather than a
    per-run one, which only matters once a run reaches more than one host.
 3. **Section prefix.** `N` here, and now cited by code. Moving it costs a

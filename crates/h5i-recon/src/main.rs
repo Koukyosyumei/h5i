@@ -213,6 +213,43 @@ enum ReconCommands {
         probes: usize,
     },
 
+    /// Read a file another tool produced, as candidates.
+    ///
+    /// h5i does not run those tools and does not fetch their output. What they
+    /// say is testimony: every row lands as a candidate, and stays one until an
+    /// h5i request answers for it (N17, N19).
+    Import {
+        /// What produced the file: urls (gau, waybackurls), katana,
+        /// subfinder, httpx, or openapi (JSON only).
+        #[arg(long, value_name = "TOOL")]
+        format: String,
+        /// The file to read.
+        #[arg(value_name = "PATH")]
+        file: String,
+        /// Resolve relative entries against this origin. Defaults to the one
+        /// this session reached last.
+        #[arg(long)]
+        origin: Option<String>,
+    },
+
+    /// Write this session's inventory out, one endpoint per line.
+    Export {
+        /// Only endpoints in this state.
+        #[arg(long)]
+        state: Option<String>,
+    },
+
+    /// Fold another session's ledger into this one.
+    ///
+    /// An inventory outlives the session that found it, and a target is worth
+    /// more than one login. Identity stays in the key, so merging two sessions
+    /// keeps what each of them saw apart.
+    Merge {
+        /// The session to read from, by name or id.
+        #[arg(long = "from", value_name = "SESSION")]
+        from: String,
+    },
+
     /// What this session's runs did, and running one again.
     ///
     /// A job record holds the parameters, so a resume runs the same job rather
@@ -317,6 +354,17 @@ fn run(action: ReconCommands, session: Option<&str>, json: bool) -> anyhow::Resu
             json,
         ),
         ReconCommands::Known { origin } => known(&root, session, origin.as_deref(), json),
+        ReconCommands::Import {
+            format,
+            file,
+            origin,
+        } => import(&root, session, &format, Path::new(&file), origin.as_deref(), json),
+        ReconCommands::Export { state } => export(
+            &root,
+            session,
+            state.as_deref().map(parse_state).transpose()?,
+        ),
+        ReconCommands::Merge { from } => merge(&root, session, &from, json),
         ReconCommands::Jobs { action } => jobs(&root, session, action, json),
         ReconCommands::Show { id } => show(&root, session, &id, json),
     }
@@ -1704,6 +1752,183 @@ fn known(
     }
     println!("  written  : {written} row(s)");
     println!("  cursor   : {}", inventory.cursor);
+    Ok(())
+}
+
+/// `h5i recon import`.
+fn import(
+    root: &Path,
+    selector: Option<&str>,
+    format: &str,
+    file: &Path,
+    origin: Option<&str>,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    use h5i_recon::import::{Format, MAX_IMPORT_BYTES};
+
+    let Some(format) = Format::parse(format) else {
+        anyhow::bail!(
+            "`{format}` is not a format this reads. It reads: urls (gau, waybackurls), \
+             katana, subfinder, httpx, openapi"
+        );
+    };
+    let size = std::fs::metadata(file)
+        .map_err(|e| anyhow::anyhow!("{} could not be read: {e}", file.display()))?
+        .len();
+    if size > MAX_IMPORT_BYTES {
+        anyhow::bail!(
+            "{} is {size} bytes, larger than the {MAX_IMPORT_BYTES} this reads",
+            file.display()
+        );
+    }
+    let (session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
+
+    // Somewhere to resolve a relative entry against. The session's own origin
+    // unless the caller names one.
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let base = match origin {
+        Some(named) => named.to_string(),
+        None => seed(&store, None)
+            .map(|(_, origin)| origin)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this session has reached nothing, so a relative entry has no origin to \
+                     resolve against. Name one with `--origin https://target.example`"
+                )
+            })?,
+    };
+    let base = url::Url::parse(&base)
+        .map_err(|_| anyhow::anyhow!("`{base}` is not an origin a URL could resolve against"))?;
+
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("{} could not be read: {e}", file.display()))?;
+    let imported = h5i_recon::import::read(format, &base, &text);
+    let identity = identity_of(&session).to_string();
+    let observations = h5i_recon::extract::candidates(
+        &imported.found,
+        &identity,
+        &h5i_recon::Source::Import {
+            tool: format.tool().to_string(),
+        },
+    );
+    let written = ledger.append(&observations)?;
+    let after = ledger.read()?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "tool": format.tool(),
+                "read": imported.found.len(),
+                "written": written,
+                "unreadable": imported.unreadable,
+                "truncated": imported.truncated,
+                "cursor": after.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+    println!("  tool     : {}", format.tool());
+    println!("  read     : {} candidate(s)", imported.found.len());
+    println!("  written  : {written} row(s)");
+    if imported.unreadable > 0 {
+        println!("  skipped  : {} line(s) that were not an endpoint", imported.unreadable);
+    }
+    if imported.truncated {
+        println!("  note     : the file held more than this reads in one pass");
+    }
+    println!("  state    : candidate. An h5i request has to answer before any of these is real");
+    Ok(())
+}
+
+/// `h5i recon export`.
+fn export(root: &Path, selector: Option<&str>, state: Option<State>) -> anyhow::Result<()> {
+    let (_session, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
+    for endpoint in ledger.read()?.endpoints {
+        if state.is_none_or(|wanted| endpoint.state == wanted) {
+            println!("{}", serde_json::to_string(&endpoint)?);
+        }
+    }
+    Ok(())
+}
+
+/// `h5i recon merge`.
+fn merge(
+    root: &Path,
+    selector: Option<&str>,
+    from: &str,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let source = resolve_for_reading(root, Some(from))?;
+    let (target, ledger, capped) = open_ledger(root, selector)?;
+    note_capped(capped);
+    if source.id == target.id {
+        anyhow::bail!("`{from}` is this session: there is nothing to merge");
+    }
+
+    let their_dir = bs::dir(root, &source.id);
+    let theirs = Ledger::open(&their_dir)?;
+    // Their receipts too, so a session nobody ran recon in still contributes
+    // what it reached.
+    let (records, _) = receipts(&their_dir);
+    theirs.sync_receipts(&records, identity_of(&source))?;
+    let inventory = theirs.read()?;
+
+    // Their observations, replayed into this ledger as observations. The keys
+    // carry identity, so what each session saw stays apart.
+    let mut carried = Vec::new();
+    for endpoint in &inventory.endpoints {
+        let mut observation = h5i_recon::Observation::new(
+            &endpoint.origin,
+            &endpoint.path,
+            &endpoint.method,
+            &endpoint.identity,
+            endpoint.state,
+            endpoint
+                .sources
+                .first()
+                .cloned()
+                .unwrap_or(h5i_recon::Source::Manual),
+        )
+        .with_params(endpoint.params.clone())
+        .with_status(endpoint.status);
+        observation.req = endpoint.evidence.last().cloned().map(|req| {
+            // A message id belongs to the session that made it, so it is
+            // qualified on the way over. W6 designs this form; no verb parses
+            // it yet, so the note below says how to read one.
+            format!("{}/{req}", source.id)
+        });
+        observation.cluster = endpoint.cluster.clone();
+        observation.reason = endpoint.reason.clone();
+        carried.push(observation);
+    }
+    let written = ledger.append(&carried)?;
+    let after = ledger.read()?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "from": source.id,
+                "read": inventory.endpoints.len(),
+                "written": written,
+                "cursor": after.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+    println!("  from     : {} ({})", source.id, identity_of(&source));
+    println!("  read     : {} endpoint(s)", inventory.endpoints.len());
+    println!("  written  : {written} row(s)");
+    println!(
+        "  note     : their evidence reads as `{}/req_n`. Read one with \
+         `h5i websec show req_n --session {}`",
+        source.id, source.id
+    );
     Ok(())
 }
 

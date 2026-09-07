@@ -155,6 +155,12 @@ All store content is untrusted target input, like snapshots.
 and stable for its life. Fully qualified as `<session>/req_42` when a command
 spans sessions, which cross-session replay and diff both do.
 
+The qualified form is written but not yet parsed: `websec show` and
+`browser message` take a bare id plus `--session`, and recon's `merge` records
+cross-session evidence as `<session>/req_n` and says so. Accepting the
+qualified form wherever an id is taken is a small piece of work and is not
+done.
+
 A request and its response share a number because they are two phases of one
 receipt row, which is already how `RequestRecord` models them. `res_42` is the
 response to `req_42` and no other numbering is introduced.
