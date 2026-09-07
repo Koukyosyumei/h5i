@@ -414,3 +414,4 @@ jobs:
           cargo check --locked --target ${{ matrix.target }}
           cargo check --locked --target ${{ matrix.target }} -p h5i-browser
           cargo check --locked --target ${{ matrix.target }} -p h5i-websec
+          cargo check --locked --target ${{ matrix.target }} -p h5i-recon

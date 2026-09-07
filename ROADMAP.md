@@ -28,7 +28,7 @@ essential to this one.
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](docs/design/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](docs/design/design-detect.md) |
 | HTTP workbench | phases A and B built, benchmarked; installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](docs/design/design-websec.md) |
-| reconnaissance | proposed 2026-09-07, nothing built. Phase 1 is N15 | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
+| reconnaissance | phase 1 mostly built 2026-09-07: ledger, extract, known, crawl, triage. `h5i plugin install recon`; N10 and N12 are not built | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
 
 ## The three decisions the pivot rests on
 

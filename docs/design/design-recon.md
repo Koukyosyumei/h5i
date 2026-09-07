@@ -1,9 +1,10 @@
 # Design: reconnaissance and the endpoint ledger, sections N1 to N21
 
-Status: proposed, 2026-09-07. This design adds the half of an engagement that
-comes before a payload: finding what an application exposes, recording where
-each candidate came from, and handing a confirmed request to the workbench.
-Nothing here is built yet. `N` is the section prefix because `B`, `V`, `P`, `R`,
+Status: phase 1 mostly built, 2026-09-07. This design adds the half of an
+engagement that comes before a payload: finding what an application exposes,
+recording where each candidate came from, and handing a confirmed request to
+the workbench. Sections marked "built" say what shipped, and where it differs
+from the paragraph above. `N` is the section prefix because `B`, `V`, `P`, `R`,
 `D` and `W` are taken by the browser, the viewers, policy, the runner,
 detection and websec, and live code cites these numbers.
 
@@ -119,6 +120,15 @@ separately named command". This is that command.
 
 The core data structure, and the section the rest of the design hangs from.
 
+Built 2026-09-07 in `crates/h5i-recon/src/ledger.rs`, as described, with one
+addition the first live run forced: receipts are numbered from **zero**, so the
+"how far have I folded" cursor is an `Option<u64>` rather than a count. A zero
+meaning "nothing yet" silently dropped every session's first request, which is
+its navigation. There is a sixth source, `calibration`, for the paths N11 asks
+for on purpose because they should not exist: they are in the receipts either
+way, and naming them keeps a reader from wondering why the inventory holds a
+path nobody would have.
+
 - One append-only JSONL file per session at `<session>/recon/ledger.jsonl`,
   mode 0600, with a derived index beside it. Append-only because resume,
   provenance and "what is new since the last turn" are all reads of the same
@@ -210,6 +220,14 @@ h5i recon export     [--format jsonl] [--state S]
 session already fetched and sends nothing, so it is the verb an agent can run
 freely, and the one that keeps working when the budget is spent.
 
+Built 2026-09-07: `endpoints`, `show`, `extract`, `known`, `crawl` and
+`triage`, in `crates/h5i-recon/src/main.rs`. `paths`, `jobs`, `import` and
+`export` are not built. Every verb that sends anything does it by running
+`h5i browser resend --raw-target <path>` in a subprocess, which is the same
+verb a person types: the fetch is the engine's, the policy decides it, the
+budget pays for it, and the receipt is written first. The plugin has no other
+route to the network.
+
 ## N8. Candidate sources
 
 Everything here writes `candidate` rows and sends nothing of its own, except
@@ -238,6 +256,14 @@ Everything here writes `candidate` rows and sends nothing of its own, except
 Every one of these records the `req_<n>` it read from, so "why does the ledger
 think `/admin/api` exists" always has an answer that is a stored message.
 
+Built 2026-09-07: `extract.rs` (markup, headers, JSON strings), `js.rs` (the
+token scan) and `known.rs` (robots, sitemap and its index chain). The
+JavaScript reader is a scanner rather than a boa pass, and it earns the
+distinction the design asked for: it knows a comment is not code, that a `//`
+inside a string is not a comment, and that a template literal with `${` is a
+prefix. A concatenated path is reported as a *partial* and never written to the
+ledger, because half a URL is not a place a request can go.
+
 ## N9. Authenticated crawl
 
 The crawl is a frontier walk over ledger candidates, and it is the verb that
@@ -264,6 +290,13 @@ into by hand, so there is no cookie to copy.
 
 Two identities crawling the same target produce two sets of rows, not one set
 with a flag. That is N5's key doing its job.
+
+Built 2026-09-07 in `crawl.rs` (the frontier, the shape cap, the fingerprint)
+and the `crawl` verb. Two deviations. The walk is a `GET` walk: a disclosed
+`POST` endpoint stays a candidate, because submitting a form is `h5i browser
+submit` and needs the page, not a path. And the login check re-probes the first
+page the walk visited rather than a page named for the purpose, which needs no
+configuration and costs one request per interval.
 
 ## N10. Path and word discovery
 
@@ -311,6 +344,16 @@ agent-facing summary is a view over the evidence, not a replacement for it.
 What an agent gets back from a five thousand request run is on the order of
 twenty rows: the clusters, their sizes, and the outliers. That is the difference
 between a tool an agent can drive and a tool that fills its context window.
+
+Built 2026-09-07 in `triage.rs`. Calibration is per directory and persisted
+beside the ledger's cursor, so the cheap verb stays cheap. Two rules the code
+adds: a baseline whose probes disagree with each other is *unstable* and
+confirms nothing, because a directory that answers unpredictably would confirm
+at random; and only something already confirmed can become `gone`, since a path
+that never existed has not stopped existing. Verified against a server that
+answers `200` with its own template for every path: the three invented paths
+were folded into one cluster and marked as answering like a path that is not
+there, while the two real pages confirmed.
 
 ## N12. Job control
 
@@ -513,21 +556,31 @@ they would be right to.
 - **A second HTTP client**, in the plugin or anywhere else. This is the one that
   is not a preference. It is the product's claim.
 
-## Open questions
+## Decided, and what is still open
 
-1. **One plugin or two.** `h5i recon` as its own executable beside
-   `h5i-websec`, or recon verbs inside the websec plugin. They share the store,
-   the session and the identity, and W21's `KNOWN` list in `src/cli/plugin.rs`
-   takes either. Leaning towards one plugin at first with two nouns, because
-   the first release's acceptance test crosses the boundary on every run.
-2. **Where the ledger's scope ends.** Per session is right for identity, jar
+**Recon is its own plugin.** Owner ruling, 2026-09-07: `h5i recon` arrives the
+way `h5i websec` does, with `h5i plugin install recon`, and is not in the
+default build. `crates/h5i-recon` is the binary and the library it links;
+`src/cli/plugin.rs` knows the name whether or not it is installed, so `h5i
+recon` on a plain build says what the capability is and how to get it rather
+than "unknown command".
+
+**The types crate exists.** W21 recorded that the store's types lived in
+`h5i-browser`, so a plugin reading them would link Blitz, Stylo and Boa. They
+are in `crates/h5i-wire` now: the receipt row, the stored message and the name
+of the file each phase is written to, re-exported from the engine so no caller
+changed. That is what lets the recon plugin read a ledger and a message store
+in 2.4 MB. It also unblocks the step W21 called next for the workbench.
+
+Still open:
+
+1. **Where the ledger's scope ends.** Per session is right for identity, jar
    and policy, and wrong for a target inventory that spans a week. A
    `recon merge` verb folding several sessions' ledgers by identity is the
    likely answer and is not designed here.
-3. **The types crate.** W21 records that the store's types live in
-   `h5i-browser`, so a plugin reading them would link Blitz, Stylo and Boa.
-   Recon has the same problem and doubles the reason to extract a small crate.
-4. **Whether path discovery ships in phase 1** given N19's amendment. It is the
-   feature most likely to be argued about and the one with the clearest yield.
-5. **Section prefix.** `N` here. If a future design wants it, this file is the
-   one that has to move, so it is worth confirming before code cites it.
+2. **Path discovery and job control**, N10 and N12, are the two phase 1
+   features not built. They are also the two that spend the most requests, and
+   `--max-requests` and `--rate` on `crawl` are the shape their flags should
+   take.
+3. **Section prefix.** `N` here, and now cited by code. Moving it costs a
+   sweep.

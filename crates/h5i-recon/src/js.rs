@@ -1,13 +1,8 @@
 //! Endpoints a bundle discloses.
 //!
-//! A token scan, not a regex sweep: it knows that a comment is not code, that a
-//! `//` inside a string is not a comment, and that a template literal is a
-//! string. That is the difference between reading `"/api/users"` out of a
-//! bundle and reading it out of the licence header above it.
-//!
-//! What it will not do is guess. `"/api/" + id` is not `/api/`, and a path
-//! built by concatenation is reported as [`Partial`] rather than written into
-//! the ledger as somewhere a request could go (design-recon.md N8).
+//! A token scan, not a regex sweep: a comment is not code, a `//` inside a
+//! string is not a comment, a template literal is a string. And it never
+//! guesses: `"/api/" + id` is a [`Partial`], not a URL (design-recon.md N8).
 
 use url::Url;
 
@@ -89,12 +84,10 @@ pub fn from_js(base: &Url, source: &str) -> Script {
     script
 }
 
-/// The method and the reason, read from what encloses this literal.
+/// The method and the reason, read from the tokens around this literal.
 ///
-/// Looking backwards a few tokens rather than parsing an expression: a call is
-/// `name (` or `name ( "GET" ,` in every shape that matters here, and a reader
-/// that needed the whole grammar would be a JavaScript engine, which this crate
-/// deliberately is not.
+/// A few tokens back, not an expression parse: needing the whole grammar would
+/// mean being a JavaScript engine, which this crate is not.
 fn call_context(tokens: &[Token], index: usize) -> (String, &'static str) {
     let mut method = "GET".to_string();
     let mut how = "js-string";

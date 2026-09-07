@@ -1,10 +1,8 @@
-//! The files an application publishes about itself.
+//! The files an application publishes about itself, read as sources of
+//! candidates.
 //!
-//! `robots.txt` and `sitemap.xml` are the cheapest disclosure there is, and the
-//! two are read here as *sources of candidates*. `robots.txt` in particular is
-//! not an authorisation oracle: a `Disallow` says where something is, not that
-//! h5i may go there. Scope comes from the session's policy and from nowhere
-//! else (design-recon.md N8, N13).
+//! `robots.txt` is not an authorisation oracle: a `Disallow` says where
+//! something is, not that h5i may go there. Scope is the session's policy.
 
 use url::Url;
 
@@ -27,9 +25,8 @@ pub const MAX_LOCATIONS: usize = 5_000;
 
 /// Paths named by a `robots.txt`, and the sitemaps it points at.
 ///
-/// A pattern with a wildcard is a rule, not a path, so it is reported as a
-/// prefix candidate only when it has a literal head: `/admin/*` discloses
-/// `/admin/`, and `/*.bak` discloses nothing an endpoint could be.
+/// A wildcard rule discloses only its literal head: `/admin/*` gives `/admin/`,
+/// `/*.bak` gives nothing.
 pub fn from_robots(base: &Url, text: &str) -> (Vec<Found>, Vec<Url>) {
     let mut found = Vec::new();
     let mut sitemaps = Vec::new();
@@ -67,9 +64,8 @@ pub fn from_robots(base: &Url, text: &str) -> (Vec<Found>, Vec<Url>) {
 
 /// Locations in a `sitemap.xml`, and the nested sitemaps of an index.
 ///
-/// A tag reader again, and for the same reason as the HTML one: `<loc>` is all
-/// this needs, and a dependency that parsed the whole document would be a
-/// second parser standing where the target's bytes arrive (N19).
+/// A tag reader for the reason the HTML one is: `<loc>` is all this needs, and
+/// a whole XML parser would be one more thing reading hostile bytes (N19).
 pub fn from_sitemap(base: &Url, xml: &str) -> (Vec<Found>, Vec<Url>) {
     let is_index = xml.contains("<sitemapindex") || xml.contains(":sitemapindex");
     let mut found = Vec::new();

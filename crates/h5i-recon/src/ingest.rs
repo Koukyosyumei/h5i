@@ -1,9 +1,8 @@
-//! The session's own request log, folded into ledger observations.
+//! The session's own request log, folded into ledger observations: what this
+//! engine sent and what came back, not what a bundle mentioned.
 //!
-//! This is the half of the inventory h5i is entitled to be certain about: not
-//! what a bundle mentioned, but what this engine sent and what came back. Every
-//! row it writes carries the `req_<n>` that produced it, so the workbench can
-//! pick the endpoint up and resend it (design-recon.md N5, N6).
+//! Every row names the `req_<n>` that produced it, so the workbench can pick
+//! the endpoint up and resend it (design-recon.md N6).
 
 use h5i_wire::record::{Phase, RequestRecord};
 
@@ -31,11 +30,8 @@ pub fn origin_of(url: &url::Url) -> String {
     }
 }
 
-/// Fold receipts newer than `since` into observations.
-///
-/// Ordered by `seq` and stopped at the first fetch whose response has not been
-/// written, so the caller's cursor never skips a request that was in flight
-/// when it read.
+/// Fold receipts newer than `since` into observations, stopping at the first
+/// fetch still in flight so the cursor never steps over one.
 pub fn from_receipts(records: &[RequestRecord], identity: &str, since: Option<u64>) -> Ingested {
     let mut by_seq: std::collections::BTreeMap<u64, (Option<&RequestRecord>, Option<&RequestRecord>)> =
         std::collections::BTreeMap::new();

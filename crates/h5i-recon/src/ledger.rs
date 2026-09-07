@@ -1,10 +1,9 @@
-//! The endpoint ledger: one append-only log of what recon learned, and the
-//! fold that turns it into an inventory.
+//! The endpoint ledger: an append-only log of observations, and the fold that
+//! turns it into an inventory.
 //!
-//! Append-only because provenance, resume and "what is new since my last turn"
-//! are three reads of the same log, and because a discovery run that dies has
-//! still earned what it found. The file holds observations; an [`Endpoint`] is
-//! what folding them produces, never what is stored.
+//! Append-only because provenance, resume and "what is new" are three reads of
+//! the same log. An [`Endpoint`] is what folding produces, never what is
+//! stored.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -56,11 +55,9 @@ pub enum State {
 }
 
 impl State {
-    /// Whether `self` may overwrite `prior`.
-    ///
-    /// Only one rule, and it is the discipline the ledger exists for: nothing
-    /// that never sent a request may overwrite something that did. A bundle
-    /// that mentions `/admin` again does not un-confirm `/admin`.
+    /// Whether `self` may overwrite `prior`. One rule, and it is the ledger's
+    /// discipline: nothing that never sent a request overwrites something that
+    /// did.
     pub fn advances_over(self, prior: State) -> bool {
         !(self == State::Candidate && prior != State::Candidate)
     }
@@ -105,6 +102,11 @@ pub enum Source {
     KnownFile { req: String },
     /// The session's own request log: h5i went there.
     Receipt { req: String },
+    /// A path recon asked for on purpose because it should not exist, to learn
+    /// what "not there" looks like in this directory. In the ledger because it
+    /// happened, and named so a reader is not left wondering why the inventory
+    /// holds a path nobody would have.
+    Calibration { req: String },
     /// A wordlist entry, named by the list it came from.
     Wordlist { list: String },
     /// An API definition.
@@ -333,13 +335,19 @@ pub struct Inventory {
     pub truncated: bool,
 }
 
-/// How much of the session's own evidence this ledger has already absorbed.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+/// How much of the session's own evidence this ledger has already absorbed,
+/// and what it has learned about how the target answers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Progress {
     /// The highest receipt `seq` folded, or `None` when none has been. Not a
     /// bare number: receipts start at zero.
     #[serde(default)]
     pub receipts_through: Option<u64>,
+    /// What each directory answers for a path that is not there, by directory.
+    /// Kept because calibration costs requests, and re-spending them on every
+    /// triage would make the cheap verb the expensive one.
+    #[serde(default)]
+    pub baselines: BTreeMap<String, crate::triage::Baseline>,
 }
 
 /// A session's ledger.
@@ -400,9 +408,11 @@ impl Ledger {
             return Ok(0);
         }
         let written = self.append(&ingested.observations)?;
-        self.set_progress(&Progress {
-            receipts_through: ingested.through_seq,
-        })?;
+        // Read, change one field, write: the state file also holds the
+        // baselines, and a blind write would spend those requests again.
+        let mut progress = progress;
+        progress.receipts_through = ingested.through_seq;
+        self.set_progress(&progress)?;
         Ok(written)
     }
 

@@ -1,14 +1,9 @@
 //! `h5i recon`: what an application exposes, and how h5i knows.
 //!
-//! A plugin, not part of the default build, for the reason the workbench is
-//! one: an install of a browser should not quietly include everything that can
-//! be built on one (design-websec.md W21, design-recon.md N19).
-//!
-//! It holds no privilege of its own. It reads a session's request log, its
-//! stored messages and its ledger, all files the caller could read anyway, and
-//! it opens no socket. Anything that sends a request runs an `h5i browser` verb
-//! in a subprocess, so the fetch is the engine's: policy decides it, the budget
-//! pays for it, and the receipt is written before the bytes move (N13).
+//! A plugin, for the reason the workbench is one: installing a browser should
+//! not include everything buildable on one (W21, N19). It opens no socket. It
+//! reads the session's log, store and ledger, and anything it sends is an `h5i
+//! browser` verb in a subprocess, so the fetch is the engine's (N13).
 
 use std::path::Path;
 
@@ -84,9 +79,8 @@ enum ReconCommands {
 
     /// Read what this session already fetched, and record what it disclosed.
     ///
-    /// Sends nothing. It reads the stored messages, so it keeps working after
-    /// the budget is spent, and everything it writes is a candidate: a URL in a
-    /// bundle was not visited (design-recon.md N8).
+    /// Sends nothing, so it works after the budget is spent, and everything it
+    /// writes is a candidate: a URL in a bundle was not visited (N8).
     Extract {
         #[arg(long)]
         session: Option<String>,
@@ -101,12 +95,41 @@ enum ReconCommands {
         json: bool,
     },
 
-    /// Ask for the files an application publishes about itself.
+    /// Walk the application under this session's identity.
     ///
-    /// robots.txt, sitemap.xml and its index chain, security.txt and the
-    /// OpenID discovery document. Each one is a request the engine sends, so
-    /// policy decides it and the receipt is written first. `robots.txt` is read
-    /// for candidates, never as permission (design-recon.md N8).
+    /// Every request is an `h5i browser resend`, so it carries the session's
+    /// cookies and its policy. Stops on frontier, allowance or login (N9).
+    Crawl {
+        #[arg(long)]
+        session: Option<String>,
+        /// Start here as well as from the ledger's candidates. Repeatable.
+        #[arg(long, value_name = "URL")]
+        seed: Vec<String>,
+        /// How far from a seed to walk.
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+        /// How many requests this walk may spend, in total.
+        #[arg(long = "max-requests", default_value_t = 200)]
+        max_requests: usize,
+        /// How many URLs of one path shape to visit: `/events/1` and
+        /// `/events/2` are one endpoint twice.
+        #[arg(long = "per-shape", default_value_t = 20)]
+        per_shape: usize,
+        /// Requests per second, per host. `0` means as fast as the engine will
+        /// answer, which is rarely what an authorised engagement wants.
+        #[arg(long, default_value_t = 4.0)]
+        rate: f64,
+        /// Re-check the login every N requests. `0` turns the check off.
+        #[arg(long = "check-login-every", default_value_t = 25)]
+        check_login_every: usize,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ask for the files an application publishes about itself: robots.txt,
+    /// sitemap.xml and its index chain, security.txt, OpenID discovery.
+    ///
+    /// `robots.txt` is read for candidates, never as permission (N8).
     Known {
         #[arg(long)]
         session: Option<String>,
@@ -114,6 +137,24 @@ enum ReconCommands {
         /// most recently.
         #[arg(long)]
         origin: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Sort what came back: calibrate a not-found baseline, then cluster.
+    ///
+    /// Confirmation happens here and nowhere else: `confirmed` means the answer
+    /// differs from what this directory says about a path that is not there.
+    Triage {
+        #[arg(long)]
+        session: Option<String>,
+        /// Learn what each directory answers for a path that is not there,
+        /// which costs a couple of requests per directory.
+        #[arg(long)]
+        calibrate: bool,
+        /// How many probes per directory when calibrating.
+        #[arg(long, default_value_t = 2)]
+        probes: usize,
         #[arg(long)]
         json: bool,
     },
@@ -158,6 +199,34 @@ fn run(action: ReconCommands) -> anyhow::Result<()> {
             kind,
             json,
         } => extract(&root, session.as_deref(), from.as_deref(), &kind, json),
+        ReconCommands::Crawl {
+            session,
+            seed,
+            depth,
+            max_requests,
+            per_shape,
+            rate,
+            check_login_every,
+            json,
+        } => crawl(
+            &root,
+            session.as_deref(),
+            &seed,
+            h5i_recon::crawl::Bounds {
+                depth,
+                max_requests,
+                per_template: per_shape,
+            },
+            rate,
+            check_login_every,
+            json,
+        ),
+        ReconCommands::Triage {
+            session,
+            calibrate,
+            probes,
+            json,
+        } => triage(&root, session.as_deref(), calibrate, probes, json),
         ReconCommands::Known {
             session,
             origin,
@@ -240,11 +309,9 @@ fn identity_of(session: &bs::Session) -> &str {
     }
 }
 
-/// The session's request log, as records.
-///
-/// Off the log rather than out of the engine: the fold wants the whole run,
-/// including the part that happened before this process existed, and a line
-/// that will not parse is skipped rather than guessed at.
+/// The session's request log, as records. Off the log rather than out of the
+/// engine, because the fold wants the whole run and not just this process's
+/// part of it.
 fn receipts(dir: &Path) -> Vec<RequestRecord> {
     let path = dir.join(bs::RECEIPTS_FILE);
     let (text, _cut) = bs::read_log_capped_saying(&path).unwrap_or_default();
@@ -327,10 +394,8 @@ struct Sent {
 
 /// Send a stored request again with its target replaced.
 ///
-/// Through `h5i browser resend`, which is the same verb a person types: the
-/// fetch is the engine's, the policy decides it, the budget pays for it and the
-/// receipt is written before the bytes move. This plugin has no other way to
-/// reach the network, and that is the point of it being a plugin at all.
+/// Through `h5i browser resend`, the verb a person types: the fetch is the
+/// engine's, and this plugin has no other route to the network.
 fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyhow::Result<Sent> {
     let mut command = std::process::Command::new(h5i());
     command
@@ -379,12 +444,11 @@ fn probe(selector: Option<&str>, from: u64, target: &str, method: &str) -> anyho
     })
 }
 
-/// The stored request a probe is built from.
+/// The stored request a probe is built from, so it inherits real authority,
+/// cookies and headers.
 ///
-/// A probe is an edit of a real request, so it inherits that request's
-/// authority, cookies and headers rather than inventing them. The newest `GET`
-/// is preferred: a `POST` seed carries a body that has nothing to do with the
-/// file being asked for, and the answer would be about the body.
+/// The newest `GET` wins: a `POST` seed carries a body, and the answer would
+/// be about the body rather than the path.
 fn seed(store: &Path, origin: Option<&str>) -> Option<(u64, String)> {
     let mut fallback = None;
     for seq in h5i_recon::store::sequences(store).into_iter().rev() {
@@ -404,6 +468,478 @@ fn seed(store: &Path, origin: Option<&str>) -> Option<(u64, String)> {
         fallback.get_or_insert((seq, seen));
     }
     fallback
+}
+
+/// What one probe found out, folded into the ledger and the frontier.
+struct Visited {
+    fingerprint: h5i_recon::crawl::Fingerprint,
+    observations: Vec<h5i_recon::Observation>,
+    /// Candidates this page disclosed, to offer to the frontier.
+    disclosed: Vec<url::Url>,
+}
+
+/// Ask for one URL and read what came back, with the same readers `extract`
+/// uses: a crawl with its own parser would be a second opinion.
+fn visit(
+    store: &Path,
+    selector: Option<&str>,
+    from: u64,
+    url: &url::Url,
+    identity: &str,
+) -> anyhow::Result<Visited> {
+    let target = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
+    let origin = h5i_recon::ingest::origin_of(url);
+    let sent = probe(selector, from, &target, "GET")?;
+    let req = format!("req_{}", sent.seq);
+
+    let mut visited = Visited {
+        fingerprint: h5i_recon::crawl::Fingerprint::of(sent.status, "", 0, None),
+        observations: vec![
+            h5i_recon::Observation::new(
+                &origin,
+                url.path(),
+                "GET",
+                identity,
+                h5i_recon::State::Observed,
+                h5i_recon::Source::Receipt { req: req.clone() },
+            )
+            .with_req(req.clone())
+            .with_status(sent.status),
+        ],
+        disclosed: Vec::new(),
+    };
+
+    let Some(message) = h5i_recon::store::read(store, sent.seq) else {
+        return Ok(visited);
+    };
+    let content_type = message.content_type().unwrap_or_default().to_string();
+    let location = message.header("location").map(str::to_string);
+    let body = h5i_recon::store::body_text(store, &message.response.body).unwrap_or_default();
+    visited.fingerprint = h5i_recon::crawl::Fingerprint::of(
+        sent.status,
+        &content_type,
+        body.len() as u64,
+        location.as_deref(),
+    );
+
+    let Ok(base) = url::Url::parse(&message.response.url) else {
+        return Ok(visited);
+    };
+    let mut found = h5i_recon::extract::from_headers(&base, &message.response.headers);
+    let source = if content_type.to_ascii_lowercase().contains("html") {
+        found.extend(h5i_recon::extract::from_html(&base, &body));
+        h5i_recon::Source::Page { req: req.clone() }
+    } else if is_script(&content_type.to_ascii_lowercase()) {
+        found.extend(h5i_recon::js::from_js(&base, &body).found);
+        h5i_recon::Source::Script { req: req.clone() }
+    } else if content_type.to_ascii_lowercase().contains("json") {
+        found.extend(h5i_recon::extract::from_json(&base, &body));
+        h5i_recon::Source::Json { req: req.clone() }
+    } else {
+        h5i_recon::Source::Header { req: req.clone() }
+    };
+    visited.disclosed = found.iter().map(|item| item.url.clone()).collect();
+    visited
+        .observations
+        .extend(h5i_recon::extract::candidates(&found, identity, &source));
+    Ok(visited)
+}
+
+/// `h5i recon crawl`.
+fn crawl(
+    root: &Path,
+    selector: Option<&str>,
+    seeds: &[String],
+    bounds: h5i_recon::crawl::Bounds,
+    rate: f64,
+    check_login_every: usize,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let (session, ledger) = open_ledger(root, selector)?;
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let Some((from, origin)) = seed(&store, None) else {
+        anyhow::bail!(
+            "this session has no stored request to walk from. `h5i browser open <url> \
+             --capture` first: a crawl is a series of edits of a real request, so it \
+             carries that request's authority and cookies rather than inventing them"
+        );
+    };
+    let identity = identity_of(&session).to_string();
+
+    let mut frontier = h5i_recon::crawl::Frontier::new(bounds);
+    let mut queued = 0usize;
+    for seed_url in seeds {
+        let url = url::Url::parse(seed_url)
+            .map_err(|_| anyhow::anyhow!("`{seed_url}` is not a URL a crawl could start from"))?;
+        if frontier.offer(&url, 0) == h5i_recon::crawl::Offer::Queued {
+            queued += 1;
+        }
+    }
+    // Everything the ledger already knows about and nothing has visited. This
+    // is why `extract` and `known` come first: they fill the frontier without
+    // spending a request.
+    for endpoint in &ledger.read()?.endpoints {
+        if endpoint.state != h5i_recon::State::Candidate || endpoint.method != "GET" {
+            continue;
+        }
+        let Ok(url) = url::Url::parse(&format!("{}{}", endpoint.origin, endpoint.path)) else {
+            continue;
+        };
+        if frontier.offer(&url, 0) == h5i_recon::crawl::Offer::Queued {
+            queued += 1;
+        }
+    }
+    if queued == 0 {
+        anyhow::bail!(
+            "nothing to walk. `h5i recon extract` reads what this session already fetched \
+             and `h5i recon known` asks for robots.txt and the sitemap; either fills the \
+             frontier without spending a request. `--seed <url>` starts from one you name"
+        );
+    }
+
+    let pause = if rate > 0.0 {
+        std::time::Duration::from_secs_f64(1.0 / rate)
+    } else {
+        std::time::Duration::ZERO
+    };
+    let mut observations = Vec::new();
+    let mut walked: Vec<Value> = Vec::new();
+    let mut login: Option<(url::Url, h5i_recon::crawl::Fingerprint)> = None;
+    let mut stopped: Option<String> = None;
+    let mut since_check = 0usize;
+
+    while let Some((url, depth)) = frontier.next() {
+        if !pause.is_zero() {
+            std::thread::sleep(pause);
+        }
+        let visited = match visit(&store, selector, from, &url, &identity) {
+            Ok(visited) => visited,
+            Err(why) => {
+                // Refused, or the engine could not send it. Either way it is a
+                // fact about this walk and goes in the ledger as one.
+                observations.push(
+                    h5i_recon::Observation::new(
+                        &h5i_recon::ingest::origin_of(&url),
+                        url.path(),
+                        "GET",
+                        &identity,
+                        h5i_recon::State::Candidate,
+                        h5i_recon::Source::Receipt {
+                            req: format!("req_{from}"),
+                        },
+                    )
+                    .refused(why.to_string()),
+                );
+                walked.push(json!({"url": url.to_string(), "refused": why.to_string()}));
+                continue;
+            }
+        };
+        walked.push(json!({
+            "url": url.to_string(),
+            "depth": depth,
+            "status": visited.fingerprint.status,
+            "disclosed": visited.disclosed.len(),
+        }));
+        for disclosed in &visited.disclosed {
+            if h5i_recon::ingest::origin_of(disclosed) == origin {
+                frontier.offer(disclosed, depth + 1);
+            }
+        }
+        observations.extend(visited.observations);
+        login.get_or_insert_with(|| (url.clone(), visited.fingerprint.clone()));
+
+        since_check += 1;
+        if check_login_every > 0 && since_check >= check_login_every {
+            since_check = 0;
+            let Some((probe_url, before)) = &login else {
+                continue;
+            };
+            match visit(&store, selector, from, probe_url, &identity) {
+                Ok(now) if h5i_recon::crawl::identity_lost(before, &now.fingerprint) => {
+                    stopped = Some(format!(
+                        "the page this walk started from answers differently now, so the                          session is no longer logged in as `{identity}`. Nothing after this                          point would be that identity's answer. Log in again and re-run"
+                    ));
+                    break;
+                }
+                Ok(_) => {}
+                Err(why) => {
+                    stopped = Some(format!("the login check could not be sent: {why}"));
+                    break;
+                }
+            }
+        }
+    }
+    if stopped.is_none() && frontier.exhausted() {
+        stopped = Some(format!(
+            "spent its allowance of {} requests with {} URLs still queued. This is what              {} requests reached, not the whole application",
+            frontier.spent(),
+            frontier.remaining(),
+            frontier.spent()
+        ));
+    }
+
+    let written = ledger.append(&observations)?;
+    let inventory = ledger.read()?;
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "origin": origin,
+                "requests": frontier.spent(),
+                "queued": frontier.remaining(),
+                "walked": walked,
+                "written": written,
+                "stopped": stopped,
+                "cursor": inventory.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+    println!("  origin   : {origin}");
+    println!("  requests : {}", frontier.spent());
+    println!("  queued   : {} left unwalked", frontier.remaining());
+    println!("  written  : {written} row(s)");
+    if let Some(why) = &stopped {
+        println!("  stopped  : {why}");
+    }
+    println!("  cursor   : {}", inventory.cursor);
+    Ok(())
+}
+
+/// A path that cannot exist, for calibration.
+///
+/// Long, random and ordinary-looking: a name a real application would not have
+/// and a filter would not treat specially.
+fn improbable(n: usize) -> String {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(n as u64 * 1442695040888963407);
+    format!("h5i-not-here-{seq:016x}", seq = seed)
+}
+
+/// `h5i recon triage`.
+fn triage(
+    root: &Path,
+    selector: Option<&str>,
+    calibrate: bool,
+    probes: usize,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let (session, ledger) = open_ledger(root, selector)?;
+    let store = bs::dir(root, &session.id).join(bs::MESSAGES_DIR);
+    let identity = identity_of(&session).to_string();
+    let inventory = ledger.read()?;
+    let mut progress = ledger.progress();
+
+    // What came back, read off the stored messages rather than sent again.
+    let mut samples: Vec<h5i_recon::triage::Sample> = Vec::new();
+    for endpoint in &inventory.endpoints {
+        let Some(req) = endpoint.evidence.last() else {
+            continue;
+        };
+        let Some(seq) = req.trim_start_matches("req_").parse::<u64>().ok() else {
+            continue;
+        };
+        let Some(message) = h5i_recon::store::read(&store, seq) else {
+            continue;
+        };
+        let content_type = message.content_type().unwrap_or_default().to_string();
+        let location = message.header("location").map(str::to_string);
+        let body = h5i_recon::store::body_text(&store, &message.response.body).unwrap_or_default();
+        samples.push(h5i_recon::triage::Sample {
+            endpoint: endpoint.id.clone(),
+            path: endpoint.path.clone(),
+            req: req.clone(),
+            fingerprint: h5i_recon::crawl::Fingerprint::of(
+                message.response.status,
+                &content_type,
+                body.len() as u64,
+                location.as_deref(),
+            ),
+            skeleton: if content_type.to_ascii_lowercase().contains("html") {
+                h5i_recon::extract::skeleton(&body)
+            } else {
+                String::new()
+            },
+        });
+    }
+
+    let mut calibrated: Vec<Value> = Vec::new();
+    let mut probes_sent: Vec<h5i_recon::Observation> = Vec::new();
+    if calibrate {
+        let Some((from, _origin)) = seed(&store, None) else {
+            anyhow::bail!("this session has no stored request to calibrate from");
+        };
+        let mut directories: Vec<String> = samples
+            .iter()
+            .map(|sample| h5i_recon::triage::directory_of(&sample.path))
+            .collect();
+        directories.sort();
+        directories.dedup();
+
+        for directory in directories {
+            let mut baseline = h5i_recon::triage::Baseline::default();
+            for n in 0..probes.max(1) {
+                let target = format!("{}/{}", directory.trim_end_matches('/'), improbable(n));
+                let Ok(sent) = probe(selector, from, &target, "GET") else {
+                    continue;
+                };
+                let Some(message) = h5i_recon::store::read(&store, sent.seq) else {
+                    continue;
+                };
+                let content_type = message.content_type().unwrap_or_default().to_string();
+                let body =
+                    h5i_recon::store::body_text(&store, &message.response.body).unwrap_or_default();
+                if baseline.skeleton.is_empty() && content_type.to_ascii_lowercase().contains("html")
+                {
+                    baseline.skeleton = h5i_recon::extract::skeleton(&body);
+                }
+                baseline.samples.push(h5i_recon::crawl::Fingerprint::of(
+                    message.response.status,
+                    &content_type,
+                    body.len() as u64,
+                    message.header("location"),
+                ));
+                // The probe is in the receipts either way. Naming it here is
+                // what keeps a reader from wondering why the inventory holds a
+                // path nobody would have.
+                let req = format!("req_{}", sent.seq);
+                probes_sent.push(
+                    h5i_recon::Observation::new(
+                        &h5i_recon::ingest::origin_of(
+                            &url::Url::parse(&message.response.url)
+                                .unwrap_or_else(|_| url::Url::parse("http://invalid.invalid").unwrap()),
+                        ),
+                        &target,
+                        "GET",
+                        &identity,
+                        h5i_recon::State::Observed,
+                        h5i_recon::Source::Calibration { req: req.clone() },
+                    )
+                    .with_req(req)
+                    .with_status(message.response.status),
+                );
+            }
+            calibrated.push(json!({
+                "directory": directory,
+                "probes": baseline.samples.len(),
+                "status": baseline.samples.first().and_then(|f| f.status),
+                "stable": baseline.is_stable(),
+            }));
+            progress.baselines.insert(directory, baseline);
+        }
+        ledger.set_progress(&progress)?;
+        ledger.append(&probes_sent)?;
+    }
+
+    // Confirm what the baseline says is really there, and retire what is not.
+    let mut verdicts = Vec::new();
+    let mut confirmed = 0usize;
+    let mut nothing_here = 0usize;
+    let clusters = h5i_recon::triage::cluster(&samples);
+    for sample in &samples {
+        let directory = h5i_recon::triage::directory_of(&sample.path);
+        let Some(baseline) = progress.baselines.get(&directory) else {
+            continue;
+        };
+        if !baseline.is_stable() {
+            // An unstable baseline confirms at random, so it confirms nothing.
+            continue;
+        }
+        let Some(endpoint) = inventory.endpoints.iter().find(|e| e.id == sample.endpoint) else {
+            continue;
+        };
+        let cluster = clusters
+            .iter()
+            .find(|cluster| cluster.members.contains(&sample.req))
+            .map(|cluster| cluster.label.clone());
+
+        let (state, counted) = if baseline.says_nothing_here(sample) {
+            // Only something already confirmed can be gone. A path that never
+            // existed has not stopped existing.
+            match endpoint.state {
+                h5i_recon::State::Confirmed => (Some(h5i_recon::State::Gone), &mut nothing_here),
+                _ => (None, &mut nothing_here),
+            }
+        } else {
+            (Some(h5i_recon::State::Confirmed), &mut confirmed)
+        };
+        *counted += 1;
+        let Some(state) = state else { continue };
+        let mut observation = h5i_recon::Observation::new(
+            &endpoint.origin,
+            &endpoint.path,
+            &endpoint.method,
+            &identity,
+            state,
+            h5i_recon::Source::Receipt {
+                req: sample.req.clone(),
+            },
+        )
+        .with_req(sample.req.clone())
+        .with_status(sample.fingerprint.status);
+        observation.cluster = cluster;
+        verdicts.push(observation);
+    }
+    let written = ledger.append(&verdicts)?;
+    let after = ledger.read()?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": SCHEMA,
+                "calibrated": calibrated,
+                "read": samples.len(),
+                "confirmed": confirmed,
+                "not_found_like": nothing_here,
+                "written": written,
+                "clusters": clusters,
+                "cursor": after.cursor,
+            }))?
+        );
+        return Ok(());
+    }
+
+    for item in &calibrated {
+        println!(
+            "  baseline : {:<24} {} probe(s), status {}{}",
+            item["directory"].as_str().unwrap_or_default(),
+            item["probes"].as_u64().unwrap_or(0),
+            item["status"]
+                .as_u64()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            if item["stable"].as_bool() == Some(true) {
+                ""
+            } else {
+                ", unstable: it confirms nothing here"
+            }
+        );
+    }
+    println!("  read     : {} response(s)", samples.len());
+    println!("  confirmed: {confirmed}");
+    println!("  not there: {nothing_here} answered like a path that is not there");
+    println!();
+    for cluster in &clusters {
+        println!("  x{:<5} {}", cluster.count, cluster.label);
+        for path in &cluster.paths {
+            println!("           {}", preview(path));
+        }
+        if cluster.count > cluster.paths.len() {
+            println!("           … and {} more", cluster.count - cluster.paths.len());
+        }
+        println!("           read one: h5i websec show {}", cluster.representative);
+    }
+    println!("  cursor   : {}", after.cursor);
+    Ok(())
 }
 
 /// `h5i recon known`.
@@ -782,6 +1318,7 @@ fn source_word(source: &h5i_recon::Source) -> String {
         Header { req } => format!("header {req}"),
         KnownFile { req } => format!("known-file {req}"),
         Receipt { req } => format!("receipt {req}"),
+        Calibration { req } => format!("calibration {req}"),
         Wordlist { list } => format!("wordlist {}", preview(list)),
         Openapi { at } => format!("openapi {}", preview(at)),
         Import { tool } => format!("import {}", preview(tool)),

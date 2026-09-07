@@ -1,17 +1,9 @@
-//! The shapes h5i writes about an HTTP message.
+//! The shapes h5i writes about an HTTP message: the receipt row ([`record`],
+//! counts, exportable) and the stored message ([`message`], bytes and
+//! credentials, owner-only).
 //!
-//! Two artifacts, and the difference between them is the whole reason this
-//! crate is separate from the engine as well as from the reader:
-//!
-//! - a **receipt row** ([`record`]) is the decision and the outcome, counts
-//!   rather than values, safe to export;
-//! - a **stored message** ([`message`]) is the bytes, headers and credentials,
-//!   owner-only and never exported unless the caller names it.
-//!
-//! Both are read by code that has no business linking a browser: the websec
-//! plugin (design-websec.md W21) and recon's ledger (design-recon.md N5). The
-//! writers stay in `h5i-browser`, because writing a receipt is the engine's
-//! fail-closed duty and not a shape anyone else may take on.
+//! Separate from the engine so the plugins can read both without linking one
+//! (design-websec.md W21). The writers stay in `h5i-browser`.
 
 pub mod message;
 pub mod record;

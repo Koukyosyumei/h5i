@@ -1,9 +1,7 @@
-//! Reading a session's stored messages, without the engine that wrote them.
+//! Reading a session's stored messages without the engine that wrote them,
+//! which is what extracting `h5i-wire` bought (design-websec.md W21).
 //!
-//! This is what the `h5i-wire` extraction bought: a plugin can read the bytes a
-//! session captured without linking a browser (design-websec.md W21). The store
-//! is opt-in, owner-only, and holds credentials, so nothing here copies it
-//! anywhere; it reads, bounded, and hands back text to scan.
+//! The store holds credentials, so nothing here copies it: bounded reads only.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -68,9 +66,8 @@ pub fn read(store: &Path, seq: u64) -> Option<Message> {
 
 /// A response body as text to scan, bounded and lossy.
 ///
-/// Lossy on purpose: an extractor looks for URL shapes, and one invalid byte in
-/// a mixed body is no reason to stop looking. It is never the authority on what
-/// the body was; that is the store, and `h5i websec show` reads it exactly.
+/// Lossy because one invalid byte is no reason to stop looking for URLs. It is
+/// never the authority on the bytes; `h5i websec show` is.
 pub fn body_text(store: &Path, body: &Body) -> Option<String> {
     let Body::Stored { sha256, .. } = body else {
         return None;

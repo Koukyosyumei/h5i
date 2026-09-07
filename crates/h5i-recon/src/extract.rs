@@ -1,14 +1,9 @@
-//! Endpoint candidates read out of what a session already fetched.
+//! Endpoint candidates read out of stored bytes, so extraction keeps working
+//! after the budget is spent (design-recon.md N8).
 //!
-//! Nothing here sends a request. It reads stored bytes and says what they
-//! disclosed, which is why it keeps working after the budget is spent
-//! (design-recon.md N7, N8).
-//!
-//! The scanner is ours on purpose. Borrowing one would put somebody else's
-//! parser at the exact point the target's bytes arrive, inside the process that
-//! holds the session's jar (N19). It is a tag-and-attribute reader, not an HTML
-//! parser: it does not build a tree, and it says so rather than pretending the
-//! DOM it never built agrees with the engine's.
+//! The scanner is ours because a borrowed parser would sit where the target's
+//! bytes arrive, in the process holding the jar (N19). It is a tag reader, not
+//! an HTML parser: no tree, and no claim to agree with the engine's DOM.
 
 use url::Url;
 
@@ -22,6 +17,27 @@ pub const MAX_PER_DOCUMENT: usize = 5_000;
 
 /// The longest attribute value worth resolving as a URL.
 const MAX_URL_BYTES: usize = 4 * 1024;
+
+/// The tag sequence, hashed: one template's renderings share it whatever they
+/// say, which is how a soft 404 is spotted (design-recon.md N11).
+pub fn skeleton(html: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut tags = 0usize;
+    for tag in Tags::new(html) {
+        if tags >= 500 {
+            break;
+        }
+        tags += 1;
+        hasher.update(tag.name.as_bytes());
+        hasher.update(b"/");
+    }
+    if tags == 0 {
+        return String::new();
+    }
+    let digest = hasher.finalize();
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
 
 /// One disclosed endpoint, before it becomes a ledger row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,9 +53,8 @@ pub struct Found {
 
 /// Candidates disclosed by a document's markup.
 ///
-/// `base` is the response's *final* URL, after redirects. Resolving against
-/// the URL the caller typed would attribute a redirected page's links to the
-/// origin it left.
+/// `base` is the response's *final* URL: resolving against the requested one
+/// would attribute a redirected page's links to the origin it left.
 pub fn from_html(base: &Url, html: &str) -> Vec<Found> {
     let mut found: Vec<Found> = Vec::new();
     let mut resolve_base = base.clone();
@@ -184,11 +199,9 @@ pub fn from_headers(base: &Url, headers: &[(String, String)]) -> Vec<Found> {
     found
 }
 
-/// URL-shaped strings in a body that is not markup.
-///
-/// Deliberately conservative: absolute URLs and root-relative paths only. A
-/// bare word that happens to contain a slash is not a disclosure, and a ledger
-/// full of guesses is worse than a short one.
+/// URL-shaped strings in a body that is not markup: absolute URLs and
+/// root-relative paths only, because a ledger of guesses is worse than a short
+/// one.
 pub fn from_json(base: &Url, body: &str) -> Vec<Found> {
     let mut found = Vec::new();
     let bytes = body.as_bytes();
@@ -277,11 +290,9 @@ fn push(found: &mut Vec<Found>, base: &Url, raw: Option<&str>, method: &str, how
     }
 }
 
-/// Resolve one attribute value, or decline it.
-///
-/// Fragments, `javascript:`, `data:` and the rest are not endpoints. Declining
-/// them here keeps the ledger's `candidate` state meaning "somewhere a request
-/// could go".
+/// Resolve one attribute value, or decline it. Fragments and `javascript:` are
+/// not endpoints, and `candidate` has to keep meaning "a request could go
+/// here".
 fn resolve(base: &Url, raw: &str) -> Option<Url> {
     let raw = decode_entities(raw.trim());
     if raw.is_empty() || raw.starts_with('#') || raw.len() > MAX_URL_BYTES {
@@ -372,11 +383,9 @@ impl Tag {
     }
 }
 
-/// A tag reader, not a parser.
-///
-/// It knows three things a regex does not: a comment is not markup, a
-/// `<script>` body is not markup, and an attribute value can be quoted,
-/// single-quoted or bare.
+/// A tag reader, not a parser. It knows the three things a regex does not: a
+/// comment is not markup, a `<script>` body is not markup, and an attribute
+/// value may be quoted, single-quoted or bare.
 struct Tags<'a> {
     rest: &'a str,
 }
