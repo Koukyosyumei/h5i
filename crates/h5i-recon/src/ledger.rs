@@ -21,6 +21,10 @@ pub const RECON_DIR: &str = "recon";
 /// The log itself, one JSON observation per line.
 pub const LEDGER_FILE: &str = "ledger.jsonl";
 
+/// How far the request log has been folded in, so a second sync is cheap and
+/// does not write the same observation twice.
+pub const STATE_FILE: &str = "state.json";
+
 /// The longest URL or path an observation may carry.
 ///
 /// A target can emit an arbitrarily long string and a ledger is a file on the
@@ -329,9 +333,18 @@ pub struct Inventory {
     pub truncated: bool,
 }
 
+/// How much of the session's own evidence this ledger has already absorbed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Progress {
+    /// The highest receipt `seq` folded. See `ingest::from_receipts`.
+    #[serde(default)]
+    pub receipts_through: u64,
+}
+
 /// A session's ledger.
 pub struct Ledger {
     path: PathBuf,
+    state: PathBuf,
 }
 
 impl Ledger {
@@ -342,14 +355,54 @@ impl Ledger {
         owner_only(&dir);
         Ok(Self {
             path: dir.join(LEDGER_FILE),
+            state: dir.join(STATE_FILE),
         })
     }
 
     /// A ledger addressed directly, for a reader that already has the path.
     pub fn at(path: &Path) -> Self {
         Self {
+            state: path.with_file_name(STATE_FILE),
             path: path.to_path_buf(),
         }
+    }
+
+    /// How far the request log has been folded. A missing or unreadable state
+    /// file means "from the beginning", which costs a re-fold and loses
+    /// nothing: the ledger folds duplicates away.
+    pub fn progress(&self) -> Progress {
+        std::fs::read_to_string(&self.state)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn set_progress(&self, progress: &Progress) -> Result<(), H5iError> {
+        let text = serde_json::to_string(progress).map_err(H5iError::Serialization)?;
+        let mut file = open_owner_only_truncating(&self.state)?;
+        file.write_all(text.as_bytes())
+            .map_err(|e| H5iError::with_path(e, &self.state))
+    }
+
+    /// Fold this session's request log in, and remember how far it got.
+    ///
+    /// Called by every verb that reads the ledger, so an inventory never
+    /// disagrees with the receipts beside it.
+    pub fn sync_receipts(
+        &self,
+        records: &[h5i_wire::record::RequestRecord],
+        identity: &str,
+    ) -> Result<usize, H5iError> {
+        let progress = self.progress();
+        let ingested = crate::ingest::from_receipts(records, identity, progress.receipts_through);
+        if ingested.observations.is_empty() {
+            return Ok(0);
+        }
+        let written = self.append(&ingested.observations)?;
+        self.set_progress(&Progress {
+            receipts_through: ingested.through_seq,
+        })?;
+        Ok(written)
     }
 
     pub fn path(&self) -> &Path {
@@ -426,6 +479,19 @@ impl Ledger {
             .sort_by(|a, b| (&a.origin, &a.path, &a.method).cmp(&(&b.origin, &b.path, &b.method)));
         Ok(inventory)
     }
+}
+
+/// The state file is rewritten rather than appended to, and it holds no
+/// evidence, but it sits beside the ledger and keeps the same mode.
+fn open_owner_only_truncating(path: &Path) -> Result<File, H5iError> {
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|e| H5iError::with_path(e, path))
 }
 
 fn owner_only(dir: &Path) {
@@ -675,5 +741,33 @@ mod tests {
             .expect("stat")
             .permissions();
         assert_eq!(recon.mode() & 0o777, 0o700);
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use h5i_wire::record::{Initiator, RequestRecord};
+
+    #[test]
+    fn syncing_twice_folds_each_receipt_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ledger = Ledger::open(dir.path()).expect("open");
+
+        let request = RequestRecord::request(1, Initiator::Navigation, "GET", "https://t.test/a");
+        let mut response = request.response();
+        response.status = Some(200);
+        let records = vec![request, response];
+
+        assert_eq!(ledger.sync_receipts(&records, "anonymous").expect("sync"), 1);
+        assert_eq!(
+            ledger.sync_receipts(&records, "anonymous").expect("sync"),
+            0,
+            "a second read of the same log must not write the same observation again"
+        );
+        let inventory = ledger.read().expect("read");
+        assert_eq!(inventory.endpoints.len(), 1);
+        assert_eq!(inventory.cursor, 1);
+        assert_eq!(ledger.progress().receipts_through, 1);
     }
 }

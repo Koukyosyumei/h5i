@@ -14,6 +14,9 @@ h5i-wire = { path = "../h5i-wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+# Parsing a URL is not a place to be inventive: origin, path and query are the
+# ledger's key, and h5i already resolves them with this crate everywhere else.
+url = "2.5"
 
 [dev-dependencies]
 tempfile = "3.8"

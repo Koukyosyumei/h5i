@@ -10,6 +10,10 @@
 //! read out of a bundle and a URL that answered are different states, and no
 //! amount of convenience is allowed to collapse them.
 
+pub mod ingest;
 pub mod ledger;
 
-pub use ledger::{Endpoint, Inventory, Ledger, Observation, Param, Source, State, Where};
+pub use ingest::{Ingested, from_receipts};
+pub use ledger::{
+    Endpoint, Inventory, Ledger, Observation, Param, Progress, Source, State, Where,
+};
