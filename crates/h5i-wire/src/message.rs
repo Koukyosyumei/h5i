@@ -29,6 +29,15 @@ pub fn body_file(store: &Path, sha256: &str) -> Option<PathBuf> {
     Some(store.join("bodies").join(sha256))
 }
 
+/// The file one phase of one message is written to.
+///
+/// `<store>/<seq>.<phase>.json`, `phase` spelled as [`crate::record::Phase`]
+/// serialises it. Public so every reader names the same file: the engine that
+/// writes it, the workbench that reads it, and recon's extractors.
+pub fn message_file(store: &Path, seq: u64, phase: &str) -> PathBuf {
+    store.join(format!("{seq}.{phase}.json"))
+}
+
 /// Why a body is not in the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

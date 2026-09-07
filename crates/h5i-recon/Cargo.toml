@@ -4,11 +4,31 @@ version = "0.1.0"
 edition = "2024"
 description = "h5i recon: the endpoint ledger, and the extractors that fill it from what a session already fetched."
 
-# A library only, and one that links no engine. It reads the shapes `h5i-wire`
-# defines and writes a ledger beside them, so the reader of an inventory never
-# drags Blitz, Stylo and Boa into its binary (design-recon.md N5, N19).
+# A plugin, not part of the default build: `h5i plugin install recon`, the way
+# the workbench arrives (design-websec.md W21, design-recon.md N19).
+#
+# The binary links this crate's library and `h5i-wire`, and no engine. That is
+# what the wire crate was extracted for: reading a ledger and a message store
+# no longer drags Blitz, Stylo and Boa into a second binary. It reaches the
+# network by no path of its own. Anything that sends a request runs an `h5i
+# browser` verb in a subprocess, so the fetch is the engine's: checked by the
+# engine's policy, spent from its budget, written into its receipts.
+
+[lib]
+name = "h5i_recon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "h5i-recon"
+path = "src/main.rs"
 
 [dependencies]
+anyhow = "1"
+clap = { version = "4.5.60", features = ["derive"] }
+# The session registry: which sessions exist, and where each keeps its record,
+# its request log and its store. Lean here (no axum, no Node), and not the
+# engine.
+h5i-core = { path = "../h5i-core", default-features = false }
 h5i-error = { path = "../h5i-error" }
 h5i-wire = { path = "../h5i-wire" }
 serde = { workspace = true }

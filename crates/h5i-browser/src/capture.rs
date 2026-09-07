@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 // engine's job and nobody else's.
 pub use h5i_wire::message::{
     Body, Health, MAX_BODY_BYTES, MAX_STORE_BYTES, Skip, StoredRequest, StoredResponse, body_file,
+    message_file,
 };
 use h5i_wire::record::now_rfc3339;
 
@@ -319,7 +320,7 @@ impl Capture {
     /// Against the same allowance a body is: these hold every header, and
     /// leaving them outside the quota left the directory unbounded.
     fn write<T: Serialize>(&self, seq: u64, phase: &str, message: &T) {
-        let path = self.dir.join(format!("{seq}.{phase}.json"));
+        let path = h5i_wire::message::message_file(&self.dir, seq, phase);
         let wrote = serde_json::to_vec(message)
             .map_err(H5iError::from)
             .and_then(|bytes| {
@@ -341,7 +342,7 @@ impl Capture {
     }
 
     fn read<T: for<'de> Deserialize<'de>>(&self, seq: u64, phase: &str) -> Result<T, H5iError> {
-        let path = self.dir.join(format!("{seq}.{phase}.json"));
+        let path = h5i_wire::message::message_file(&self.dir, seq, phase);
         let bytes = std::fs::read(&path).map_err(|e| H5iError::with_path(e, &path))?;
         Ok(serde_json::from_slice(&bytes)?)
     }

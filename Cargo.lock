@@ -2031,6 +2031,9 @@ dependencies = [
 name = "h5i-recon"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "h5i-core",
  "h5i-error",
  "h5i-wire",
  "serde",

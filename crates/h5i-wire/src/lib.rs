@@ -17,6 +17,6 @@ pub mod message;
 pub mod record;
 
 pub use message::{
-    Body, Health, MAX_BODY_BYTES, MAX_STORE_BYTES, Skip, StoredRequest, StoredResponse, body_file,
+    Body, Health, MAX_BODY_BYTES, MAX_STORE_BYTES, Skip, StoredRequest, StoredResponse, body_file, message_file,
 };
 pub use record::{Initiator, Phase, RequestRecord, now_rfc3339};
