@@ -1373,11 +1373,8 @@ struct PathRun<'a> {
     max_requests: usize,
     rate: f64,
     origin: Option<&'a str>,
-    /// Start the page's network allowance again before each send.
-    ///
-    /// Off by default. The budget bounds page code; a discovery run is the
-    /// opposite, and raising it is the operator's decision to make out loud
-    /// (N12).
+    /// Start the page's network allowance again before each send. Raising a
+    /// budget is said out loud (N12).
     reset_budget: bool,
     /// Write one JSON line per probe as it happens.
     stream: bool,

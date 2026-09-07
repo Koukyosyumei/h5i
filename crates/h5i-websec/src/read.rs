@@ -1,10 +1,8 @@
-//! Reading a captured session's stored messages, comparing two of them, and
-//! folding a request log into a map.
+//! The workbench's reading verbs: one stored message, two compared, and a
+//! request log folded into a map.
 //!
-//! The workbench's *reading* verbs, and they live in the plugin rather than in
-//! the binary: installing the workbench is what adds the ability to read a
-//! store at all (design-websec.md W21). h5i reads it directly, so credentials
-//! never pass through the renderer.
+//! They live in the plugin, so installing it is what adds the ability to read a
+//! store at all (design-websec.md W21).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -18,10 +16,8 @@ use h5i_wire::read::{
 };
 use serde_json::{Value, json};
 
-/// Where a session's messages are, or why they cannot be read.
-///
-/// The binary keeps its own copy for `resend --as` and `sequence`, which read
-/// the same store to carry a request or bind a value out of a response.
+/// Where a session's messages are, or why they cannot be read. The binary
+/// keeps its own copy for `resend --as` and `sequence`.
 pub fn store_dir(root: &Path, selector: Option<&str>) -> anyhow::Result<(bs::Session, PathBuf)> {
     let session = resolve_for_reading(root, selector)?;
     // A boxed session's record sits where boxed code can write it, and this id

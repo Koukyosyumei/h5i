@@ -29,10 +29,8 @@ pub fn sequences(dir: &Path) -> Vec<u64> {
     seen.into_iter().collect()
 }
 
-/// A condition that did not match, in grep's own code.
-///
-/// `match` is a grep, so it answers like one: 0 matched, 1 did not, 2 could not
-/// look. Shared because two binaries answer with it.
+/// A condition that did not match, in grep's own code: 0 matched, 1 did not,
+/// 2 could not look. Shared because two binaries answer with it.
 pub const EXIT_NO_MATCH: i32 = 1;
 
 /// A question that could not be asked: a pattern that will not compile, a body

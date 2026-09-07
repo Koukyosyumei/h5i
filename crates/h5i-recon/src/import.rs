@@ -1,9 +1,7 @@
 //! Files other tools produced, read as candidates (design-recon.md N17, N19).
 //!
-//! h5i does not run those tools. It reads what the operator produced, bounded
-//! and streaming, and everything it writes is a `candidate`: another tool's
-//! claim is testimony, and the ledger already has a state for testimony. A
-//! status another program saw is not recorded as ours.
+//! h5i does not run those tools, and never records what one saw: their claims
+//! are testimony, and `candidate` is the ledger's state for testimony.
 
 use url::Url;
 
@@ -139,9 +137,8 @@ fn lines(format: Format, base: &Url, text: &str) -> Imported {
 
 /// Paths, methods and named inputs from an OpenAPI document.
 ///
-/// JSON only. A YAML document is the common case and needs a parser this crate
-/// does not carry; converting it is one `yq` away and stays the operator's job
-/// (N19).
+/// JSON only: YAML would need a parser this crate will not carry (N19), and
+/// converting it is one `yq` away.
 fn openapi(base: &Url, text: &str) -> Imported {
     let mut out = Imported::default();
     let Ok(document) = serde_json::from_str::<serde_json::Value>(text) else {

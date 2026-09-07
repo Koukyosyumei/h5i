@@ -1,7 +1,5 @@
-//! What a run was asked to do, and how far it got (design-recon.md N12).
-//!
-//! A job file exists so a resume runs the same job rather than a similar one,
-//! and so a run that was killed can still say what it was doing.
+//! What a run was asked to do, and how far it got, so a resume runs the same
+//! job rather than a similar one (design-recon.md N12).
 
 use std::path::{Path, PathBuf};
 

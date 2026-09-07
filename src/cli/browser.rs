@@ -960,11 +960,8 @@ pub enum BrowserCommands {
         json: bool,
     },
 
-    /// Names that moved to the workbench plugin, kept so a script that used
-    /// them is told where they went rather than "unrecognized subcommand".
-    ///
-    /// Hidden, because they are not verbs here any more: reading a captured
-    /// store is what `h5i plugin install websec` adds (design-websec.md W21).
+    /// Names that moved to the workbench plugin, kept hidden so a script that
+    /// used one is told where it went (design-websec.md W21).
     #[command(name = "message", hide = true)]
     MovedMessage {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -986,15 +983,11 @@ pub enum BrowserCommands {
         rest: Vec<std::ffi::OsString>,
     },
 
-    /// Speak one line-delimited request per line, and answer one per line.
+    /// Speak one request per line, and answer one per line: the same verbs
+    /// without paying process startup for each (design-websec.md W10).
     ///
-    /// The same verbs, without paying process startup for each one. A blind
-    /// extraction is hundreds of sends of a few milliseconds each, and starting
-    /// `h5i` costs tens of milliseconds every time (design-websec.md W10).
-    /// Recon's path discovery is the same shape.
-    ///
-    /// Each line is an object with an `id` and a `verb`; the reply carries the
-    /// same `id`. Everything else is the verb's own flags, named as fields.
+    /// Each line is an object with an `id` and a `verb`, and the reply carries
+    /// the same `id`. Everything else is the verb's own flags, as fields.
     Rpc {
         /// Read requests from stdin and write replies to stdout.
         #[arg(long)]
@@ -2915,9 +2908,9 @@ fn moved(was: &str, now: &str) -> anyhow::Result<()> {
 
 /// `h5i browser rpc --stdio`.
 ///
-/// One JSON object per line in, one per line out, ids matched. Every request
-/// goes through `ask_session` like a typed verb: same resolution, same control
-/// lock, same receipts. What it saves is the process, not a check.
+/// Every request goes through `ask_session` like a typed verb: same
+/// resolution, same control lock, same receipts. It saves the process, not a
+/// check.
 fn rpc(root: &Path, selector: Option<&str>, stdio: bool) -> anyhow::Result<()> {
     if !stdio {
         anyhow::bail!("`rpc` speaks over stdin and stdout: pass `--stdio`");

@@ -1,9 +1,8 @@
-//! Paths an application never disclosed, generated from a list the operator
-//! brings (design-recon.md N10).
+//! Paths an application never disclosed, from a list the operator brings
+//! (design-recon.md N10).
 //!
-//! h5i ships no wordlist. Generation is mechanical and named: extensions,
-//! backup forms, and words the crawl already saw, which is the cheapest source
-//! there is and the one a generic list cannot have.
+//! h5i ships no wordlist. Generation is mechanical: extensions, backup forms,
+//! the directory form, and the words this session has already seen.
 
 use std::collections::BTreeSet;
 use std::path::Path;

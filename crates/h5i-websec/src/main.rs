@@ -241,10 +241,8 @@ fn main() {
     }
 }
 
-/// Ask the running engine for something only it has.
-///
-/// Reading the store is this binary's own job now; a live session's in-memory
-/// request log is not a file, so that one is still a question for `h5i`.
+/// Ask the running engine for something only it has: a live session's log is
+/// in its memory, not in a file.
 pub fn ask_browser(args: &[&str], session: Option<&str>) -> anyhow::Result<serde_json::Value> {
     let mut command = Command::new(h5i());
     command.arg("browser").args(args).arg("--json");
