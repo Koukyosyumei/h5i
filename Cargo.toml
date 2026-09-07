@@ -98,6 +98,8 @@ h5i-runner = { path = "crates/h5i-runner", optional = true }
 # making the root switch cosmetic. The engine crate's only default feature is
 # `identity`, so this leaves the engine itself whole.
 h5i-browser = { path = "crates/h5i-browser", optional = true, default-features = false }
+# The store's types and readers, engine-free, shared with the plugins.
+h5i-wire = { path = "crates/h5i-wire" }
 # A scratch directory: the source bundle a `runner create` builds and streams,
 # and the workspace `h5i browser transcript --via` gives its helper.
 #

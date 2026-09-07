@@ -6,6 +6,7 @@
 //! (design-websec.md W21). The writers stay in `h5i-browser`.
 
 pub mod message;
+pub mod read;
 pub mod record;
 
 pub use message::{

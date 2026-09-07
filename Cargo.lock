@@ -1920,6 +1920,7 @@ dependencies = [
  "h5i-core",
  "h5i-runner",
  "h5i-share",
+ "h5i-wire",
  "libc",
  "regex",
  "serde",
@@ -2119,6 +2120,8 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tempfile",
+ "url",
 ]
 
 [[package]]
