@@ -89,7 +89,7 @@ position websec started from.
 | script execution | `crates/h5i-browser/src/script/`, boa | a real parse of a bundle is available, so JavaScript extraction need not be regex only |
 | websocket URLs | `wsclient.rs` | endpoints a page opened that no HTML link names |
 | a parallel executor with a barrier and a rate flag | W15 `--repeat`, `--race`, `--rate` | the scheduler path discovery needs, already composed with `budget.rs` |
-| structural diff | W12 `browser diff` | the comparison triage should call rather than inventing a similarity metric |
+| structural diff | W12 `websec diff` | the comparison triage should call rather than inventing a similarity metric |
 | plugin mechanism | `src/cli/plugin.rs`, `crates/h5i-websec` | a separate executable with no privilege of its own, discovered by name |
 
 W17 already anticipated this file. It shipped the observed half of a site map

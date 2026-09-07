@@ -136,7 +136,7 @@ jobs:
           --features browser -p h5i -p h5i-websec -p h5i-recon
 
       - name: websec smoke
-        run: ./scripts/websec/smoke.sh target/release/h5i
+        run: ./scripts/websec/smoke.sh target/release/h5i target/release/h5i-websec
 
       - name: recon smoke
         run: ./scripts/recon/smoke.sh target/release/h5i target/release/h5i-recon

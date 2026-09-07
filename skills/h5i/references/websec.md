@@ -2,6 +2,8 @@
 
 Test only authorized targets. Keep requests within the granted origin, identity, rate, and scope; obtain approval before expanding them. Open the session with `--capture`, exercise the relevant flow, then work from its message IDs.
 
+`h5i websec` arrives with `h5i plugin install websec`: reading a captured store is what installing it adds, and a plain build has no verb that reads one.
+
 ```bash
 h5i browser open https://target.example --capture
 h5i websec requests --human

@@ -29,6 +29,16 @@ pub fn sequences(dir: &Path) -> Vec<u64> {
     seen.into_iter().collect()
 }
 
+/// A condition that did not match, in grep's own code.
+///
+/// `match` is a grep, so it answers like one: 0 matched, 1 did not, 2 could not
+/// look. Shared because two binaries answer with it.
+pub const EXIT_NO_MATCH: i32 = 1;
+
+/// A question that could not be asked: a pattern that will not compile, a body
+/// that was never stored. Never the same code as "no".
+pub const EXIT_CANNOT_LOOK: i32 = 2;
+
 /// One stored message file, or the reason it could not be read.
 pub fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T, String> {
     let bytes =
@@ -67,6 +77,7 @@ impl Text {
     /// Not `as_str().len()`: one invalid byte puts a response on the preview
     /// path, and a length read off a 64 KiB preview is a number the target
     /// chose. `None` when the body is not stored, which is not a length of zero.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> Option<u64> {
         match self {
             Text::Utf8(text) => Some(text.len() as u64),

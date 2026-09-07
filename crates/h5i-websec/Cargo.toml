@@ -4,15 +4,28 @@ version = "0.1.0"
 edition = "2024"
 description = "h5i websec: an HTTP workbench for agents, as an h5i plugin."
 
-# A binary only, and a small one on purpose. It links no engine: everything it
-# does, it does by running the same `h5i browser` verbs a person would type, so
-# a plugin cannot reach a session by a path the CLI does not already offer, and
-# installing it does not drag a browser engine into a second binary.
+# A binary only, and a small one on purpose. It links no engine.
+#
+# Sending is still the engine's: `replay`, `resend` and `sequence` run the same
+# `h5i browser` verbs a person would type, so a plugin cannot reach the network
+# by a path the CLI does not already offer. Reading is its own now: the store's
+# types and readers live in `h5i-wire`, so this binary reads the bytes directly
+# instead of asking the binary to read them for it. That is what makes an
+# install that omits the plugin an install that cannot read a store at all
+# (design-websec.md W21).
 [[bin]]
 name = "h5i-websec"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5.60", features = ["derive"] }
-serde_json = { workspace = true }
 anyhow = "1"
+clap = { version = "4.5.60", features = ["derive"] }
+# The session registry: which sessions exist, and where each keeps its store.
+# Lean (no axum, no Node), and not the engine.
+h5i-core = { path = "../h5i-core", default-features = false }
+h5i-wire = { path = "../h5i-wire" }
+serde = { workspace = true }
+# `websec match --regex`: the matcher's patterns.
+regex = "1"
+serde_json = { workspace = true }
+url = "2.5"

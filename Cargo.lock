@@ -2110,7 +2110,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "h5i-core",
+ "h5i-wire",
+ "regex",
+ "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]

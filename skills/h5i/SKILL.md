@@ -10,8 +10,8 @@ Use `h5i <command> --help` before guessing flags. h5i has three related but inde
 | Need | Use | Read |
 | --- | --- | --- |
 | Read or drive a web page | `h5i browser` | [references/browser.md](references/browser.md) |
-| Inspect or replay captured HTTP traffic | `h5i websec` | [references/websec.md](references/websec.md) |
-| Find out what a target exposes | `h5i recon` | [references/recon.md](references/recon.md) |
+| Inspect or replay captured HTTP traffic | `h5i websec` (a plugin) | [references/websec.md](references/websec.md) |
+| Find out what a target exposes | `h5i recon` (a plugin) | [references/recon.md](references/recon.md) |
 | Run code in a confined worktree | `h5i box` | [references/boxes.md](references/boxes.md) |
 
 ## Browser
