@@ -2028,6 +2028,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i-recon"
+version = "0.1.0"
+dependencies = [
+ "h5i-error",
+ "h5i-wire",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "h5i-runner"
 version = "0.1.0"
 dependencies = [

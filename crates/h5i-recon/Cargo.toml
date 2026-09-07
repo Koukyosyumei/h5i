@@ -1,0 +1,19 @@
+[package]
+name = "h5i-recon"
+version = "0.1.0"
+edition = "2024"
+description = "h5i recon: the endpoint ledger, and the extractors that fill it from what a session already fetched."
+
+# A library only, and one that links no engine. It reads the shapes `h5i-wire`
+# defines and writes a ledger beside them, so the reader of an inventory never
+# drags Blitz, Stylo and Boa into its binary (design-recon.md N5, N19).
+
+[dependencies]
+h5i-error = { path = "../h5i-error" }
+h5i-wire = { path = "../h5i-wire" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
