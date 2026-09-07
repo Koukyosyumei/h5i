@@ -18,6 +18,8 @@ serde_json = { workspace = true }
 # the sender composed it.
 url = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
+# The ledger names an endpoint by hashing its key.
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.8"

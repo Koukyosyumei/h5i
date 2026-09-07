@@ -388,6 +388,111 @@ export interface BrowserStream {
   frame_error?: string;
 }
 
+// ── browser sessions ─────────────────────────────────────────────────────────
+
+/** `h5i_core::session_view::Attention`: how loudly a session is asking. */
+export interface Attention {
+  /** `blocked`, `working`, `done`, `idle`, `unknown`. */
+  state: string;
+  /** The evidence behind the state. A badge without this would be a score. */
+  why: string;
+}
+
+/** A recon ledger, folded into counts by state. */
+export interface LedgerCounts {
+  candidate: number;
+  observed: number;
+  confirmed: number;
+  refused: number;
+  gone: number;
+  cursor: number;
+  unreadable: number;
+  truncated: boolean;
+}
+
+/** One recorded recon run that spent requests. */
+export interface JobRow {
+  id: string;
+  verb: string;
+  started_at: string;
+  ended_at: string | null;
+  requests: number;
+  written: number;
+  stopped: string | null;
+}
+
+export interface SessionRow {
+  id: string;
+  name: string | null;
+  state: string;
+  placement: string;
+  lane: string;
+  identity: string;
+  url: string;
+  started_at: string;
+  ended_at: string | null;
+  held_by_human: boolean;
+  requests: number;
+  denied: number;
+  origins: string[];
+  last_request_at: string | null;
+  /** How many messages the store holds, or null when capture was off. The
+   *  bytes stay on disk: reading them is a CLI act. */
+  captured: number | null;
+  ledger: LedgerCounts | null;
+  jobs: JobRow[];
+  attention: Attention;
+}
+
+/** One endpoint in the recon ledger. */
+export interface EndpointRow {
+  id: string;
+  origin: string;
+  path: string;
+  method: string;
+  identity: string;
+  state: string;
+  /** How each row was learned: `{ from: "page" | "calibration" | … }`. */
+  sources: { from: string }[];
+  evidence: string[];
+  params: { name: string; at: string }[];
+  status: number | null;
+  cluster: string | null;
+  reason: string | null;
+  first_seen: string;
+  last_seen: string;
+  line: number;
+}
+
+/** What `/api/sessions` answers: the newest sessions, and what did not fit. */
+export interface SessionFleet {
+  sessions: SessionRow[];
+  total: number;
+  live: number;
+}
+
+export interface SessionDetail extends SessionRow {
+  /** Receipts, oldest first, both phases as the log holds them. */
+  requests_log: RequestRecord[];
+  endpoints: EndpointRow[];
+}
+
+/** One line of the request log. Counts and names, never values. */
+export interface RequestRecord {
+  seq: number;
+  at: string;
+  phase: string;
+  initiator: string;
+  method: string;
+  url: string;
+  allowed: boolean;
+  denied_reason?: string;
+  status?: number;
+  bytes?: number;
+  duration_ms?: number;
+  error?: string;
+}
+
 // ── transport ────────────────────────────────────────────────────────────────
 
 async function get<T>(path: string): Promise<T> {
@@ -414,6 +519,9 @@ export const api = {
       `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/receipts/${encodeURIComponent(id)}`,
     ),
   probe: () => get<CapabilitiesReport>("/api/probe"),
+  sessions: () => get<SessionFleet>("/api/sessions"),
+  session: (id: string) =>
+    get<SessionDetail>(`/api/session/${encodeURIComponent(id)}`),
   browser: (agent: string, slug: string, since: number) =>
     get<BrowserStream>(
       `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser?since=${since}`,

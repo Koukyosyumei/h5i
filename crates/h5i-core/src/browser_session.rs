@@ -19,7 +19,9 @@ pub const EXIT_SESSION_GONE: i32 = 69;
 const SESSIONS: &str = "sessions";
 
 /// The record file inside a session directory.
-const RECORD: &str = "session.json";
+/// The record itself. Public because a reader that watches for changes has to
+/// name the same file the writer does.
+pub const RECORD: &str = "session.json";
 
 /// Holds the id of the session a verb acts on when nobody says which.
 ///

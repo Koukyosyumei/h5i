@@ -195,6 +195,10 @@
 <a class="t3" href="#grants-revocation-and-receipts">Grants, revocation, and receipts</a>
 </div>
 <a class="t2" href="#h5i-ui">h5i ui</a>
+<div class="t3group">
+<a class="t3" href="#attention">Attention</a>
+<a class="t3" href="#what-it-does-not-show">What it does not show</a>
+</div>
 <a class="t2" href="#h5i-skill">h5i skill</a>
 <a class="t2" href="#h5i-plugin">h5i plugin</a>
 <a class="t2" href="#h5i-websec">h5i websec</a>
@@ -1329,6 +1333,59 @@ h5i ui --open
 receipts, and browser evidence. Selecting a box shows its filesystem, network,
 process, resource, and page lanes; selecting a row shows the same receipt text
 as <code>h5i box inspect</code>.</p>
+<p>It also lists <strong>browser sessions</strong>, which is where the workbench and recon do
+their work. Boxes are the repository's; sessions are the machine's, because
+<code>h5i browser open</code> needs no repository. A session row carries what its own
+files say: requests and refusals, whether capture was on and how many messages
+are stored, the recon ledger folded into counts by state, and the runs that
+spent requests. Selecting one shows the request log, the endpoint inventory and
+the job records.</p>
+<h3 id="attention">Attention</h3>
+<p>Every session gets one of five states, and each carries the evidence that
+produced it rather than a score:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>waiting on you</code></td>
+<td>A human holds the control lock, or a run stopped for a reason a person has to answer.</td>
+</tr>
+<tr>
+<td><code>finished, unread</code></td>
+<td>The session ended, or its last run finished, and this browser has not looked.</td>
+</tr>
+<tr>
+<td><code>working</code></td>
+<td>Live, and something happened in the last minute.</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>Live and quiet.</td>
+</tr>
+<tr>
+<td><code>unclassified</code></td>
+<td>The record says live and the engine's control file is gone.</td>
+</tr>
+</tbody>
+</table>
+<p>The bar at the top counts them and filters the list, so a person running many
+sessions is told where to look rather than reading every row. <code>finished,
+unread</code> clears when you open that session, and the memory of what you have read
+is this browser's alone: the console never writes it back, which is what keeps
+a passive view passive.</p>
+<p>Boxes keep their own words in the same bar (<code>refused egress</code>, <code>with failures</code>),
+because a refusal is the boundary working and folding it into the five states
+would be a lie for the sake of a tidier row.</p>
+<h3 id="what-it-does-not-show">What it does not show</h3>
+<p>The console never renders a stored message. Bodies, cookies and <code>Authorization</code>
+headers live in the capture store, which is owner-only on disk and is the one
+artifact h5i keeps that holds credentials in full. Each request row prints the
+command that reads it instead: <code>h5i websec show req_42 --session &lt;name&gt;</code>.</p>
 <p>The console binds loopback and uses a random bearer token in the URL. Keep that
 URL private: any local process or page that obtains it can read the console.
 Untrusted box and page strings are rendered as text, never HTML. The console can

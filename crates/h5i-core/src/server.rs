@@ -12,7 +12,9 @@ use axum::{
     Router,
 };
 use serde::Serialize;
+use serde_json::Value;
 
+use crate::browser_session as bs;
 use crate::env::{self, EnvEvent, EnvManifest, LiveSession, ServiceStatus};
 use crate::error::H5iError;
 use crate::receipt::ExecRecord;
@@ -55,6 +57,53 @@ pub struct AppState {
     /// the box stops serving a view.
     frames:
         Arc<std::sync::Mutex<std::collections::HashMap<String, crate::browser_frames::FrameRelay>>>,
+    /// One folded session row per session, keyed by what its files looked like
+    /// when the row was made.
+    ///
+    /// A registry grows without bound and most of it is finished: an ended
+    /// session's files never change again, so folding them once and checking a
+    /// stat afterwards is the difference between a console that costs nothing
+    /// and one that reads the disk every eight seconds.
+    sessions: Arc<std::sync::Mutex<std::collections::HashMap<String, (SessionStamp, SessionRow)>>>,
+}
+
+/// What a session's files looked like: enough to notice a change, and nothing
+/// that has to be read to find out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionStamp {
+    record: (u64, Option<std::time::SystemTime>),
+    receipts: (u64, Option<std::time::SystemTime>),
+    ledger: (u64, Option<std::time::SystemTime>),
+    /// The control lock: a handover changes what a row says and touches
+    /// nothing else.
+    control: (u64, Option<std::time::SystemTime>),
+    jobs: Option<std::time::SystemTime>,
+    messages: Option<std::time::SystemTime>,
+}
+
+fn stamp_of(path: &std::path::Path) -> (u64, Option<std::time::SystemTime>) {
+    match std::fs::metadata(path) {
+        Ok(meta) => (meta.len(), meta.modified().ok()),
+        Err(_) => (0, None),
+    }
+}
+
+fn touched(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
+}
+
+impl SessionStamp {
+    fn of(h5i_root: &std::path::Path, id: &str) -> Self {
+        let dir = bs::dir(h5i_root, id);
+        Self {
+            record: stamp_of(&dir.join(bs::RECORD)),
+            receipts: stamp_of(&dir.join(bs::RECEIPTS_FILE)),
+            ledger: stamp_of(&dir.join("recon").join("ledger.jsonl")),
+            control: stamp_of(&dir.join(crate::control::CONTROL_JSON)),
+            jobs: touched(&dir.join("recon").join("jobs")),
+            messages: touched(&dir.join(bs::MESSAGES_DIR)),
+        }
+    }
 }
 
 impl AppState {
@@ -65,6 +114,7 @@ impl AppState {
             handoff: Arc::new(std::sync::Mutex::new(None)),
             browser: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             frames: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            sessions: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -743,6 +793,232 @@ fn receipts_of(h5i_root: &std::path::Path, m: &EnvManifest) -> Vec<ExecRecord> {
     crate::receipt::list(&env::env_dir(h5i_root, &m.agent, &m.slug)).unwrap_or_default()
 }
 
+/// One browser session, as the fleet view shows it.
+///
+/// Sessions are the surface the workbench and recon act on, and until now the
+/// console could not see one at all: it showed boxes, and a session needs no
+/// box. The row carries the account (counts, states, jobs) and never the
+/// evidence, which stays owner-only on disk (`session_view`).
+#[derive(Serialize, Clone)]
+pub struct SessionRow {
+    pub id: String,
+    pub name: Option<String>,
+    /// `live`, `closed`, `died`, `expired`, `gone`.
+    pub state: String,
+    /// Where it ran, in the words the CLI uses.
+    pub placement: String,
+    /// `engine-claimed` or `host-observed`: what the record is worth.
+    pub lane: String,
+    pub identity: String,
+    pub url: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    /// Whether a human holds the control lock.
+    pub held_by_human: bool,
+    #[serde(flatten)]
+    pub signals: crate::session_view::SessionSignals,
+    pub attention: crate::session_view::Attention,
+}
+
+/// Everything one session's own files say, for the detail pane.
+#[derive(Serialize)]
+pub struct SessionDetail {
+    #[serde(flatten)]
+    pub row: SessionRow,
+    /// The newest receipts, oldest first, both phases as the log holds them.
+    /// Named apart from the row's `requests` count, which is flattened in.
+    pub requests_log: Vec<Value>,
+    /// The recon ledger, folded.
+    pub endpoints: Vec<h5i_wire::ledger::Endpoint>,
+}
+
+/// A serialisable enum as the one word it serialises to.
+fn as_word<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Read one session's files into a row.
+fn session_row(h5i_root: &std::path::Path, session: &bs::Session) -> (SessionRow, Vec<Value>) {
+    let dir = bs::dir(h5i_root, &session.id);
+    let records: Vec<Value> = session
+        .logs
+        .requests
+        .clone()
+        .or_else(|| Some(dir.join(bs::RECEIPTS_FILE)))
+        .and_then(|path| bs::read_log_capped_saying(&path))
+        .map(|(text, _)| {
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut signals = crate::session_view::signals_from_receipts(&records);
+    signals.captured = crate::session_view::captured(&dir);
+    signals.ledger = crate::session_view::ledger_counts(&dir);
+    signals.jobs = crate::session_view::jobs(&dir);
+
+    let held_by_human = crate::control::read(&dir).holder == crate::control::Holder::Human;
+    // A live record whose control file is gone is the one case this cannot
+    // classify, and saying so is the point of the `unknown` state.
+    let engine_reachable = session
+        .control
+        .file
+        .as_ref()
+        .map(|f| f.exists())
+        .unwrap_or(false);
+    let attention = crate::session_view::attention(
+        session,
+        &signals,
+        held_by_human,
+        engine_reachable,
+        chrono::Utc::now(),
+    );
+
+    let row = SessionRow {
+        id: session.id.clone(),
+        name: session.name.clone(),
+        // Through serde, not `Debug`: these are the words the CLI and the
+        // receipts use, and `engine-claimed` losing its hyphen to a lowercased
+        // `Debug` would be a third spelling of a term the product defines.
+        state: as_word(&session.state),
+        placement: session.where_it_ran(),
+        lane: as_word(&session.lane),
+        identity: session.identity.clone(),
+        url: session.url.clone(),
+        started_at: session.started_at.clone(),
+        ended_at: session.ended_at.clone(),
+        held_by_human,
+        signals,
+        attention,
+    };
+    (row, records)
+}
+
+/// The most sessions one poll reads in full.
+///
+/// A registry grows without bound: every `h5i browser open` adds a record, and
+/// a benchmark run adds one per target. Reading every session's log, ledger and
+/// jobs every few seconds would make the console the most expensive thing on
+/// the machine, so the newest are read and the rest are counted.
+pub const MAX_SESSIONS_READ: usize = 120;
+
+/// The fleet, and what did not fit in it.
+#[derive(Serialize)]
+pub struct SessionFleet {
+    pub sessions: Vec<SessionRow>,
+    /// Records in the registry, including the ones not read.
+    pub total: usize,
+    /// Sessions still running, whether or not they were read.
+    pub live: usize,
+}
+
+/// `GET /api/sessions`: browser sessions, the ones wanting a person first.
+async fn api_sessions(State(state): State<Arc<AppState>>) -> Json<SessionFleet> {
+    let cache = state.sessions.clone();
+    let fleet = blocking(move || {
+        // Sessions are the machine's, not the repository's: `h5i browser open`
+        // needs no repo, and the registry lives in the user's state directory.
+        // The console says which scope it is showing rather than letting a
+        // reader assume the boxes' one.
+        let h5i_root = bs::root().ok()?;
+        let mut records = bs::list(&h5i_root).unwrap_or_default();
+        let total = records.len();
+        let live = records.iter().filter(|s| s.state.is_live()).count();
+        // Live first, then newest: what a person is watching is what is running
+        // now and what just finished.
+        records.sort_by(|a, b| {
+            b.state
+                .is_live()
+                .cmp(&a.state.is_live())
+                .then(b.started_at.cmp(&a.started_at))
+        });
+        records.truncate(MAX_SESSIONS_READ);
+
+        let mut sessions: Vec<SessionRow> = records
+            .iter()
+            .map(|session| {
+                let stamp = SessionStamp::of(&h5i_root, &session.id);
+                // Anything a row is made of leaves a mark on a file. If none of
+                // them moved, the row cannot have.
+                if let Ok(cached) = cache.lock()
+                    && let Some((seen, row)) = cached.get(&session.id)
+                    && *seen == stamp
+                {
+                    return row.clone();
+                }
+                let row = session_row(&h5i_root, session).0;
+                if let Ok(mut cached) = cache.lock() {
+                    // Bounded by what one poll reads, so the map cannot outgrow
+                    // the fleet it describes.
+                    if cached.len() > MAX_SESSIONS_READ * 4 {
+                        cached.clear();
+                    }
+                    cached.insert(session.id.clone(), (stamp, row.clone()));
+                }
+                row
+            })
+            .collect();
+        // Loudest first, then newest. The order is the whole point: a person
+        // watching many sessions should not have to find the one that stopped.
+        sessions.sort_by(|a, b| {
+            attention_rank(b.attention.state)
+                .cmp(&attention_rank(a.attention.state))
+                .then(b.started_at.cmp(&a.started_at))
+        });
+        Some(SessionFleet {
+            sessions,
+            total,
+            live,
+        })
+    })
+    .await;
+    Json(fleet.unwrap_or(SessionFleet {
+        sessions: Vec::new(),
+        total: 0,
+        live: 0,
+    }))
+}
+
+/// How loudly a state asks. `done` outranks `working` because a finished run
+/// nobody has read is the thing most easily lost.
+fn attention_rank(state: &str) -> u8 {
+    match state {
+        "blocked" => 4,
+        "done" => 3,
+        "working" => 2,
+        "idle" => 1,
+        _ => 0,
+    }
+}
+
+/// `GET /api/session/:id`: one session's account, in full.
+async fn api_session(Path(id): Path<String>) -> Result<Json<SessionDetail>, StatusCode> {
+    let detail = blocking(move || {
+        let h5i_root = bs::root().ok()?;
+        // The id becomes a path, and a boxed session writes its own record.
+        if !bs::id_is_one_component(&id) {
+            return None;
+        }
+        let session = bs::read(&h5i_root, &id).ok()?;
+        let (row, records) = session_row(&h5i_root, &session);
+        let dir = bs::dir(&h5i_root, &session.id);
+        let start = records
+            .len()
+            .saturating_sub(crate::session_view::MAX_REQUESTS_SHOWN * 2);
+        Some(SessionDetail {
+            row,
+            requests_log: records[start..].to_vec(),
+            endpoints: crate::session_view::ledger_endpoints(&dir),
+        })
+    })
+    .await;
+    detail.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
 /// `GET /api/boxes`: the fleet, most pressing first.
 async fn api_boxes(State(state): State<Arc<AppState>>) -> Json<Vec<BoxRow>> {
     let path = state.repo_path.clone();
@@ -1045,6 +1321,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/assets/*path", get(asset))
         .route("/api/probe", get(api_probe))
         .route("/api/boxes", get(api_boxes))
+        .route("/api/sessions", get(api_sessions))
+        .route("/api/session/:id", get(api_session))
         .route("/api/box/:agent/:slug", get(api_box))
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))

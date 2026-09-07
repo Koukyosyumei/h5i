@@ -17,6 +17,14 @@ import {
 
 import { BrowserTerminal } from "./BrowserTerminal";
 import {
+  AttentionBar,
+  SessionDetailPane,
+  SessionList,
+  loadSeen,
+  markSeen,
+  shownState,
+} from "./SessionsPane";
+import {
   api,
   type BoxDetail,
   type BoxRow,
@@ -27,6 +35,7 @@ import {
   type ServiceStatus,
   type ShareEvidence,
   type SharedNow,
+  type SessionRow,
   type Signals,
   runtimeObserved,
   thirdPartyCanRead,
@@ -49,8 +58,26 @@ type LaneKey = "fs" | "net" | "proc" | "res" | "browser" | "kernel";
 
 const POLL_MS = 8000;
 
+/** Which half of the fleet the left column is showing. */
+type Kind = "boxes" | "sessions";
+
 export function SandboxView() {
   const [boxes, setBoxes] = useState<BoxRow[] | null>(null);
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  // What the registry holds against what this poll read: a machine that has run
+  // a thousand sessions should be told that, not shown a list that pretends to
+  // be all of them.
+  const [sessionTotal, setSessionTotal] = useState<{ total: number; live: number }>({
+    total: 0,
+    live: 0,
+  });
+  const [kind, setKind] = useState<Kind>("boxes");
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [attention, setAttention] = useState<string>("all");
+  // What this browser has already looked at. Per client on purpose: the server
+  // has no idea who has read what, and a console that wrote a "seen" flag back
+  // would be a passive view with a side effect.
+  const [seen, setSeen] = useState<Record<string, string>>(loadSeen);
   const [probe, setProbe] = useState<CapabilitiesReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -87,6 +114,16 @@ export function SandboxView() {
         setTick((t) => t + 1);
       })
       .catch((e) => setError(String(e instanceof Error ? e.message : e)));
+    // Sessions are their own registry: a session needs no box, and the two
+    // lists fail independently. A fleet that cannot read one still shows the
+    // other.
+    api
+      .sessions()
+      .then((fleet) => {
+        setSessions(fleet.sessions);
+        setSessionTotal({ total: fleet.total, live: fleet.live });
+      })
+      .catch(() => setSessions([]));
   }, []);
 
   useEffect(() => {
@@ -100,6 +137,16 @@ export function SandboxView() {
   useEffect(() => {
     api.probe().then(setProbe).catch(() => setProbe(null));
   }, []);
+
+  // Open on whichever half has something in it. A repository with no boxes
+  // would otherwise greet its reader with an empty column while the sessions
+  // they came to see sat behind a tab.
+  const [chose, setChose] = useState(false);
+  useEffect(() => {
+    if (chose || boxes === null || sessions === null) return;
+    if (boxes.length === 0 && sessions.length > 0) setKind("sessions");
+    setChose(true);
+  }, [boxes, sessions, chose]);
 
   // Keep a selection valid as the fleet refreshes; default to the most
   // pressing box, which the server already sorted to the top.
@@ -121,6 +168,19 @@ export function SandboxView() {
     [boxes, selectedId],
   );
 
+  // Looking at a session is what clears its `done`. Recorded here rather than
+  // sent anywhere: each client keeps its own memory of what it has read.
+  const selectSession = useCallback(
+    (id: string) => {
+      setSessionId(id);
+      const row = sessions?.find((s) => s.id === id);
+      if (row && shownState(row, seen) === "done") {
+        setSeen(markSeen(row));
+      }
+    },
+    [sessions, seen],
+  );
+
   if (error) {
     return (
       <div className="sbx-shell">
@@ -136,20 +196,88 @@ export function SandboxView() {
   return (
     <div className="sbx-shell">
       <TopStrip probe={probe} boxes={boxes} />
+      <AttentionBar
+        sessions={sessions}
+        boxes={
+          boxes
+            ? {
+                refusing: boxes.filter((b) => b.signals.egress_denied > 0).length,
+                failing: boxes.filter(
+                  (b) => b.signals.failed > 0 || b.signals.timed_out > 0,
+                ).length,
+              }
+            : null
+        }
+        filter={attention}
+        onFilter={(f) => {
+          setAttention(f);
+          if (f !== "all") setKind("sessions");
+        }}
+        onBoxFilter={(f) => {
+          setKind("boxes");
+          setFilter(f);
+        }}
+        seen={seen}
+      />
       <div
         className="sbx-body"
         style={{ gridTemplateColumns: `${split}px 1px 1fr` }}
       >
-        <FleetPane
-          boxes={filtered}
-          total={boxes?.length ?? 0}
-          filter={filter}
-          onFilter={setFilter}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-        />
+        <div className="sbx-fleet">
+          <div className="sbx-kinds">
+            {(["boxes", "sessions"] as Kind[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`sbx-kind${kind === k ? " is-on" : ""}`}
+                onClick={() => setKind(k)}
+                title={
+                  k === "boxes"
+                    ? "boxes of the repository this console was started in"
+                    : `browser sessions on this machine: ${sessionTotal.live} live of ${sessionTotal.total} recorded, newest read first`
+                }
+              >
+                {k}
+                <span className="sbx-tab-n">
+                  {k === "boxes"
+                    ? (boxes?.length ?? 0)
+                    : sessionTotal.total > (sessions?.length ?? 0)
+                      ? `${sessions?.length ?? 0}/${sessionTotal.total}`
+                      : (sessions?.length ?? 0)}
+                </span>
+              </button>
+            ))}
+          </div>
+          {kind === "boxes" ? (
+            <FleetPane
+              boxes={filtered}
+              total={boxes?.length ?? 0}
+              filter={filter}
+              onFilter={setFilter}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+            />
+          ) : (
+            <SessionList
+              sessions={sessions}
+              total={sessionTotal.total}
+              seen={seen}
+              filter={attention}
+              selectedId={sessionId}
+              onSelect={selectSession}
+            />
+          )}
+        </div>
         <Divider width={split} onWidth={setSplit} />
-        <DetailPane box={selected} tick={tick} />
+        {kind === "sessions" && sessionId ? (
+          <SessionDetailPane id={sessionId} tick={tick} />
+        ) : kind === "sessions" ? (
+          <div className="sbx-detail">
+            <div className="sbx-pane-empty">pick a session</div>
+          </div>
+        ) : (
+          <DetailPane box={selected} tick={tick} />
+        )}
       </div>
     </div>
   );

@@ -26,6 +26,9 @@ pub mod refstore;
 // bundle, and the build script's dependency on Node.
 #[cfg(feature = "web")]
 pub mod server;
+// What the console shows about browser sessions, and which of them wants a
+// human. Not feature-gated: `h5i box watch` and the TUI want the same answer.
+pub mod session_view;
 // Reading `share.json` for everything below `h5i-share`. See the module note:
 // there were three hand-rolled probes here and they did not agree with the
 // crate that writes the file.

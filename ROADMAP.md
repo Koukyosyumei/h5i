@@ -28,6 +28,7 @@ essential to this one.
 | remote runner | R13.1 built. R13.2 to R13.4 are not | [`docs/design/design-runner.md`](docs/design/design-runner.md) |
 | runtime detection | built 2026-08-19, off by default at three layers | [`docs/design/design-detect.md`](docs/design/design-detect.md) |
 | HTTP workbench | phases A and B built, benchmarked; installed with `h5i plugin install websec` | [`docs/design/design-websec.md`](docs/design/design-websec.md) |
+| box console | sessions and the attention model built 2026-09-07 | [`docs/design/design-console.md`](docs/design/design-console.md) |
 | reconnaissance | phase 1 built 2026-09-07: ledger, extract, known, crawl, paths, triage, jobs. `h5i plugin install recon` | [`docs/design/design-recon.md`](docs/design/design-recon.md) |
 
 ## The three decisions the pivot rests on
@@ -88,6 +89,7 @@ of it whether you need the rest.
 | D1 to D14 | `docs/design/design-detect.md` | the kernel-observed lane |
 | W1 to W21 | `docs/design/design-websec.md` | capture, replay, diff, and the plugin the workbench ships as |
 | N1 to N21 | `docs/design/design-recon.md` | the endpoint ledger, discovery, triage, and where recon stops |
+| C1 to C8 | `docs/design/design-console.md` | what `h5i ui` shows, what it refuses to, and how it says which session wants you |
 
 Live code cites these section numbers. The prefixes do not collide with
 [`docs/roadmap-history.md`](docs/roadmap-history.md), which holds the superseded
