@@ -1,4 +1,4 @@
-# Design: reconnaissance and the endpoint ledger, sections N1 to N20
+# Design: reconnaissance and the endpoint ledger, sections N1 to N21
 
 Status: proposed, 2026-09-07. This design adds the half of an engagement that
 comes before a payload: finding what an application exposes, recording where
@@ -24,12 +24,16 @@ detection and websec, and live code cites these numbers.
   `Broker::fetch` like everything else, so the session's policy decides, the
   budget is spent, and the receipt is written before the bytes move. A recon
   tool with a socket of its own would void the claim the product leads with.
+- **We write it, we do not shell out to it.** The parsers, the crawler, the
+  wordlist expansion and the clustering are ours. Borrowing a binary borrows
+  its CVEs, at h5i's privilege, at the exact point the target's bytes arrive,
+  and with an HTTP client that answers to nobody here. N19 is the argument.
 - **Nothing is flagged.** Recon reports endpoints, responses and differences.
   Calling one of them a vulnerability is the agent's claim, written in a
   finding it signs.
 - **It amends websec's refusals.** `design-websec.md` currently refuses "a
   crawl-and-flag mode" and "no wordlists". Recon crawls and takes a wordlist,
-  and still flags nothing. N19 says exactly what changes.
+  and still flags nothing. N20 says exactly what changes.
 
 Part of the h5i design set. The roadmap is
 [`../../ROADMAP.md`](../../ROADMAP.md); the engine is
@@ -406,9 +410,10 @@ they need the session's identity, jar and scope.
 Features 13 to 15 are about hosts h5i has not talked to yet, and none of them
 is an HTTP conversation.
 
-The stance: `h5i recon import` takes JSON or a URL list from gau, subfinder,
-dnsx, httpx and naabu, writes ledger rows with `source: import:<tool>` and a
-timestamp, and confirms nothing. Everything imported is a `candidate` until an
+The stance: `h5i recon import` reads a file the operator produced with gau,
+subfinder, dnsx, httpx or naabu, writes ledger rows with `source: import:<tool>`
+and a timestamp, and confirms nothing. h5i does not run those tools and does not
+fetch their output; see N19. Everything imported is a `candidate` until an
 h5i request observes it, which is exactly the discipline N5 exists to enforce
 and is a better fit than reimplementing five mature tools.
 
@@ -429,7 +434,55 @@ Listed so the boundary can be defended in review rather than re-argued.
 | out-of-band callbacks | already designed as W19, with no hosted service and pluggable backends |
 | template-driven checks | if it ever exists, it starts by importing external results. Maintaining a template corpus is a product, not a feature |
 
-## N19. What this changes in the websec design
+## N19. Own the code that touches the target
+
+Everything in N8, N10 and N11 is written here, in Rust, against crates already
+in the workspace. Recon does not run katana, ffuf, feroxbuster, jsluice, arjun
+or httpx, and does not call a service that does. Those tools are named through
+this file as references for behaviour worth reproducing, not as dependencies.
+
+Three reasons, in the order they bite.
+
+1. **A bug in a borrowed tool is a bug at h5i's privilege.** The code in
+   question sits exactly where hostile bytes arrive: a link extractor parses
+   whatever the target served, and a JavaScript reader parses a bundle the
+   target wrote. That is the least appealing place in the system to run a
+   program whose release cadence, parser, and unsafe code are somebody else's.
+   A CVE in it is our incident, in a process holding the session's cookie jar.
+2. **A borrowed tool brings its own HTTP client.** Its requests miss
+   `policy.rs`, spend nothing from `budget.rs`, and appear in no receipt, which
+   is the one rule in N21 that is not a preference. The two failures compound:
+   a program we did not write both parses hostile input and reaches the network
+   outside the boundary the product is about.
+3. **A shell-out is an unversioned dependency on whatever is on `PATH`.** It is
+   not in `Cargo.lock`, not in a lockfile audit, and not reproducible for the
+   reviewer reading a run six months later.
+
+The same instinct, pointed the other way, is already an owner ruling: no
+vendored engine crates, ever (ROADMAP B4). Dependencies are versioned crates we
+resolve and audit, not copies in the tree and not binaries on the host.
+
+**Reuse inside the process is different and is encouraged.** The JavaScript
+pass is boa, which is already linked. Link extraction reads the DOM the engine
+already built. Clustering uses W12's diff. Reimplementing those would be the
+same mistake in the opposite direction.
+
+**Import stays, and is a file, not an execution.** N17 takes JSON the operator
+produced with whatever they like. h5i does not spawn the tool, does not fetch
+its output over the network, and reads the file as untrusted input with a size
+cap and a streaming parse, exactly as it treats a snapshot. Every imported row
+lands as a `candidate`, so nothing an outside tool said is believed until an
+h5i request observes it. That is the property that makes the import safe: it
+is testimony, and the ledger already has a state for testimony.
+
+**If a helper lane is ever genuinely needed**, it takes the shape the two that
+exist already take. `h5i browser transcript --via yt-dlp` is feature-gated,
+named at the call site, and recorded as an outside program run deliberately;
+the microvm tier shells out to `msb` and says so. Both are opt-in, both are
+visible in the record, and neither is in the default path. A recon helper would
+have to clear the same bar, and none is planned.
+
+## N20. What this changes in the websec design
 
 `design-websec.md`'s "What is deliberately not built" refuses "a scanner. No
 crawl-and-flag mode" and "payload generation. No SQL injection strings, no XSS
@@ -444,13 +497,16 @@ amendment is narrow:
 Without that amendment the next reviewer refuses N9 and N10 by the book, and
 they would be right to.
 
-## N20. What is deliberately not built
+## N21. What is deliberately not built
 
 - **Verdicts and severities.** No finding is produced by recon. `confirmed`
   means distinguishable from the not-found baseline, not interesting.
 - **Bundled wordlists, payload corpora or fingerprint databases with no
   provenance.** Every guess names its evidence.
 - **A hosted service of any kind.** Nothing about a target leaves the machine.
+- **Execution of third-party security tools.** No spawning katana, ffuf,
+  feroxbuster, subfinder or naabu, and no wrapper that pretends the output is
+  h5i's own observation. N19.
 - **Crawling outside the session policy.** There is no `--all-origins`.
 - **An agent planner.** Recon does not decide what to crawl next beyond its
   frontier rules. The loop belongs to whatever is driving h5i.
