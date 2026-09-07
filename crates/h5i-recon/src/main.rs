@@ -354,7 +354,7 @@ fn endpoints(
             String::new()
         } else {
             let names: Vec<&str> = endpoint.params.iter().map(|p| p.name.as_str()).collect();
-            format!("  ?{}", names.join("&"))
+            format!("  ?{}", preview(&names.join("&")))
         };
         println!(
             "  {:<9} {:<32} {:<7} {:<5} {:<10} {}{params}",
@@ -1087,8 +1087,8 @@ fn known(
     for item in &asked {
         match item.get("refused").and_then(Value::as_str) {
             Some(why) => println!(
-                "  refused  : {} — {}",
-                item["path"].as_str().unwrap_or_default(),
+                "  refused  : {} {}",
+                preview(item["path"].as_str().unwrap_or_default()),
                 preview(why)
             ),
             None => println!(
@@ -1097,7 +1097,8 @@ fn known(
                     .as_u64()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "-".to_string()),
-                item["path"].as_str().unwrap_or_default(),
+                // A sitemap's locations reach this line, so it is target text.
+                preview(item["path"].as_str().unwrap_or_default()),
                 item["req"].as_str().unwrap_or_default()
             ),
         }
@@ -1272,7 +1273,7 @@ fn show(root: &Path, selector: Option<&str>, id: &str, json_out: bool) -> anyhow
         println!("  status   : {status}");
     }
     if let Some(reason) = &endpoint.reason {
-        println!("  refused  : {reason}");
+        println!("  refused  : {}", preview(reason));
     }
     if !endpoint.params.is_empty() {
         for param in &endpoint.params {
@@ -1335,8 +1336,10 @@ fn source_word(source: &h5i_recon::Source) -> String {
     }
 }
 
-/// One line of target-written text, bounded. Everything in the ledger came
-/// from somewhere else, and a terminal is not a safe place to paste it whole.
+/// One line of target-written text, bounded and stripped of control bytes.
+///
+/// Everything in the ledger came from somewhere else, and a terminal reads an
+/// escape sequence as an instruction.
 fn preview(text: &str) -> String {
     let cleaned: String = text
         .chars()
@@ -1347,5 +1350,30 @@ fn preview(text: &str) -> String {
         format!("{cleaned}…")
     } else {
         cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview;
+
+    #[test]
+    fn an_escape_sequence_never_reaches_the_terminal() {
+        // Every path, parameter name and reason printed by these verbs was
+        // written by a target, and a terminal reads an escape as an
+        // instruction.
+        let hostile = "/a\u{1b}[2J\u{1b}]0;owned\u{7}b\r\n";
+        let shown = preview(hostile);
+        assert!(!shown.contains('\u{1b}'), "{shown:?}");
+        assert!(!shown.contains('\r'), "{shown:?}");
+        assert!(shown.starts_with("/a"), "{shown:?}");
+    }
+
+    #[test]
+    fn a_long_line_is_cut_and_says_so() {
+        let long = "/".to_string() + &"a".repeat(500);
+        let shown = preview(&long);
+        assert!(shown.chars().count() <= 121, "{}", shown.chars().count());
+        assert!(shown.ends_with('…'));
     }
 }

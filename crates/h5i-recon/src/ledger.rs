@@ -222,14 +222,24 @@ impl Observation {
         self
     }
 
-    /// Whether this row is small enough to keep. A target can emit a megabyte
-    /// of URL; the ledger is a file on the operator's disk.
-    fn is_bounded(&self) -> bool {
-        self.origin.len() <= MAX_FIELD_BYTES
+    /// Whether this row can be kept: bounded, and saying only what it can back
+    /// up.
+    ///
+    /// A target can emit a megabyte of URL, and the ledger is a file on the
+    /// operator's disk. The second half is N1's claim, enforced rather than
+    /// promised: a state that means a request happened has to name the message
+    /// it happened in.
+    fn is_keepable(&self) -> bool {
+        let bounded = self.origin.len() <= MAX_FIELD_BYTES
             && self.path.len() <= MAX_FIELD_BYTES
             && self.method.len() <= 64
             && self.identity.len() <= 256
-            && self.params.len() <= 512
+            && self.params.len() <= 512;
+        let backed = match self.state {
+            State::Observed | State::Confirmed | State::Gone => self.req.is_some(),
+            State::Candidate | State::Refused => true,
+        };
+        bounded && backed
     }
 }
 
@@ -449,7 +459,7 @@ impl Ledger {
     /// torn anyway is counted as unreadable by [`Ledger::read`] and not guessed
     /// at.
     pub fn append(&self, observations: &[Observation]) -> Result<usize, H5iError> {
-        let kept: Vec<&Observation> = observations.iter().filter(|o| o.is_bounded()).collect();
+        let kept: Vec<&Observation> = observations.iter().filter(|o| o.is_keepable()).collect();
         if kept.is_empty() {
             return Ok(0);
         }
@@ -495,7 +505,9 @@ impl Ledger {
                 inventory.unreadable += 1;
                 continue;
             };
-            if !obs.is_bounded() || obs.id != endpoint_id(&obs.origin, &obs.path, &obs.method, &obs.identity) {
+            if !obs.is_keepable()
+                || obs.id != endpoint_id(&obs.origin, &obs.path, &obs.method, &obs.identity)
+            {
                 // An id that does not name its own key is a row nothing wrote:
                 // fold it and two endpoints would share a name.
                 inventory.unreadable += 1;
@@ -767,6 +779,22 @@ mod tests {
             "an id that does not hash its own key would let two endpoints share a name"
         );
         assert_eq!(inventory.unreadable, 1);
+    }
+
+    #[test]
+    fn a_row_that_claims_a_request_must_name_it() {
+        let (_dir, ledger) = ledger();
+        let mut unbacked = observed("/admin", "alice");
+        unbacked.req = None;
+        assert_eq!(
+            ledger.append(&[unbacked]).expect("append"),
+            0,
+            "`observed` means a request answered, and the row has to say which"
+        );
+        assert!(ledger.read().expect("read").endpoints.is_empty());
+
+        // A candidate is the state that is allowed to have no message.
+        assert_eq!(ledger.append(&[candidate("/admin")]).expect("append"), 1);
     }
 
     #[test]
