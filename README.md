@@ -6,10 +6,10 @@
 
 <p align="center">
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
-  <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
-  <a href="#4-tutorial"><img src="https://img.shields.io/badge/📖-Tutorial-orange" alt="Tutorial"></a>
-  <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
+  <a href="#4-tutorial"><img alt="Tutorial" src="https://img.shields.io/badge/📚-Tutorial-orange?style=flat"></a>
+  <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release&color=555555&style=flat"></a>
+  <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache_2.0-555555?style=flat"></a>
 </p>
 
 <h1 align="center">A Security-First Browser for AI Agents</h1>
