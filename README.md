@@ -130,13 +130,13 @@ h5i websec show req_42 --raw                         # inspect a request
 h5i websec replay req_42 --set query.id=456          # edit and resend it
 h5i websec diff res_42 res_43                        # compare responses
 h5i websec match res_43 --status 200 --contains "ok" # assert a condition
+h5i websec sequence flow.json                        # run a multi-step test
 
 # Discovery, kept apart from testing: recon says what exists and how it knows.
 h5i recon extract                                    # read what the session already fetched
 h5i recon crawl --max-requests 200 --rate 4          # walk it under this session's login
 h5i recon triage --calibrate                         # soft 404s folded, the rest confirmed
 h5i recon endpoints --state confirmed --json         # each row names the message that proves it
-h5i websec sequence flow.json                        # run a multi-step test
 ```
 
 ### 2.3. Control and audit agent access
