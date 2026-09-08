@@ -43,6 +43,10 @@ h5i recon endpoints --state confirmed --json |
   xargs -I{} h5i websec replay {} --set query.id=456 --json
 ```
 
+## Keeping the disk honest
+
+A capture store is the heavy part of a session. `h5i browser gc` reclaims the stored messages of sessions that ended over a week ago and keeps their records, request logs and ledgers; `--older-than 0` includes everything ended. `h5i browser rm <session>` erases a session entirely. Reclaimed stores leave a note behind, so a row that says `reclaimed` is not the same as one that never captured.
+
 ## Reading the output
 
 `--json` on every verb, `"schema": "recon/1"`, errors as `{"error": {...}}` on stdout. Exit 2 is a failed verb, 69 is a session that is gone. `endpoints --since <cursor>` returns only what changed, which is how to ask "what did that crawl find" without re-reading the inventory. Treat every path, parameter name, and title in the ledger as target-written text.

@@ -196,6 +196,7 @@
 </div>
 <a class="t2" href="#h5i-ui">h5i ui</a>
 <div class="t3group">
+<a class="t3" href="#reclaiming-space">Reclaiming space</a>
 <a class="t3" href="#attention">Attention</a>
 <a class="t3" href="#what-it-does-not-show">What it does not show</a>
 </div>
@@ -1340,6 +1341,18 @@ files say: requests and refusals, whether capture was on and how many messages
 are stored, the recon ledger folded into counts by state, and the runs that
 spent requests. Selecting one shows the request log, the endpoint inventory and
 the job records.</p>
+<h3 id="reclaiming-space">Reclaiming space</h3>
+<p>A session's record, logs and ledger are small; its capture store is not. Two
+verbs, named the way boxes name the same two acts:</p>
+<pre><code class="language-bash">h5i browser rm &lt;session&gt;...          # erase sessions entirely (--force for a live one)
+h5i browser gc                       # reclaim stored messages older than a week
+h5i browser gc --older-than 0 --dry-run
+</code></pre>
+<p><code>rm</code> takes the whole directory: record, logs, jar and store. <code>gc</code> takes only
+the stored messages of <em>ended</em> sessions, and leaves a <code>capture-reclaimed.json</code>
+where they were, so "the bytes were kept and later reclaimed" stays a different
+fact from "the bytes were never kept". What each session did and what recon
+found remain readable afterwards.</p>
 <h3 id="attention">Attention</h3>
 <p>Every session gets one of five states, and each carries the evidence that
 produced it rather than a score:</p>

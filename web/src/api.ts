@@ -439,6 +439,8 @@ export interface SessionRow {
   /** How many messages the store holds, or null when capture was off. The
    *  bytes stay on disk: reading them is a CLI act. */
   captured: number | null;
+  /** What a reclaimed store left: the bytes are gone, the fact is not. */
+  reclaimed: { at: string; messages: number; bytes: number } | null;
   ledger: LedgerCounts | null;
   jobs: JobRow[];
   attention: Attention;

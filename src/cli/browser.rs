@@ -279,6 +279,44 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Erase sessions: their records, logs, jars and stored messages.
+    ///
+    /// `close` ends a session and keeps its account. This removes it. Names are
+    /// processed in order, and one failure does not abort the rest, the way
+    /// `h5i box rm` behaves.
+    Rm {
+        /// One or more session names or ids.
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Remove even a session that is still live. Its engine is asked to
+        /// stop first.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Reclaim the stored messages of ended sessions, keeping their accounts.
+    ///
+    /// The store is the heavy half of a session and the only half that holds
+    /// bodies, cookies and `Authorization` in full. What stays is the record,
+    /// the request log and the recon ledger: what the session did and what it
+    /// found remain readable afterwards.
+    ///
+    /// The bulk form of `close --capture-drop`, for the sessions that were
+    /// closed without it.
+    Gc {
+        /// Only sessions that ended at least this long ago, in days. `0`
+        /// reclaims from every ended session.
+        #[arg(long = "older-than", value_name = "DAYS", default_value_t = 7)]
+        older_than: u64,
+        /// Say what would be reclaimed, and reclaim nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// The page as a model should read it: the outline, with `@ref` handles.
     Snapshot {
         /// Which session, when more than one is open. A name from
@@ -1161,6 +1199,17 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             capture_drop,
             json,
         } => close(&root, session.as_deref(), all, capture_drop, json),
+
+        BrowserCommands::Rm {
+            names,
+            force,
+            json,
+        } => rm(&root, &names, force, json),
+        BrowserCommands::Gc {
+            older_than,
+            dry_run,
+            json,
+        } => gc(&root, older_than, dry_run, json),
 
         BrowserCommands::Snapshot {
             session,
@@ -2904,6 +2953,187 @@ fn moved(was: &str, now: &str) -> anyhow::Result<()> {
          Reading a captured store is what installing the plugin adds. Sending is still \
          here: `h5i browser requests`, `resend`, `sequence` and `rpc`."
     )
+}
+
+/// `h5i browser rm`.
+fn rm(root: &Path, names: &[String], force: bool, json_out: bool) -> anyhow::Result<()> {
+    let mut removed: Vec<Value> = Vec::new();
+    let mut refused: Vec<Value> = Vec::new();
+    let mut freed = 0u64;
+
+    for name in names {
+        let Some(session) = find_any(root, name) else {
+            refused.push(json!({"name": name, "why": "no session by that name or id"}));
+            continue;
+        };
+        if session.state.is_live() && !force {
+            refused.push(json!({
+                "name": name,
+                "id": session.id,
+                "why": "it is still live: close it first, or pass --force",
+            }));
+            continue;
+        }
+        if session.state.is_live() {
+            // Ask the engine to stop before the directory goes: removing it
+            // underneath a running engine leaves a process writing into a path
+            // that no longer exists.
+            let _ = stop_engine(&session);
+        }
+        match bs::remove(root, &session.id) {
+            Ok(held) => {
+                freed += held.total();
+                removed.push(json!({
+                    "name": session.name,
+                    "id": session.id,
+                    "freed": held.total(),
+                    "store": held.store,
+                }));
+            }
+            Err(why) => refused.push(json!({
+                "name": name,
+                "id": session.id,
+                "why": why.to_string(),
+            })),
+        }
+    }
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "removed": removed,
+                "refused": refused,
+                "freed": freed,
+            }))?
+        );
+    } else {
+        for row in &removed {
+            println!(
+                "  removed  : {} ({})",
+                row["name"].as_str().unwrap_or_else(|| row["id"].as_str().unwrap_or("?")),
+                human_bytes(row["freed"].as_u64().unwrap_or(0))
+            );
+        }
+        for row in &refused {
+            println!(
+                "  kept     : {} — {}",
+                row["name"].as_str().unwrap_or("?"),
+                row["why"].as_str().unwrap_or("")
+            );
+        }
+        if !removed.is_empty() {
+            println!("  freed    : {}", human_bytes(freed));
+        }
+    }
+    // One failure among several is reported, not fatal; all of them is.
+    if removed.is_empty() && !refused.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// A session by name or id, live or ended.
+fn find_any(root: &Path, name: &str) -> Option<bs::Session> {
+    bs::find_by_name(root, name)
+        .or_else(|| bs::find_ended_by_name(root, name))
+        .or_else(|| bs::read(root, name).ok())
+}
+
+/// `h5i browser gc`.
+fn gc(root: &Path, older_than_days: u64, dry_run: bool, json_out: bool) -> anyhow::Result<()> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days as i64);
+    let sessions = bs::list(root).unwrap_or_default();
+    let live = sessions.iter().filter(|s| s.state.is_live()).count();
+
+    let mut reclaimed: Vec<Value> = Vec::new();
+    let mut freed = 0u64;
+    let mut too_new = 0usize;
+
+    for session in sessions.iter().filter(|s| !s.state.is_live()) {
+        let held = bs::held(root, &session.id);
+        if held.store == 0 {
+            continue;
+        }
+        // The clock the record carries. A record with no ending, or one this
+        // cannot read, is left alone rather than guessed about.
+        let ended = session
+            .ended_at
+            .as_deref()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok());
+        match ended {
+            Some(at) if at.with_timezone(&chrono::Utc) > cutoff => {
+                too_new += 1;
+                continue;
+            }
+            None => {
+                too_new += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if dry_run {
+            freed += held.store;
+            reclaimed.push(json!({"id": session.id, "name": session.name, "store": held.store}));
+            continue;
+        }
+        match bs::drop_store(root, &session.id) {
+            Ok(bytes) => {
+                freed += bytes;
+                reclaimed.push(json!({"id": session.id, "name": session.name, "store": bytes}));
+            }
+            Err(why) => eprintln!("  note     : {} kept its store — {why}", session.id),
+        }
+    }
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "dry_run": dry_run,
+                "freed": freed,
+                "sessions": reclaimed.len(),
+                "reclaimed": reclaimed,
+                "live_untouched": live,
+                "too_new": too_new,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "  {:<9}: {} from {} ended session(s)",
+        if dry_run { "would free" } else { "freed" },
+        human_bytes(freed),
+        reclaimed.len()
+    );
+    println!("  kept     : their records, request logs and ledgers");
+    if too_new > 0 {
+        println!(
+            "  too new  : {too_new} ended session(s) within {older_than_days} day(s); \
+             `--older-than 0` includes them"
+        );
+    }
+    if live > 0 {
+        println!("  untouched: {live} live session(s). `h5i browser close` ends one");
+    }
+    Ok(())
+}
+
+/// Bytes, in the unit a person reads.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
 }
 
 /// `h5i browser rpc --stdio`.

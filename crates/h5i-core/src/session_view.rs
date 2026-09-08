@@ -61,6 +61,10 @@ pub struct SessionSignals {
     /// Whether the session was opened with `--capture`, and how many messages
     /// are stored. The bytes stay on disk; this is a count.
     pub captured: Option<usize>,
+    /// What a reclaimed store left behind. Kept apart from `captured`, because
+    /// "the bytes were kept and then reclaimed" and "the bytes were never
+    /// kept" are different facts.
+    pub reclaimed: Option<bs::Reclaimed>,
     /// The recon ledger, folded into counts by state.
     pub ledger: Option<LedgerCounts>,
     /// Recon runs that spent requests, newest last.
@@ -305,8 +309,8 @@ pub fn jobs(session_dir: &Path) -> Vec<JobRow> {
 
 /// How many messages a session stored, or `None` when it captured nothing.
 ///
-/// A count, never the bytes. What is in that directory is the one artifact h5i
-/// keeps that holds credentials in full.
+/// A count, never the bytes: that directory is the one artifact h5i keeps that
+/// holds credentials in full.
 pub fn captured(session_dir: &Path) -> Option<usize> {
     let dir = session_dir.join(bs::MESSAGES_DIR);
     let entries = std::fs::read_dir(&dir).ok()?;

@@ -641,6 +641,143 @@ pub fn clear_default_if(root: &Path, id: &str) {
     }
 }
 
+/// What one session's directory holds, in bytes, split at the store.
+///
+/// The store is the heavy half and the only half that holds credentials, which
+/// is why it is counted apart: reclaiming it is a different act from erasing a
+/// session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Held {
+    /// The record, the logs, the ledger, the jar: everything but the store.
+    pub account: u64,
+    /// `messages/`: the bytes a capture kept.
+    pub store: u64,
+}
+
+impl Held {
+    pub fn total(&self) -> u64 {
+        self.account + self.store
+    }
+}
+
+/// How much disk one session is using.
+pub fn held(root: &Path, id: &str) -> Held {
+    let dir = dir(root, id);
+    let store = dir.join(MESSAGES_DIR);
+    Held {
+        account: dir_bytes(&dir).saturating_sub(dir_bytes(&store)),
+        store: dir_bytes(&store),
+    }
+}
+
+/// Bytes under a directory, following nothing.
+///
+/// Bounded by the tree it is given: a session directory is flat apart from
+/// `messages/bodies` and `recon/jobs`, and a symlink inside one is not followed
+/// because the walk reads metadata rather than opening anything.
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+            total += dir_bytes(&entry.path());
+        } else if meta.is_file() {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+/// Erase one session: its record, its logs, its jar and its store.
+///
+/// The whole directory, because a session's parts are only meaningful
+/// together: a request log with no record names fetches nobody can attribute.
+/// Refuses an id that is not one path component, since a boxed session writes
+/// its own record and that id becomes this path.
+pub fn remove(root: &Path, id: &str) -> Result<Held, H5iError> {
+    if !id_is_one_component(id) {
+        return Err(H5iError::Metadata(format!(
+            "`{id}` is not an id this registry could have minted, so nothing was removed"
+        )));
+    }
+    let dir = dir(root, id);
+    if !dir.is_dir() {
+        return Err(H5iError::Metadata(format!("no session `{id}` to remove")));
+    }
+    let held = held(root, id);
+    fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    // The pointer would otherwise name a record that is gone, which is the one
+    // case `clear_default_if` exists for.
+    clear_default_if(root, id);
+    Ok(held)
+}
+
+/// What a session says about a store it no longer has.
+pub const RECLAIMED_FILE: &str = "capture-reclaimed.json";
+
+/// The note left where a store was.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reclaimed {
+    pub at: String,
+    /// Messages the store held, counted before it went.
+    pub messages: usize,
+    pub bytes: u64,
+}
+
+/// Drop one session's stored messages, keeping everything else.
+///
+/// The account survives: the record, the request log and the ledger still say
+/// what this session did and what it found. What goes is the half that holds
+/// bodies, cookies and `Authorization` in full.
+///
+/// A note is left behind, because "the bytes were kept and then reclaimed" and
+/// "the bytes were never kept" are different facts and a reader would otherwise
+/// see the same empty space for both.
+pub fn drop_store(root: &Path, id: &str) -> Result<u64, H5iError> {
+    if !id_is_one_component(id) {
+        return Err(H5iError::Metadata(format!(
+            "`{id}` is not an id this registry could have minted"
+        )));
+    }
+    let dir = dir(root, id);
+    let store = dir.join(MESSAGES_DIR);
+    if !store.is_dir() {
+        return Ok(0);
+    }
+    let bytes = dir_bytes(&store);
+    let messages = fs::read_dir(&store)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|n| n.ends_with(".request.json"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    fs::remove_dir_all(&store).map_err(|e| H5iError::with_path(e, &store))?;
+    let note = Reclaimed {
+        at: now(),
+        messages,
+        bytes,
+    };
+    if let Ok(text) = serde_json::to_vec(&note) {
+        let _ = fs::write(dir.join(RECLAIMED_FILE), text);
+    }
+    Ok(bytes)
+}
+
+/// The note a reclaimed store left, if there is one.
+pub fn reclaimed(root: &Path, id: &str) -> Option<Reclaimed> {
+    let text = fs::read_to_string(dir(root, id).join(RECLAIMED_FILE)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// The live session carrying this name, if any.
 pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
     list(root)
@@ -1690,6 +1827,66 @@ mod tests {
             logs: Logs::default(),
             permissive_cors: false,
         }
+    }
+
+    #[test]
+    fn removing_a_session_takes_its_whole_directory_and_frees_the_pointer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let s = session(&id, Placement::Host);
+        write(root, &s).unwrap();
+        set_default(root, &id).unwrap();
+        std::fs::create_dir_all(dir(root, &id).join(MESSAGES_DIR)).unwrap();
+        std::fs::write(dir(root, &id).join(MESSAGES_DIR).join("0.request.json"), "x".repeat(100))
+            .unwrap();
+
+        let held = remove(root, &id).expect("removed");
+        assert_eq!(held.store, 100, "the store is counted apart");
+        assert!(held.account > 0, "and the record is counted too");
+        assert!(!dir(root, &id).exists());
+        assert_eq!(
+            read_default(root),
+            None,
+            "a pointer to a record that is gone would send the next verb nowhere"
+        );
+    }
+
+    #[test]
+    fn dropping_the_store_keeps_the_account() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let s = session(&id, Placement::Host);
+        write(root, &s).unwrap();
+        let store = dir(root, &id).join(MESSAGES_DIR);
+        std::fs::create_dir_all(store.join("bodies")).unwrap();
+        std::fs::write(store.join("bodies").join("aa"), "y".repeat(64)).unwrap();
+        std::fs::write(dir(root, &id).join(RECEIPTS_FILE), "{}\n").unwrap();
+
+        let freed = drop_store(root, &id).expect("dropped");
+        assert_eq!(freed, 64);
+        assert!(!store.exists(), "the bytes go");
+        let note = reclaimed(root, &id).expect("a note where the store was");
+        assert_eq!(note.bytes, 64);
+        assert!(
+            !note.at.is_empty(),
+            "`kept and reclaimed` and `never kept` are different facts"
+        );
+        assert!(dir(root, &id).join(RECORD).exists(), "the record stays");
+        assert!(
+            dir(root, &id).join(RECEIPTS_FILE).exists(),
+            "and so does what it says the session did"
+        );
+        assert_eq!(drop_store(root, &id).expect("again"), 0, "and it is idempotent");
+    }
+
+    #[test]
+    fn an_id_that_is_not_one_component_removes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A boxed session writes its own record, and that id becomes this path.
+        assert!(remove(tmp.path(), "../elsewhere").is_err());
+        assert!(drop_store(tmp.path(), "a/b").is_err());
     }
 
     #[test]

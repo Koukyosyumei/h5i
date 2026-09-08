@@ -1136,6 +1136,23 @@ are stored, the recon ledger folded into counts by state, and the runs that
 spent requests. Selecting one shows the request log, the endpoint inventory and
 the job records.
 
+### Reclaiming space
+
+A session's record, logs and ledger are small; its capture store is not. Two
+verbs, named the way boxes name the same two acts:
+
+```bash
+h5i browser rm <session>...          # erase sessions entirely (--force for a live one)
+h5i browser gc                       # reclaim stored messages older than a week
+h5i browser gc --older-than 0 --dry-run
+```
+
+`rm` takes the whole directory: record, logs, jar and store. `gc` takes only
+the stored messages of *ended* sessions, and leaves a `capture-reclaimed.json`
+where they were, so "the bytes were kept and later reclaimed" stays a different
+fact from "the bytes were never kept". What each session did and what recon
+found remain readable afterwards.
+
 ### Attention
 
 Every session gets one of five states, and each carries the evidence that

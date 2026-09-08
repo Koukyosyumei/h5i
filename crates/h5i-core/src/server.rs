@@ -858,6 +858,7 @@ fn session_row(h5i_root: &std::path::Path, session: &bs::Session) -> (SessionRow
 
     let mut signals = crate::session_view::signals_from_receipts(&records);
     signals.captured = crate::session_view::captured(&dir);
+    signals.reclaimed = bs::reclaimed(h5i_root, &session.id);
     signals.ledger = crate::session_view::ledger_counts(&dir);
     signals.jobs = crate::session_view::jobs(&dir);
 

@@ -314,14 +314,7 @@ export function SessionDetailPane({
           <Fact label="placement" value={detail.placement} />
           <Fact label="lane" value={detail.lane} />
           <Fact label="identity" value={detail.identity} />
-          <Fact
-            label="capture"
-            value={
-              detail.captured === null
-                ? "off"
-                : `${detail.captured} message(s) stored`
-            }
-          />
+          <Fact label="capture" value={captureWord(detail)} />
         </div>
       </div>
 
@@ -350,6 +343,16 @@ export function SessionDetailPane({
       {tab === "jobs" ? <Jobs detail={detail} /> : null}
     </div>
   );
+}
+
+/** What became of this session's bytes. Three states, not two: never kept,
+ *  kept, or kept and later reclaimed by `h5i browser gc`. */
+function captureWord(s: SessionRow): string {
+  if (s.captured !== null) return `${s.captured} message(s) stored`;
+  if (s.reclaimed) {
+    return `reclaimed ${s.reclaimed.at.slice(0, 10)} (${s.reclaimed.messages} messages)`;
+  }
+  return "off";
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -404,7 +407,9 @@ function Requests({ detail }: { detail: SessionDetail }) {
               <td>
                 {detail.captured === null ? (
                   <span className="sbx-dim">
-                    opened without --capture, so there are no bytes to read
+                    {detail.reclaimed
+                      ? `the store was reclaimed on ${detail.reclaimed.at.slice(0, 10)}`
+                      : "opened without --capture, so there are no bytes to read"}
                   </span>
                 ) : (
                   <Cmd

@@ -1304,3 +1304,71 @@ fn a_file_identity_is_refused_in_a_box_and_a_typo_is_not_called_a_file() {
         "the boundary is a box's, not a file's"
     );
 }
+
+#[test]
+fn removing_a_session_is_refused_while_it_is_live_and_takes_everything_after() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let id = fx.open(&["--session", "doomed", "--capture"]);
+    assert!(fx.dir(&id).join("messages").is_dir(), "capture kept messages");
+
+    // `close` ends a session and keeps its account; `rm` erases it. Erasing a
+    // live one needs saying so.
+    let refused = fx.run(&["browser", "rm", "doomed"]);
+    assert!(!refused.status.success(), "a live session is not removed by accident");
+    assert!(fx.dir(&id).exists());
+
+    fx.run(&["browser", "close", "--session", "doomed"]);
+    let removed = fx.run(&["browser", "rm", "doomed"]);
+    assert!(
+        removed.status.success(),
+        "rm failed: {}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!fx.dir(&id).exists(), "the whole directory goes");
+}
+
+#[test]
+fn gc_takes_the_stored_bytes_and_leaves_the_account() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let ended = fx.open(&["--session", "ended", "--capture"]);
+    fx.run(&["browser", "close", "--session", "ended"]);
+    let live = fx.open(&["--session", "live", "--capture"]);
+
+    let out = fx.run(&["browser", "gc", "--older-than", "0"]);
+    assert!(
+        out.status.success(),
+        "gc failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The heavy half goes, and it says so where it was.
+    assert!(!fx.dir(&ended).join("messages").exists());
+    assert!(fx.dir(&ended).join("capture-reclaimed.json").is_file());
+    // The account stays: what the session did is still readable.
+    assert!(fx.dir(&ended).join("session.json").is_file());
+    assert!(fx.dir(&ended).join("requests.jsonl").is_file());
+    // And a session still running is not touched.
+    assert!(fx.dir(&live).join("messages").is_dir());
+}
+
+#[test]
+fn gc_leaves_a_session_that_ended_inside_the_window() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no engine built");
+    };
+    let id = fx.open(&["--session", "fresh", "--capture"]);
+    fx.run(&["browser", "close", "--session", "fresh"]);
+
+    // The default keeps a week of evidence, so a session closed a moment ago
+    // is not reclaimed by a bare `gc`.
+    let out = fx.run(&["browser", "gc"]);
+    assert!(out.status.success());
+    assert!(
+        fx.dir(&id).join("messages").is_dir(),
+        "a bare gc must not take evidence from a session that just ended"
+    );
+}
