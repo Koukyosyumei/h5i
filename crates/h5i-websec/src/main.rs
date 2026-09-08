@@ -97,7 +97,12 @@ enum Verb {
         /// is bytes and bytes inside a JSON string are no longer the message.
         #[arg(long)]
         raw: bool,
-        /// Write the body to this file, exactly as it came back.
+        /// Write the body to this file, exactly as it came back. `-` is
+        /// standard output, for a body that is going into a pipe.
+        ///
+        /// The way to read a body that is not text. `--raw` says so and stops,
+        /// because a git object or a PNG inside a terminal is neither; this
+        /// hands over the bytes.
         #[arg(long = "body-to", value_name = "PATH")]
         body_to: Option<String>,
     },
@@ -109,6 +114,11 @@ enum Verb {
         id: String,
         /// `query.id=456`, `header.X-Real-IP=1.2.3.4`, `json.role=admin`,
         /// `multipart.file.filename=shell.php`. Repeatable, applied in order.
+        ///
+        /// A `json.` value is typed the way it reads: `json.id=99` is a number,
+        /// `json.active=true` a boolean, `json.role=admin` a string. Quote it to
+        /// insist on a string — `json.password="0e830400451993494058024219903391"`
+        /// sends a magic hash rather than the number zero.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -157,6 +167,32 @@ enum Verb {
         /// The general form of `--raw-target`, framing headers included and
         /// recomputed by nothing, for request smuggling. `-` reads standard
         /// input.
+        /// Write the header names in the case they were given.
+        ///
+        /// The framed sender is an HTTP client and lower-cases header names, which is
+        /// what HTTP/2 requires and what every library does. A proxy that looks a
+        /// header up by exact string does not care: it finds `Content-Length` and
+        /// misses `content-length`. This sends the request the edits produced down the
+        /// raw path instead, where the names go out as written — so `--set` still
+        /// applies, the cookies still travel, and the case survives.
+        ///
+        /// The middle ground between `--set` and `--raw-request`, which reaches the
+        /// wire byte for byte and makes you write every byte.
+        #[arg(long = "raw-headers")]
+        raw_headers: bool,
+        /// Walk one target over a list of values: `query.id=./ids.txt` sends
+        /// once per line of the file.
+        ///
+        /// Enumeration in the engine rather than in a shell loop. Each send
+        /// comes back as one sample carrying the value that produced it beside
+        /// its status and its clock, so a walk of two hundred ids is one result
+        /// to read rather than two hundred.
+        ///
+        /// Values are lines, not a comma-separated list: the things worth
+        /// walking are payloads, and a payload with a comma in it should not
+        /// become an escaping puzzle.
+        #[arg(long = "set-each", value_name = "TARGET=PATH")]
+        set_each: Option<String>,
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
     },
@@ -207,11 +243,36 @@ enum Verb {
     Sitemap,
 
     /// Run a multi-step flow with bindings between the steps.
+    ///
+    /// What a CSRF-protected application needs, and what enumeration needs.
+    /// A single `replay` cannot test an endpoint whose token is minted by the
+    /// request before it, and hand-carrying that token between two shell
+    /// commands is where the mistakes happen. Steps run in order and stop at
+    /// the first failure, because a step acting on a token the step before it
+    /// failed to produce is acting on a state the file never described.
+    ///
+    /// The file is JSON. Each step names a stored request to send again, the
+    /// edits to make to it, and what to bind out of the response for the steps
+    /// after it:
+    ///
+    /// ```json
+    /// {"steps": [
+    ///   {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
+    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"]}
+    /// ]}
+    /// ```
     Sequence {
+        /// The sequence file.
         #[arg(value_name = "FILE")]
         file: String,
+        /// Bind a name before the first step, as `name=value`. Repeatable.
+        ///
+        /// For the value that belongs to the run rather than to the file: a
+        /// host, an account, the one identifier being walked.
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
+        /// Run every step even after one fails, to read a whole file's
+        /// failures at once.
         #[arg(long)]
         keep_going: bool,
     },
@@ -393,6 +454,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             reset_budget,
             raw_target,
             raw_request,
+            raw_headers,
+            set_each,
         } => {
             let seq = sequence_of(&id)?;
             push(&mut argv, &["resend"]);
@@ -428,6 +491,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             flag(&mut argv, "raw-target", raw_target);
             flag(&mut argv, "raw-request", raw_request);
+            if raw_headers {
+                push(&mut argv, &["--raw-headers"]);
+            }
+            flag(&mut argv, "set-each", set_each);
         }
         Verb::Socket {
             url,

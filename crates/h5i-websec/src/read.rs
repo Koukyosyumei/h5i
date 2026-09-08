@@ -139,8 +139,20 @@ pub fn show(
                 "message {seq}'s body is not in the store, so there is nothing to write"
             )
         })?;
-        std::fs::write(path, &bytes)
-            .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
+        // `-` is standard output, the way it is for every other tool that takes
+        // a path — `replay --raw-request -` already reads stdin that way, and a
+        // body that can only land in a file cannot be piped into anything.
+        let to_stdout = path.as_os_str() == "-";
+        if to_stdout {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(&bytes)
+                .and_then(|()| out.flush())
+                .map_err(|e| anyhow::anyhow!("the body could not be written out: {e}"))?;
+        } else {
+            std::fs::write(path, &bytes)
+                .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
+        }
         // The exact byte channel every bounded view points at, so a body the
         // store cut has to say so rather than hand over a shorter file.
         let of_bytes = match body {
@@ -151,20 +163,40 @@ pub fn show(
             } => *of_bytes,
             _ => None,
         };
-        let mut note = json!({"path": path.display().to_string(), "bytes": bytes.len()});
+        let where_to = if to_stdout {
+            "standard output".to_string()
+        } else {
+            path.display().to_string()
+        };
+        let mut note = json!({"path": where_to, "bytes": bytes.len()});
         if let Some(had) = of_bytes {
             note["of_bytes"] = json!(had);
             note["truncated"] = json!(true);
         }
         wrote = Some(note);
+        // Anything else on stdout would be appended to the bytes and stop them
+        // being the bytes, so when they went there the note goes to stderr and
+        // the verb is done: `show --body-to -` is a byte channel and nothing
+        // else. A truncated body still has to say so, which is why the note is
+        // not simply dropped.
+        if to_stdout {
+            if let Some(had) = of_bytes {
+                eprintln!(
+                    "  wrote    : {} bytes — the head of a {had} byte body, which is all the \
+                     store kept",
+                    bytes.len()
+                );
+            }
+            return Ok(());
+        }
         if !json_out {
             match of_bytes {
-                None => println!("  wrote    : {} bytes to {}", bytes.len(), path.display()),
+                None => println!("  wrote    : {} bytes to {}", bytes.len(), where_to),
                 Some(had) => println!(
                     "  wrote    : {} bytes to {} — the head of a {had} byte body, which is \
                      all the store kept",
                     bytes.len(),
-                    path.display()
+                    where_to
                 ),
             }
         }

@@ -811,6 +811,52 @@ cannot answer in under two thousand. A timing oracle is a first-class use of
 this workbench and that corrupts one. The reproducer is a server that sleeps
 two seconds and a loop of forty replays.
 
+**2026-09-08.** A third corpus, the eight web tasks in Cybench — competition CTF
+tasks rather than benchmarks, which is a different pressure: a WAF whose
+denylist removes the alphabet an exploit is written in, a cache proxy written
+from scratch in Go with its own framing bugs, a git object store served under
+`autoindex`. All eight solved, and five more changes:
+
+- **A receipt that described a request nobody sent.** `--set json.` types a
+  value the way it reads, which is right and is documented nowhere the caller
+  looks. `json.password=0e830400451993494058024219903391` — a PHP magic hash,
+  and the single most likely thing to be typed at a `==` — is a valid JSON
+  number, so `0.0` went on the wire while `applied` reported the string. The
+  encoding is named in `encoded` now whenever it differs from the text, and the
+  quoting escape is in `--set`'s own help.
+- **An integer that arrived as a different integer.** A JSON number is a double
+  past `2^53`, so `json.id=123456789012345678901234567890` was silently sent as
+  `1.2345678901234568e29`. Refused now, naming the quoted form and `body.raw`.
+- **No way to choose the case of a header name.** The framed sender is an HTTP
+  client and lower-cases them, which is what HTTP/2 requires and what every
+  library does. Chunky's cache proxy reads the body length out of
+  `headers["Content-Length"]` — a Go map, an exact string — so an ordinary
+  `POST /login` through it, with nothing hostile in it, arrived as a request
+  whose body the proxy never read. Not an attack that failed: a sign-up form
+  that could not be filled in. And the same proxy strips `Transfer-Encoding`
+  while forwarding `transfer-encoding`, which *is* the vulnerability, so a
+  workbench that cannot choose the case cannot express either half.
+  `--raw-headers` sends the request the edits produced down the raw path, where
+  the names are written as given. `--raw-request` was the only alternative and
+  costs `--set`, the jar and redirects to buy one capital letter.
+- **Enumeration had no verb.** `--repeat` sends the same request N times; there
+  was nothing for "this request, this target over these values", which is the
+  shape of most of the work. A shell loop pays process startup per request and
+  returns N documents nothing correlates. `--set-each TARGET=PATH` walks one
+  line per send and each sample carries the value that produced it. Values are
+  lines rather than a comma-separated list, because the things worth walking
+  are payloads.
+- **Two conventions for `-` in the same binary.** `replay --raw-request -`
+  reads standard input; `show --body-to -` created a file named `-`. Every
+  binary body had to detour through a temporary file to reach a pipe. `-` is
+  standard output now, and the note that would have gone there goes to stderr.
+
+One thing that was checked and was not a defect: `show --raw` declining to print
+a body that is not text is correct, and `--body-to` was already the answer. The
+undocumented `websec sequence` verb — no help text on the file, `--var` or
+`--keep-going` — was not: an undocumented verb is an absent verb to an agent,
+and it is documented now.
+
 ## Raw requests
 
 **Added 2026-09-03 after benchmarking.** Normal requests use parsed `Url`s, which
@@ -827,6 +873,10 @@ client. `LocalBroker::send_raw` sends raw HTTP/1.1 requests.
 - **Raw target.** `h5i browser resend <seq> --raw-target
   /cgi-bin/.%2e/.%2e/bin/sh` preserves the target but computes `Host` and
   `Content-Length`.
+- **Raw headers.** `h5i browser resend <seq> --raw-headers` sends the request
+  the edits produced down this path, keeping its own target and writing header
+  names in the case they were given. The middle ground: `--set` still applies
+  and the cookies still travel, which neither of the other two forms offers.
 - **Raw request.** `h5i browser resend --raw-request <path>` preserves the full
   request, including framing headers. The receipt records broken framing
   invariants.

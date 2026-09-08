@@ -1697,6 +1697,20 @@ fn control_verb_inner(
                     .unwrap_or(false),
                 raw_target,
                 raw_request,
+                raw_headers: request
+                    .get("raw_headers")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                each: request.get("each").and_then(|each| {
+                    let target = each.get("target")?.as_str()?.to_string();
+                    let values: Vec<String> = each
+                        .get("values")?
+                        .as_array()?
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect();
+                    (!values.is_empty()).then_some(crate::broker::Each { target, values })
+                }),
             };
             let strings = |key: &str| -> Vec<String> {
                 request

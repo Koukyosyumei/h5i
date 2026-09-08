@@ -255,6 +255,22 @@ pub struct Sends {
     /// A complete request to write unchanged. `None` uses the normal sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_request: Option<Vec<u8>>,
+    /// One send per value, with a target set to each in turn. `None` sends
+    /// whatever `count` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub each: Option<Each>,
+    /// Write this request's own headers rather than a client's idea of them.
+    ///
+    /// The framed sender is an HTTP client, and a client lower-cases header
+    /// names: it is what HTTP/2 requires and what every library built this
+    /// decade does. A proxy that looks a header up by exact string does not
+    /// care what the RFC says about case-insensitivity — it finds
+    /// `Content-Length` and misses `content-length` — so a workbench that
+    /// cannot choose the case cannot reach the bug, or sometimes the
+    /// application. This sends the request the edits produced down the raw
+    /// path, where the names are written as they were given.
+    #[serde(default)]
+    pub raw_headers: bool,
 }
 
 impl Default for Sends {
@@ -264,6 +280,8 @@ impl Default for Sends {
             together: false,
             no_follow: false,
             raw_target: None,
+            raw_headers: false,
+            each: None,
             raw_request: None,
         }
     }
@@ -276,15 +294,41 @@ impl Sends {
 }
 
 /// One send's clock, in the two numbers that mean different things.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+///
+/// Not `Copy`: a sample from an enumeration also carries the value that
+/// produced it, and a walk of a wordlist is the case where that matters most.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Timing {
     pub seq: Option<u64>,
     pub status: Option<u16>,
+    /// Which value produced this one, when the sends were an enumeration.
+    ///
+    /// Without it a walk of two hundred ids is two hundred statuses in a list
+    /// and no way to say which id is the interesting one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
     /// To the response's headers: the server's decision.
     pub ttfb_ms: u64,
     /// To the body in hand: the decision plus the transfer.
     pub total_ms: u64,
     pub bytes: u64,
+}
+
+/// One target and the values to walk it over.
+///
+/// Enumeration is the shape of most of the work — an id, a name, a payload
+/// from a list — and `--repeat` sends the *same* request, so without this the
+/// only way to walk a list is a shell loop that pays process startup per
+/// request and cannot be read back as one result. The values live in a file
+/// rather than in a comma-separated argument because the things being walked
+/// are payloads, and a payload containing a comma is not an escaping puzzle
+/// anybody should have to solve.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Each {
+    /// The `--set` target to vary, as `query.id` or `json.role`.
+    pub target: String,
+    /// One value per send, in order.
+    pub values: Vec<String>,
 }
 
 /// What went out, in the parts that are safe to hand back.
