@@ -14,9 +14,9 @@
 <h1 align="center">A Security-First Browser for AI Agents</h1>
 
 <p align="center">
-  <a href="./#1-install"><strong>Install</strong></a> &nbsp;&bull;&nbsp;
-  <a href="./#2-Use-it"><strong>Usage</strong></a> &nbsp;&bull;&nbsp;
-  <a href="./#4-tutorial"><strong>Tutorial</strong></a>
+  <a href="#1-install"><strong>Install</strong></a> &nbsp;&bull;&nbsp;
+  <a href="#2-Use-it"><strong>Usage</strong></a> &nbsp;&bull;&nbsp;
+  <a href="#4-tutorial"><strong>Tutorial</strong></a>
 </p>
 
 
