@@ -13,7 +13,6 @@
 
 <h1 align="center">A Security-First Browser for AI Agents</h1>
 
-
 **h5i** (pronounced *high-five*) is a lightweight browser for AI agents to browse, scrape, test, and automate the web. It reduces the risks of giving agents web access through network policies, sandboxing, credential isolation, and auditable sessions. The same controls let agents inspect, edit, replay, and compare HTTP traffic for automated web security testing, CTFs, and authorized red teaming.
 
 <table align="center">
@@ -260,7 +259,13 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 4. Documentation
+## 4. Tutorial
+
+- [Web Security Tutorial with h5i — Part 1: HTTP Request Tampering](https://medium.com/@Koukyosyumei/web-security-tutorial-with-h5i-part-1-http-request-tampering-39c4a0857b85)
+
+---
+
+## 5. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
@@ -269,7 +274,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 5. FAQ
+## 6. FAQ
 
 <details>
 <summary>What is h5i?</summary>
@@ -350,13 +355,13 @@ provider.
 
 ---
 
-## 6. License
+## 7. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 7. Contributors
+## 8. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
