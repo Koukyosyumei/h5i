@@ -8,17 +8,10 @@
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
   <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
-  <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
+  <a href="#4-tutorial"><img src="https://img.shields.io/badge/📖-Tutorial-orange" alt="Tutorial"></a>
 </p>
 
 <h1 align="center">A Security-First Browser for AI Agents</h1>
-
-<p align="center">
-  <a href="#1-install"><strong>Install</strong></a> &nbsp;&bull;&nbsp;
-  <a href="#2-Use-it"><strong>Usage</strong></a> &nbsp;&bull;&nbsp;
-  <a href="#4-tutorial"><strong>Tutorial</strong></a>
-</p>
-
 
 **h5i** (pronounced *high-five*) is a lightweight browser for AI agents to browse, scrape, test, and automate the web. It reduces the risks of giving agents web access through network policies, sandboxing, credential isolation, and auditable sessions. The same controls let agents inspect, edit, replay, and compare HTTP traffic for automated web security testing, CTFs, and authorized red teaming.
 
