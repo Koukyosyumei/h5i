@@ -23,7 +23,7 @@ sha2 = "0.10"
 # drives is `crates/h5i-core`.
 [package]
 name = "h5i"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "h5i — security-first browser for AI agents (CLI)."
 
