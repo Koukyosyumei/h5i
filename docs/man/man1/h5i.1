@@ -1146,6 +1146,48 @@ The store holds whole bodies and `Cookie` and `Authorization` in full. The recor
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER RM"
+Erase sessions: their records, logs, jars and stored messages
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrm\fR [\fB\-\-force\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAMES\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-force\fR
+Remove even a session that is still live. Its engine is asked to stop first
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAMES\fR>
+One or more session names or ids
+.SH "H5I BROWSER GC"
+Reclaim the stored messages of ended sessions, keeping their accounts
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgc\fR [\fB\-\-older\-than\fR] [\fB\-\-dry\-run\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-older\-than\fR \fI<DAYS>\fR [default: 7]
+Only sessions that ended at least this long ago, in days. `0` reclaims from every ended session
+.TP
+\fB\-\-dry\-run\fR
+Say what would be reclaimed, and reclaim nothing
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER SNAPSHOT"
 The page as a model should read it: the outline, with `@ref` handles
 .ie \n(.g .ds Aq \(aq

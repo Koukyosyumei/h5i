@@ -19,6 +19,11 @@ web = ["dep:axum", "dep:tokio", "dep:rust-embed", "dep:mime_guess"]
 bpf = ["h5i-bpf/load"]
 
 [dependencies]
+# The shapes h5i writes about an HTTP message and about an endpoint. The
+# console folds a recon ledger, and reading one must not mean linking a plugin.
+h5i-wire = { path = "../h5i-wire" }
+# The console groups a session's requests by origin.
+url = "2.5"
 h5i-error = { path = "../h5i-error" }
 h5i-sandbox = { path = "../h5i-sandbox" }
 # The runtime-detection lane. `default-features = false` so the collector is

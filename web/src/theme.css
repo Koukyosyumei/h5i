@@ -997,3 +997,317 @@ body.sbx-dragging {
 .bterm-paired .bterm-page {
   margin-bottom: 0;
 }
+
+/* ── attention ───────────────────────────────────────────────────────────────
+   Which session wants a person, and how loudly. The colours say one thing
+   each: amber is somebody waiting on you, cyan is something finished that
+   nobody has read, green is running, grey is quiet. Red stays reserved for
+   enforcement firing, so nothing here is red. */
+.sbx-attention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  background: var(--bp-surface-2);
+  border-bottom: 1px solid var(--bp-border);
+  flex-wrap: wrap;
+}
+.sbx-attention-quiet {
+  font-size: 12px;
+  color: var(--bp-text-dim);
+}
+.sbx-attn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--bp-text-muted);
+  background: transparent;
+  border: 1px solid var(--bp-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sbx-attn:hover,
+.sbx-attn.is-on {
+  border-color: var(--bp-border-strong);
+  color: var(--bp-text);
+}
+.sbx-attn-n {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.sbx-attn-blocked .sbx-attn-n,
+.sbx-attn-blocked.sbx-attn-tag {
+  color: var(--bp-orange);
+}
+.sbx-attn-done .sbx-attn-n,
+.sbx-attn-done.sbx-attn-tag {
+  color: var(--bp-cyan);
+}
+.sbx-attn-working .sbx-attn-n,
+.sbx-attn-working.sbx-attn-tag {
+  color: var(--bp-green-hi);
+}
+.sbx-attn-idle .sbx-attn-n,
+.sbx-attn-unknown .sbx-attn-n,
+.sbx-attn-idle.sbx-attn-tag,
+.sbx-attn-unknown.sbx-attn-tag {
+  color: var(--bp-text-dim);
+}
+.sbx-attn-tag {
+  font-size: 11px;
+}
+
+/* The dot on a session row: the same five states, at a glance. */
+.sbx-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--bp-text-dim);
+  vertical-align: middle;
+}
+.sbx-dot-blocked {
+  background: var(--bp-orange);
+}
+.sbx-dot-done {
+  background: var(--bp-cyan);
+}
+.sbx-dot-working {
+  background: var(--bp-green-hi);
+}
+.sbx-dot-unknown {
+  background: transparent;
+  border: 1px solid var(--bp-text-dim);
+}
+
+/* ── boxes / sessions switch ─────────────────────────────────────────────── */
+.sbx-kinds,
+.sbx-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--bp-border);
+}
+.sbx-kind,
+.sbx-tab {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--bp-text-dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.sbx-kind.is-on,
+.sbx-tab.is-on {
+  color: var(--bp-text);
+  border-bottom-color: var(--h5-accent);
+}
+.sbx-tab-n {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  color: var(--bp-text-dim);
+}
+
+/* ── session rows and tables ─────────────────────────────────────────────── */
+.sbx-session-counts {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--bp-text-dim);
+}
+.sbx-count b {
+  font-family: var(--font-mono);
+  color: var(--bp-text-muted);
+}
+.sbx-count-deny b {
+  color: var(--bp-red);
+}
+.sbx-count-good b {
+  color: var(--bp-green-hi);
+}
+.sbx-detail-why {
+  padding: 2px 0 8px;
+  font-size: 12px;
+  color: var(--bp-text-muted);
+}
+.sbx-detail-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+}
+.sbx-fact {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.sbx-table-wrap {
+  overflow: auto;
+  flex: 1;
+}
+.sbx-table {
+  width: 100%;
+  font-size: 12px;
+}
+.sbx-table td,
+.sbx-table th {
+  white-space: nowrap;
+}
+.sbx-cell-path {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+.sbx-params {
+  color: var(--bp-text-dim);
+}
+.sbx-cmd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--bp-text-dim);
+  background: transparent;
+}
+.sbx-dim {
+  color: var(--bp-text-dim);
+}
+.sbx-row-denied td {
+  background: var(--h5-accent-bg);
+}
+.sbx-row-attn td {
+  background: rgba(214, 169, 78, 0.12);
+}
+.sbx-deny {
+  color: var(--bp-red);
+}
+/* Ledger states, in the words the design uses. `confirmed` is the only one
+   that means the endpoint exists, so it is the only one that is not grey. */
+.sbx-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--bp-text-dim);
+}
+.sbx-state-confirmed {
+  color: var(--bp-green-hi);
+}
+.sbx-state-refused {
+  color: var(--bp-red);
+}
+.sbx-state-gone {
+  color: var(--bp-orange);
+}
+.sbx-attn-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--bp-border);
+}
+.sbx-attn-refusing .sbx-attn-n {
+  color: var(--bp-red);
+}
+.sbx-attn-failing .sbx-attn-n {
+  color: var(--bp-orange);
+}
+.sbx-fleet-note {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--bp-text-dim);
+  border-bottom: 1px solid var(--bp-border);
+}
+.sbx-detail-cmds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.sbx-cmd-click {
+  cursor: pointer;
+  padding: 1px 6px;
+  border: 1px solid var(--bp-border);
+  border-radius: 4px;
+}
+.sbx-cmd-click:hover {
+  border-color: var(--bp-border-strong);
+  color: var(--bp-text-muted);
+}
+.sbx-cmd-click.is-copied {
+  color: var(--bp-green-hi);
+  border-color: var(--bp-green-hi);
+}
+
+/* A session row. The boxes column is a table; this is a stack of buttons,
+   because a session's facts are two lines and a table of them wastes the
+   width the detail pane wants. */
+.sbx-session-row {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--bp-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--bp-border);
+  cursor: pointer;
+}
+.sbx-session-row:hover {
+  background: var(--bp-surface-2);
+}
+.sbx-session-row.is-selected {
+  background: var(--bp-surface-2);
+  box-shadow: inset 2px 0 0 var(--h5-accent);
+}
+.sbx-session-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sbx-session-row .sbx-env-sub {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The session header stacks: a title line, the evidence behind its state, the
+   commands it suggests, then the facts. The box header is a different shape
+   and keeps its own. */
+.sbx-session-head {
+  display: block;
+}
+.sbx-session-head .sbx-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.sbx-linkish {
+  padding: 0;
+  font: inherit;
+  color: var(--h5-accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+/* The run cell carries a verb and the command that repeats it, so it is the
+   one column that wraps. */
+.sbx-cell-run {
+  min-width: 340px;
+  white-space: normal;
+}
+.sbx-cell-why {
+  display: inline-block;
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}

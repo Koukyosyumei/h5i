@@ -48,8 +48,12 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// Where the lock is written. Public for the same reason [`read`] is: a watcher
+/// notices a handover by this file changing.
+pub const CONTROL_JSON: &str = "control.json";
+
 fn path(env_dir: &Path) -> PathBuf {
-    env_dir.join("control.json")
+    env_dir.join(CONTROL_JSON)
 }
 
 /// Current state. A box that has never had a viewer attached is agent-held.

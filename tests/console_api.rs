@@ -14,6 +14,10 @@ const H5I: &str = env!("CARGO_BIN_EXE_h5i");
 
 struct Repo {
     dir: PathBuf,
+    /// Where browser sessions live for this test. Sessions are the machine's,
+    /// not the repository's, so a test that did not pin this would read (and
+    /// show) the developer's own registry.
+    browser_home: PathBuf,
     _root: TempDir,
 }
 
@@ -27,7 +31,13 @@ impl Repo {
         std::fs::write(dir.join("README.md"), "seed\n").unwrap();
         git(&dir, &["add", "."]);
         git(&dir, &["commit", "-m", "seed"]);
-        Repo { dir, _root: root }
+        let browser_home = root.path().join("browser-home");
+        std::fs::create_dir_all(&browser_home).expect("browser home");
+        Repo {
+            dir,
+            browser_home,
+            _root: root,
+        }
     }
 
     fn h5i_ok(&self, args: &[&str]) -> Output {
@@ -50,11 +60,59 @@ impl Repo {
     /// Hermetic: a fixed agent identity, and the workspace tier pinned so box
     /// creation never probes the host. These tests are about the HTTP surface,
     /// not about confinement. The kernel tiers are `env_integration.rs`'s job.
-    fn env(&self) -> [(&'static str, &'static str); 2] {
+    fn env(&self) -> [(&'static str, String); 3] {
         [
-            ("H5I_AGENT", "tester"),
-            ("H5I_DEFAULT_ISOLATION", "workspace"),
+            ("H5I_AGENT", "tester".to_string()),
+            ("H5I_DEFAULT_ISOLATION", "workspace".to_string()),
+            (
+                "H5I_BROWSER_HOME",
+                self.browser_home.display().to_string(),
+            ),
         ]
+    }
+
+    /// Write a session record straight into the registry.
+    ///
+    /// Rather than opening one: these tests are about the HTTP surface, and a
+    /// real session would need a target to fetch and an engine to run.
+    fn session(&self, id: &str, name: &str, live: bool) -> PathBuf {
+        let dir = self.browser_home.join("sessions").join(id);
+        std::fs::create_dir_all(&dir).expect("session dir");
+        let dir = dir.clone();
+        let record = serde_json::json!({
+            "id": id,
+            "name": name,
+            "engine": "h5i-light",
+            "lane": "engine-claimed",
+            "placement": {"kind": "host"},
+            "url": "http://127.0.0.1:1/",
+            "started_at": "2026-09-07T10:00:00.000000Z",
+            "expires_at": null,
+            "storage": "ephemeral",
+            "policy_digest": "sha256:test",
+            "identity": "native",
+            "identity_digest": "test",
+            "restored_from": null,
+            "state": if live { "live" } else { "closed" },
+            "ended_at": if live { serde_json::Value::Null } else { "2026-09-07T10:05:00.000000Z".into() },
+            "end_reason": if live { serde_json::Value::Null } else { "closed by the user".into() },
+            // A tagged enum, as the record writes it. Getting this shape wrong
+            // is silently invisible: `list` skips a record it cannot read.
+            "confinement": {"kind": "process"},
+            "enclosing_box": null,
+            "control": {"channel": "port", "file": null, "witness": null, "pid": null},
+            "logs": {
+                "actions": null,
+                "requests": dir.join("requests.jsonl").display().to_string(),
+            },
+            "permissive_cors": false,
+        });
+        std::fs::write(
+            dir.join("session.json"),
+            serde_json::to_vec(&record).expect("record"),
+        )
+        .expect("write record");
+        dir
     }
 }
 
@@ -539,4 +597,89 @@ fn the_console_ships_the_same_fence_the_engine_prints() {
         "the console bundle does not carry the fence markers, so the page-derived \
          panes are rendered to a person with no boundary around them"
     );
+}
+
+// ─── sessions ────────────────────────────────────────────────────────────────
+
+#[test]
+fn the_console_lists_browser_sessions_with_the_evidence_behind_each_state() {
+    let repo = Repo::new();
+    repo.session("br_live", "watching", true);
+    repo.session("br_over", "finished", false);
+    let ui = Console::start(&repo);
+
+    let fleet = ui.get_authed("/api/sessions").json();
+    assert_eq!(fleet["total"], 2);
+    assert_eq!(fleet["live"], 1);
+
+    let rows = fleet["sessions"].as_array().expect("sessions");
+    let by_name = |name: &str| {
+        rows.iter()
+            .find(|r| r["name"] == name)
+            .unwrap_or_else(|| panic!("no session named {name} in {rows:?}"))
+            .clone()
+    };
+
+    // A record that says live with no engine behind it is the one case this
+    // cannot classify, and the console says so rather than guessing.
+    let live = by_name("watching");
+    assert_eq!(live["attention"]["state"], "unknown");
+    assert!(
+        live["attention"]["why"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("control file"),
+        "a state has to carry its evidence: {live:?}"
+    );
+
+    // An ending nobody has read is `done`; which client has read it is the
+    // client's business, not the server's.
+    let over = by_name("finished");
+    assert_eq!(over["attention"]["state"], "done");
+    assert_eq!(over["attention"]["why"], "closed by the user");
+}
+
+#[test]
+fn a_session_detail_answers_with_its_own_files_and_nothing_else() {
+    let repo = Repo::new();
+    let dir = repo.session("br_one", "one", false);
+    std::fs::write(
+        dir.join("requests.jsonl"),
+        "{\"seq\":0,\"at\":\"2026-09-07T10:00:00.000000Z\",\"phase\":\"request\",\
+         \"initiator\":\"navigation\",\"method\":\"GET\",\
+         \"url\":\"https://target.test/a\",\"allowed\":true}\n         {\"seq\":1,\"at\":\"2026-09-07T10:00:01.000000Z\",\"phase\":\"request\",\
+         \"initiator\":\"subresource\",\"method\":\"GET\",\
+         \"url\":\"https://elsewhere.test/x\",\"allowed\":false,\
+         \"denied_reason\":\"not in the allowlist\"}\n",
+    )
+    .expect("write log");
+    let ui = Console::start(&repo);
+
+    let detail = ui.get_authed("/api/session/br_one").json();
+    assert_eq!(detail["requests"], 2, "both fetches counted");
+    assert_eq!(detail["denied"], 1, "a refusal is counted apart");
+    assert_eq!(detail["captured"], serde_json::Value::Null, "capture was off");
+    assert_eq!(
+        detail["requests_log"].as_array().map(Vec::len),
+        Some(2),
+        "the log itself, for the request table"
+    );
+}
+
+#[test]
+fn a_session_id_that_is_not_one_component_reads_nothing() {
+    let repo = Repo::new();
+    repo.session("br_one", "one", true);
+    let ui = Console::start(&repo);
+
+    // The id becomes a path. A boxed session writes its own record, so this is
+    // target-adjacent input, and the guard belongs on the route.
+    for id in ["..", "%2e%2e%2fetc", "a/b"] {
+        let reply = ui.get_authed(&format!("/api/session/{id}"));
+        assert_ne!(
+            reply.status, 200,
+            "`{id}` should not resolve to a session, got {}",
+            reply.status
+        );
+    }
 }
