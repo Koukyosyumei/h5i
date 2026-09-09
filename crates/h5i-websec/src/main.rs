@@ -47,8 +47,7 @@ struct Cli {
     #[arg(long, short = 's', global = true, value_name = "NAME")]
     session: Option<String>,
 
-    /// Emit JSON. The default for every verb here, because the caller is
-    /// usually a script; pass `--human` for the reading version.
+    /// Emit the human-readable view instead of JSON.
     #[arg(long, global = true)]
     human: bool,
 
@@ -112,13 +111,16 @@ enum Verb {
         /// `req_42`, or just `42`.
         #[arg(value_name = "ID")]
         id: String,
-        /// `query.id=456`, `header.X-Real-IP=1.2.3.4`, `json.role=admin`,
+        /// `method=POST`, `path=/admin`, `query.id=456`,
+        /// `header.X-Real-IP=1.2.3.4`, `json.user.role=admin`, or
         /// `multipart.file.filename=shell.php`. Repeatable, applied in order.
         ///
         /// A `json.` value is typed the way it reads: `json.id=99` is a number,
-        /// `json.active=true` a boolean, `json.role=admin` a string. Quote it to
-        /// insist on a string — `json.password="0e830400451993494058024219903391"`
-        /// sends a magic hash rather than the number zero.
+        /// `json.active=true` a boolean, `json.role=admin` a string. Dots walk
+        /// nested objects and numeric segments index existing arrays. Quote a
+        /// string that looks numeric: `--set 'json.jsonrpc="2.0"'` sends the
+        /// JSON-RPC version as a string rather than the number 2. The outer
+        /// quotes preserve the inner JSON quotes through a shell.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -162,11 +164,6 @@ enum Verb {
         /// written byte for byte, through the same policy and receipts.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
-        /// Send a whole request, written byte for byte from this file.
-        ///
-        /// The general form of `--raw-target`, framing headers included and
-        /// recomputed by nothing, for request smuggling. `-` reads standard
-        /// input.
         /// Write the header names in the case they were given.
         ///
         /// The framed sender is an HTTP client and lower-cases header names, which is
@@ -193,6 +190,12 @@ enum Verb {
         /// become an escaping puzzle.
         #[arg(long = "set-each", value_name = "TARGET=PATH")]
         set_each: Option<String>,
+        /// Send a whole request, written byte for byte from this file.
+        ///
+        /// The general form of `--raw-target`, framing headers included and
+        /// recomputed by nothing, for request smuggling. `-` reads standard
+        /// input. It is also the escape hatch for bodies whose structure
+        /// cannot be expressed with `--set`.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
     },

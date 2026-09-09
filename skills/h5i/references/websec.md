@@ -13,6 +13,11 @@ h5i websec diff res_42 res_43 --human
 h5i websec match res_43 --status 200 --contains ok
 ```
 
+The starting URL may be an API endpoint rather than an HTML page. For example,
+`h5i browser open https://target.example/api/health --capture` is a quick way to
+seed an authenticated or unauthenticated capture before doing the rest of the
+work with `websec`.
+
 Four things about `replay` that are easier to know than to discover.
 
 **A `json.` value is typed the way it reads.** `json.id=99` is a number,
@@ -20,6 +25,10 @@ Four things about `replay` that are easier to know than to discover.
 a string: `json.password="0e830400451993494058024219903391"` is the magic hash a
 PHP `==` compares equal, and unquoted it is the *number* zero. When the encoded
 value differs from the text you typed, the receipt says so in `encoded`.
+Dots walk nested objects, and numeric dotted segments address existing array
+elements (`json.items.0.name=changed`). Bracket notation such as
+`json.items[0].name` is refused; use dotted indices for an existing array or
+`--raw-request` when constructing a new array or a complete body.
 
 **Header names go out lower-cased unless you ask otherwise.** That is what every
 HTTP client does, and a proxy that looks a header up by exact string does not

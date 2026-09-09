@@ -833,6 +833,10 @@ pub enum BrowserCommands {
         limit: Option<u64>,
         #[arg(long)]
         json: bool,
+        /// Emit the human-readable view. This is the default and is accepted
+        /// for symmetry with `h5i websec requests`.
+        #[arg(long, conflicts_with = "json")]
+        human: bool,
     },
 
     /// Run a multi-step flow: send, extract, send again with what was found.
@@ -1515,6 +1519,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             denied_only,
             limit,
             json,
+            human: _,
         } => {
             let mut argv = vec!["requests".to_string()];
             let mut flag = |name: &str, value: Option<String>| {

@@ -1895,6 +1895,20 @@ fn control_verb_inner(
                 ),
                 Ok(edited) => {
                     let outcome = &edited.outcome;
+                    // A replay should answer the common "what changed?" question
+                    // without requiring a second process. Keep the full bytes in
+                    // `show --raw`; this bounded, lossy preview is for triage.
+                    let body_preview = crate::broker::body_preview(&outcome.body);
+                    let mut samples = serde_json::to_value(&edited.samples)
+                        .expect("timing samples serialize");
+                    if let Some(items) = samples.as_array_mut() {
+                        for item in items {
+                            if let Some(seq) = item.get("seq").and_then(Value::as_u64) {
+                                item["request_id"] = Value::String(format!("req_{seq}"));
+                                item["response_id"] = Value::String(format!("res_{seq}"));
+                            }
+                        }
+                    }
                     (
                         json!({
                             "ok": outcome.error.is_none(),
@@ -1902,14 +1916,18 @@ fn control_verb_inner(
                             // own request and response are stored. A replay is
                             // replayable.
                             "seq": edited.seq,
+                            "request_id": edited.seq.map(|seq| format!("req_{seq}")),
+                            "response_id": edited.seq.map(|seq| format!("res_{seq}")),
                             "applied": edited.applied,
                             "sent": edited.sent,
-                            "samples": edited.samples,
+                            "samples": samples,
                             "response": {
                                 "status": outcome.status,
                                 "url": outcome.final_url.to_string(),
                                 "headers": outcome.headers,
                                 "bytes": outcome.body.len(),
+                                "body_preview": body_preview,
+                                "body_truncated": outcome.body.len() > crate::broker::BODY_PREVIEW_BYTES,
                                 "error": outcome.error,
                             },
                         }),
@@ -2730,16 +2748,56 @@ fn control_verb_inner(
             // make it. Three numbers, not the log they came from.
             let summary = session.factory.broker().log_summary();
 
+            // Only advertise a message id when the capture store can actually
+            // back `websec show`. A receipt also exists for denied and failed
+            // attempts, but those rows deliberately have no stored message.
+            // If the store reports any write error, be conservative: an id
+            // that might fail is worse than an omitted one.
+            let capture_healthy = session
+                .factory
+                .broker()
+                .capture()
+                .is_some_and(|health| health.errors == 0);
+            let addressable = |r: &crate::receipt::RequestRecord| {
+                capture_healthy
+                    && r.allowed
+                    && (r.phase == crate::receipt::Phase::Request || r.status.is_some())
+            };
+            let message_id = |r: &crate::receipt::RequestRecord| match r.phase {
+                crate::receipt::Phase::Request => format!("req_{}", r.seq),
+                crate::receipt::Phase::Response => format!("res_{}", r.seq),
+            };
             let text = rows
                 .iter()
-                .map(|r| r.render())
+                .map(|r| {
+                    let id = if addressable(r) {
+                        message_id(r)
+                    } else {
+                        "—".into()
+                    };
+                    format!("{id:<10} {}", r.render())
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
+
+            let addressed: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    let mut value = serde_json::to_value(row).expect("request record serializes");
+                    value["addressable"] = Value::Bool(addressable(row));
+                    value["id"] = if addressable(row) {
+                        Value::String(message_id(row))
+                    } else {
+                        Value::Null
+                    };
+                    value
+                })
+                .collect();
 
             (
                 json!({
                     "ok": true,
-                    "requests": rows,
+                    "requests": addressed,
                     // The cursor to pass back as `since`. Named rather than
                     // left to be derived from the last row, which is absent
                     // when the window is empty, and stopping below anything
@@ -6517,6 +6575,11 @@ mod tests {
         assert_eq!(reply["denied"], 1, "the refusal is in the log: {reply:?}");
         let rows = reply["requests"].as_array().expect("an array");
         assert!(!rows.is_empty());
+        assert!(
+            rows.iter()
+                .all(|row| row["id"].is_null() && row["addressable"] == false),
+            "a denied request has a receipt but no captured message: {reply:?}"
+        );
         assert!(
             rows.iter().any(|r| r["url"]
                 .as_str()

@@ -247,7 +247,17 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
             "query" => Ok(Target::Query(name.to_string())),
             "header" => Ok(Target::Header(name.to_string())),
             "cookie" => Ok(Target::Cookie(name.to_string())),
-            "json" => Ok(Target::Json(name.trim_start_matches("$.").to_string())),
+            "json" => {
+                if name.contains('[') || name.contains(']') {
+                    return Err(EditError::new(
+                        spec,
+                        "bracket array syntax is not supported and would be ambiguous. Use a \
+                         dotted numeric index such as `json.items.0.name` for an existing array, \
+                         or `--raw-request` to construct a new array",
+                    ));
+                }
+                Ok(Target::Json(name.trim_start_matches("$.").to_string()))
+            }
             "form" => Ok(Target::Form(name.to_string())),
             "body" if name.eq_ignore_ascii_case("raw") => Ok(Target::BodyRaw),
             "body" => Err(EditError::new(
@@ -1177,6 +1187,14 @@ mod tests {
 
     fn set(spec: &str) -> Edit {
         parse_set(spec).expect("parses")
+    }
+
+    #[test]
+    fn bracket_array_syntax_is_refused_instead_of_becoming_a_literal_key() {
+        let error = parse_set("json.api_keys[0].name=pwn").expect_err("brackets are refused");
+        assert!(error.message.contains("bracket array syntax"), "{error}");
+        assert!(error.message.contains("json.items.0.name"), "{error}");
+        assert!(error.message.contains("--raw-request"), "{error}");
     }
 
     #[test]

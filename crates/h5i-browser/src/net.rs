@@ -2268,6 +2268,8 @@ impl LocalBroker {
                 ttfb_ms,
                 total_ms,
                 bytes: outcome.body.len() as u64,
+                body_preview: crate::broker::body_preview(&outcome.body),
+                body_truncated: outcome.body.len() > crate::broker::BODY_PREVIEW_BYTES,
             },
             outcome,
         )
@@ -3804,6 +3806,13 @@ mod capture_wire_tests {
             "every send is a sample that names its value"
         );
         assert_eq!(sent.samples.len(), 3, "one send per value, and no more");
+        for (sample, value) in sent.samples.iter().zip(["id=1", "id=2", "id=a%2Cb"]) {
+            assert!(
+                sample.body_preview.contains(value),
+                "each sample carries the response that its value produced: {sample:?}"
+            );
+            assert!(!sample.body_truncated);
+        }
     }
 
     /// A walk edits the request; a raw send already decided its bytes.

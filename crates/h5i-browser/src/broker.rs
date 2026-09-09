@@ -312,6 +312,18 @@ pub struct Timing {
     /// To the body in hand: the decision plus the transfer.
     pub total_ms: u64,
     pub bytes: u64,
+    /// A bounded reading of this sample's body. Full bytes remain in capture.
+    #[serde(default)]
+    pub body_preview: String,
+    /// Whether [`Self::body_preview`] omits trailing bytes.
+    #[serde(default)]
+    pub body_truncated: bool,
+}
+
+pub const BODY_PREVIEW_BYTES: usize = 4096;
+
+pub fn body_preview(body: &[u8]) -> String {
+    String::from_utf8_lossy(&body[..body.len().min(BODY_PREVIEW_BYTES)]).into_owned()
 }
 
 /// One target and the values to walk it over.
