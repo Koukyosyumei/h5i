@@ -1745,7 +1745,7 @@ The request log: what this session asked for, and what was refused
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-method\fR] [\fB\-\-url\-contains\fR] [\fB\-\-status\fR] [\fB\-\-initiator\fR] [\fB\-\-denied\-only\fR] [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBrequests\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-since\fR] [\fB\-\-method\fR] [\fB\-\-url\-contains\fR] [\fB\-\-status\fR] [\fB\-\-initiator\fR] [\fB\-\-denied\-only\fR] [\fB\-\-limit\fR] [\fB\-\-json\fR] [\fB\-\-human\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1776,6 +1776,9 @@ At most this many rows, newest last
 .TP
 \fB\-\-json\fR
 
+.TP
+\fB\-\-human\fR
+Emit the human\-readable view (the default)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
@@ -1880,18 +1883,10 @@ Send this request\-target unchanged, without URL normalization.
 Policy, budget, and receipt checks still apply. The sender computes `Host` and `Content\-Length`; use `\-\-raw\-request` to control framing.
 .TP
 \fB\-\-raw\-headers\fR
-Write the header names in the case they were given.
-
-The framed sender is an HTTP client and lower\-cases header names, which is what HTTP/2 requires and what every library does. A proxy that looks a header up by exact string does not care: it finds `Content\-Length` and misses `content\-length`. This sends the request the edits produced down the raw path instead, where the names go out as written \(em so `\-\-set` still applies, the cookies still travel, and the case survives.
-
-The middle ground between `\-\-set` and `\-\-raw\-request`, which reaches the wire byte for byte and makes you write every byte.
+Preserve header\-name casing while retaining edits and cookies
 .TP
 \fB\-\-set\-each\fR \fI<TARGET=PATH>\fR
-Walk one target over a list of values: `query.id=./ids.txt` sends once per line of the file.
-
-Enumeration in the engine rather than in a shell loop, for the same reason `\-\-repeat` is: a loop outside pays process startup per request, and its results come back as N separate documents that nothing correlates. Here each send is one sample, carrying the value that produced it beside its status and its clock.
-
-The values are lines rather than a comma\-separated list because the things worth walking are payloads, and a payload with a comma in it should not become an escaping puzzle. Applied on top of every `\-\-set`, so the walked target composes with the rest of the request.
+Send once per line, as `query.id=./ids.txt`, after shared edits
 .TP
 \fB\-\-raw\-request\fR \fI<PATH>\fR
 Send a complete request unchanged from this file; `\-` reads stdin.
