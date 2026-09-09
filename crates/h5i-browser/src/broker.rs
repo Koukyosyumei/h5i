@@ -255,6 +255,12 @@ pub struct Sends {
     /// A complete request to write unchanged. `None` uses the normal sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_request: Option<Vec<u8>>,
+    /// Send once per target value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub each: Option<Each>,
+    /// Preserve header-name casing via the raw sender.
+    #[serde(default)]
+    pub raw_headers: bool,
 }
 
 impl Default for Sends {
@@ -264,6 +270,8 @@ impl Default for Sends {
             together: false,
             no_follow: false,
             raw_target: None,
+            raw_headers: false,
+            each: None,
             raw_request: None,
         }
     }
@@ -275,16 +283,40 @@ impl Sends {
     }
 }
 
-/// One send's clock, in the two numbers that mean different things.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+/// One send's timing and result.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Timing {
     pub seq: Option<u64>,
     pub status: Option<u16>,
+    /// Enumeration value, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
     /// To the response's headers: the server's decision.
     pub ttfb_ms: u64,
     /// To the body in hand: the decision plus the transfer.
     pub total_ms: u64,
     pub bytes: u64,
+    /// Bounded body preview; capture retains the full body.
+    #[serde(default)]
+    pub body_preview: String,
+    /// Whether [`Self::body_preview`] omits trailing bytes.
+    #[serde(default)]
+    pub body_truncated: bool,
+}
+
+pub const BODY_PREVIEW_BYTES: usize = 4096;
+
+pub fn body_preview(body: &[u8]) -> String {
+    String::from_utf8_lossy(&body[..body.len().min(BODY_PREVIEW_BYTES)]).into_owned()
+}
+
+/// A target and its per-send values.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Each {
+    /// Target such as `query.id` or `json.role`.
+    pub target: String,
+    /// One value per send, in order.
+    pub values: Vec<String>,
 }
 
 /// What went out, in the parts that are safe to hand back.

@@ -119,6 +119,9 @@ pub struct Applied {
     /// The new value, as text where it is text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Encoded value when it differs from `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoded: Option<String>,
     /// What was there before, when there was something and it was text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub was: Option<String>,
@@ -238,7 +241,17 @@ fn parse_target(spec: &str) -> Result<Target, EditError> {
             "query" => Ok(Target::Query(name.to_string())),
             "header" => Ok(Target::Header(name.to_string())),
             "cookie" => Ok(Target::Cookie(name.to_string())),
-            "json" => Ok(Target::Json(name.trim_start_matches("$.").to_string())),
+            "json" => {
+                if name.contains('[') || name.contains(']') {
+                    return Err(EditError::new(
+                        spec,
+                        "bracket array syntax is not supported and would be ambiguous. Use a \
+                         dotted numeric index such as `json.items.0.name` for an existing array, \
+                         or `--raw-request` to construct a new array",
+                    ));
+                }
+                Ok(Target::Json(name.trim_start_matches("$.").to_string()))
+            }
             "form" => Ok(Target::Form(name.to_string())),
             "body" if name.eq_ignore_ascii_case("raw") => Ok(Target::BodyRaw),
             "body" => Err(EditError::new(
@@ -452,6 +465,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             let was = std::mem::replace(&mut request.method, text(&value).trim().to_ascii_uppercase());
             Ok(Applied {
                 target,
+                encoded: None,
                 value: Some(request.method.clone()),
                 was: Some(was),
                 created: false,
@@ -469,6 +483,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             let was = std::mem::replace(&mut request.url, parsed);
             Ok(Applied {
                 target,
+                encoded: None,
                 value: Some(request.url.to_string()),
                 was: Some(was.to_string()),
                 created: false,
@@ -506,6 +521,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             request.url = candidate;
             Ok(Applied {
                 target,
+                encoded: None,
                 value: Some(request.url.path().to_string()),
                 was: Some(was),
                 created: false,
@@ -565,6 +581,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             Ok(Applied {
                 target,
+                encoded: None,
                 value: (!removing).then(|| text(&value)),
                 created: was.is_none() && !removing,
                 was,
@@ -584,6 +601,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                 return Ok(Applied {
                     target,
                     value: None,
+                    encoded: None,
                     was,
                     created: false,
                 });
@@ -592,6 +610,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             let was = request.set_header(name, &text(&value));
             Ok(Applied {
                 target,
+                encoded: None,
                 value: Some(text(&value)),
                 created: was.is_none(),
                 was,
@@ -648,6 +667,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             Ok(Applied {
                 target,
+                encoded: None,
                 value: (!removing).then(|| text(&value)),
                 created: was.is_none() && !removing,
                 was,
@@ -688,12 +708,19 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                     ),
                 ));
             }
+            let mut encoded = None;
             if removing {
                 json_remove(&mut document, path)
                     .map_err(|why| EditError::new(&target, why))?;
             } else {
+                let typed = text(&value);
                 let parsed = serde_json::from_slice::<serde_json::Value>(&value)
-                    .unwrap_or_else(|_| serde_json::Value::String(text(&value)));
+                    .unwrap_or_else(|_| serde_json::Value::String(typed.clone()));
+                refuse_a_number_that_loses_its_digits(&target, &typed, &parsed)?;
+                // Record coercions so the receipt matches the sent body.
+                if render_json(&parsed) != typed {
+                    encoded = Some(parsed.to_string());
+                }
                 json_set(&mut document, path, parsed)
                     .map_err(|why| EditError::new(&target, why))?;
             }
@@ -704,6 +731,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             Ok(Applied {
                 target,
+                encoded,
                 value: (!removing).then(|| text(&value)),
                 created: was.is_none() && !removing,
                 was,
@@ -755,6 +783,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             }
             Ok(Applied {
                 target,
+                encoded: None,
                 value: (!removing).then(|| text(&value)),
                 created: was.is_none() && !removing,
                 was,
@@ -854,6 +883,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             );
             Ok(Applied {
                 target,
+                encoded: None,
                 value: (!removing).then(|| text(&value)),
                 created: was.is_none() && !removing,
                 was,
@@ -865,6 +895,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
             request.body = value.clone();
             Ok(Applied {
                 target,
+                encoded: None,
                 value: Some(format!("{} bytes", request.body.len())),
                 was: Some(format!("{was} bytes")),
                 created: false,
@@ -973,6 +1004,35 @@ fn missing(target: &str, kind: &str, have: &[(String, String)]) -> EditError {
         target,
         format!("no such {kind}, so nothing would change. {known}. Pass --create to add it"),
     )
+}
+
+/// Refuse integer literals that JSON parsing would round.
+fn refuse_a_number_that_loses_its_digits(
+    target: &str,
+    typed: &str,
+    parsed: &serde_json::Value,
+) -> Result<(), EditError> {
+    let serde_json::Value::Number(number) = parsed else {
+        return Ok(());
+    };
+    // Fractions and exponents are not integer literals.
+    let digits = typed.trim();
+    let unsigned = digits.strip_prefix('-').unwrap_or(digits);
+    if unsigned.is_empty() || !unsigned.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(());
+    }
+    // Falling back to a float loses integer precision.
+    if number.is_i64() || number.is_u64() {
+        return Ok(());
+    }
+    Err(EditError::new(
+        target,
+        format!(
+            "{digits} is too many digits for a JSON number: it would be sent as {parsed}, \
+             which is a different value. Quote it (`{target}=\"{digits}\"`) to send the text, \
+             or use `body.raw` to write a body this cannot build"
+        ),
+    ))
 }
 
 /// Render a JSON value the way a person reads it: strings bare, the rest as JSON.
@@ -1106,6 +1166,14 @@ mod tests {
     }
 
     #[test]
+    fn bracket_array_syntax_is_refused_instead_of_becoming_a_literal_key() {
+        let error = parse_set("json.api_keys[0].name=pwn").expect_err("brackets are refused");
+        assert!(error.message.contains("bracket array syntax"), "{error}");
+        assert!(error.message.contains("json.items.0.name"), "{error}");
+        assert!(error.message.contains("--raw-request"), "{error}");
+    }
+
+    #[test]
     fn a_query_parameter_is_replaced_in_place() {
         let mut request = request();
         let applied = apply(&mut request, &[set("query.user_id=456")], false).expect("applies");
@@ -1158,6 +1226,110 @@ mod tests {
         assert_eq!(body["user"]["role"], "admin", "bare text stays text");
         assert_eq!(body["user"]["id"], 99, "a number reads as a number");
         assert_eq!(body["active"], true);
+    }
+
+    /// Receipts include coerced values.
+    #[test]
+    fn a_json_value_that_reads_as_a_number_says_what_it_became() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/login").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"password":"x"}"#.to_vec(),
+        };
+        let applied = apply(
+            &mut request,
+            &[set("json.password=0e830400451993494058024219903391")],
+            false,
+        )
+        .expect("applies");
+        assert_eq!(
+            applied[0].value.as_deref(),
+            Some("0e830400451993494058024219903391"),
+            "the text that was typed is still reported"
+        );
+        assert_eq!(
+            applied[0].encoded.as_deref(),
+            Some("0.0"),
+            "and so is what the body now carries"
+        );
+        assert_eq!(request.body, br#"{"password":0.0}"#.to_vec());
+    }
+
+    /// Unchanged encodings stay omitted.
+    #[test]
+    fn a_json_value_that_survives_as_written_says_nothing_extra() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"role":"user","id":1,"active":false}"#.to_vec(),
+        };
+        let applied = apply(
+            &mut request,
+            &[set("json.role=admin"), set("json.id=99"), set("json.active=true")],
+            false,
+        )
+        .expect("applies");
+        for one in &applied {
+            assert_eq!(one.encoded, None, "{} reported an encoding", one.target);
+        }
+    }
+
+    /// Oversized integers are refused.
+    #[test]
+    fn an_integer_too_big_for_a_double_is_refused_rather_than_rounded() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"id":1}"#.to_vec(),
+        };
+        let error = apply(
+            &mut request,
+            &[set("json.id=123456789012345678901234567890")],
+            false,
+        )
+        .expect_err("refused");
+        let spelling = error.to_string();
+        assert!(spelling.contains("too many digits"), "{spelling}");
+        assert!(spelling.contains("body.raw"), "{spelling}");
+        assert_eq!(request.body, br#"{"id":1}"#.to_vec(), "and the body is untouched");
+    }
+
+    /// Exact integers remain numbers.
+    #[test]
+    fn an_integer_a_double_can_hold_is_still_a_number() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/api").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"id":1}"#.to_vec(),
+        };
+        apply(&mut request, &[set("json.id=9007199254740993")], false).expect("applies");
+        assert_eq!(request.body, br#"{"id":9007199254740993}"#.to_vec());
+    }
+
+    /// Quoting preserves large values as strings.
+    #[test]
+    fn a_quoted_json_value_is_the_string_it_was_written_as() {
+        let mut request = Editable {
+            method: "POST".to_string(),
+            url: Url::parse("https://app.test/login").unwrap(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            body: br#"{"password":"x"}"#.to_vec(),
+        };
+        apply(
+            &mut request,
+            &[set("json.password=\"0e830400451993494058024219903391\"")],
+            false,
+        )
+        .expect("applies");
+        assert_eq!(
+            request.body,
+            br#"{"password":"0e830400451993494058024219903391"}"#.to_vec(),
+            "the magic hash reaches the wire as the string it is"
+        );
     }
 
     /// The API call a page never makes has to be composable, not hand-written.

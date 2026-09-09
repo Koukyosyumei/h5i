@@ -2264,9 +2264,12 @@ impl LocalBroker {
             crate::broker::Timing {
                 seq: outcome.seq,
                 status: outcome.status,
+                value: None,
                 ttfb_ms,
                 total_ms,
                 bytes: outcome.body.len() as u64,
+                body_preview: crate::broker::body_preview(&outcome.body),
+                body_truncated: outcome.body.len() > crate::broker::BODY_PREVIEW_BYTES,
             },
             outcome,
         )
@@ -2340,8 +2343,29 @@ impl LocalBroker {
         let applied = crate::edits::apply(&mut editable, edits, create)
             .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
+        // Raw requests cannot vary per send.
+        if plan.each.is_some()
+            && (plan.raw_request.is_some() || plan.raw_target.is_some() || plan.raw_headers)
+        {
+            return Err(SendError::new(
+                "bad-each",
+                "a walk edits the request once per value, and a raw send writes bytes that were \
+                 already decided. Walk with `--set` alone, or write the values into a sequence \
+                 file"
+                    .to_string(),
+            ));
+        }
+        if plan.together && plan.each.is_some() {
+            return Err(SendError::new(
+                "bad-each",
+                "`--race` releases the same request together; a walk sends a different request \
+                 each time. Pick one"
+                    .to_string(),
+            ));
+        }
+
         // Build raw requests after edits so `--set` still applies.
-        if plan.raw_request.is_some() || plan.raw_target.is_some() {
+        if plan.raw_request.is_some() || plan.raw_target.is_some() || plan.raw_headers {
             let raw = build_raw_request(&editable, &plan)
                 .map_err(|e| SendError::new("bad-raw", e))?;
             let sent = crate::broker::Sent {
@@ -2360,23 +2384,55 @@ impl LocalBroker {
             });
         }
 
-        let content_type = editable.content_type().map(str::to_string);
         let follow = plan.no_follow.then_some(0);
-        let fetch = crate::broker::Fetch {
-            url: editable.url.clone(),
-            // A replay is the agent exercising its own authority over a URL it
-            // named, exactly like a navigation, and not a page reaching for a
-            // subresource. That is what decides the policy question and what
-            // keeps the same-origin rules out of it: there is no document here.
+        // Replays are agent requests, not document subresources.
+        let to_fetch = |one: &crate::edits::Editable| crate::broker::Fetch {
+            url: one.url.clone(),
             initiator: Initiator::Replay,
-            method: editable.method.clone(),
-            body: editable.body.clone(),
-            content_type,
-            headers: editable.headers.clone(),
+            method: one.method.clone(),
+            body: one.body.clone(),
+            content_type: one.content_type().map(str::to_string),
+            headers: one.headers.clone(),
             max_redirects: follow,
             document: None,
             cors: None,
         };
+
+        // Apply each walked value after the shared edits.
+        if let Some(each) = &plan.each {
+            let mut samples = Vec::with_capacity(each.values.len());
+            let mut last: Option<(FetchOutcome, crate::broker::Sent)> = None;
+            for value in &each.values {
+                let mut one = editable.clone();
+                let edit = crate::edits::parse_set(&format!("{}={value}", each.target))
+                    .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
+                crate::edits::apply(&mut one, std::slice::from_ref(&edit), create)
+                    .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
+                let fetch = to_fetch(&one);
+                let sent = crate::broker::Sent {
+                    method: fetch.method.clone(),
+                    url: fetch.url.to_string(),
+                    header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
+                    body_bytes: fetch.body.len() as u64,
+                };
+                let (mut sample, outcome) = self.send_once(&fetch);
+                sample.value = Some(value.clone());
+                samples.push(sample);
+                last = Some((outcome, sent));
+            }
+            let (outcome, sent) = last.ok_or_else(|| {
+                SendError::new("bad-each", "there were no values to walk".to_string())
+            })?;
+            return Ok(crate::broker::Edited {
+                seq: outcome.seq,
+                applied,
+                sent,
+                samples,
+                outcome,
+            });
+        }
+
+        let fetch = to_fetch(&editable);
         let sent = crate::broker::Sent {
             method: fetch.method.clone(),
             url: fetch.url.to_string(),
@@ -2412,6 +2468,16 @@ impl LocalBroker {
     }
 }
 
+/// Return a URL's origin-form request target.
+fn request_target(url: &Url) -> String {
+    let path = url.path();
+    let path = if path.is_empty() { "/" } else { path };
+    match url.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path.to_string(),
+    }
+}
+
 /// Return `scheme://host[:port]` for display and `Host` construction.
 fn scheme_authority(url: &Url) -> String {
     format!("{}://{}", url.scheme(), authority_host(url))
@@ -2434,10 +2500,16 @@ fn build_raw_request(
     if let Some(bytes) = &plan.raw_request {
         return parse_raw_request(editable.url.clone(), bytes.clone());
     }
-    let target = plan
-        .raw_target
-        .as_deref()
-        .ok_or("a raw send needs a request-target or a whole request")?;
+    // `--raw-headers` preserves the existing target.
+    let own;
+    let target = match plan.raw_target.as_deref() {
+        Some(target) => target,
+        None if plan.raw_headers => {
+            own = request_target(&editable.url);
+            &own
+        }
+        None => return Err("a raw send needs a request-target or a whole request".into()),
+    };
     if target.is_empty() || target.as_bytes()[0] != b'/' && !target.contains("://") {
         return Err(format!(
             "{target:?} is not a request-target: it should begin with `/` (an origin-form target \
@@ -3515,6 +3587,65 @@ mod capture_wire_tests {
         );
     }
 
+    /// Echo `count` request lines.
+    fn echo_request_lines(count: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..count {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let body = line.trim_end().to_string();
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// Echo a complete request head.
+    fn echo_whole_request() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim().is_empty() {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{head}",
+                head.len()
+            );
+            let _ = stream.flush();
+        });
+        port
+    }
+
     /// Start a server that echoes each request line.
     fn echo_request_line() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3566,6 +3697,8 @@ mod capture_wire_tests {
                 no_follow: false,
                 raw_target: Some("/cgi-bin/.%2e/.%2e/etc/passwd".to_string()),
                 raw_request: None,
+                raw_headers: false,
+                each: None,
             },
         )
         .expect("sent");
@@ -3575,6 +3708,134 @@ mod capture_wire_tests {
             "the server saw the verbatim target, not one a parser straightened"
         );
         assert_eq!(sent.outcome.status, Some(200));
+    }
+
+    /// `--raw-headers` preserves header-name casing.
+    #[test]
+    fn raw_headers_writes_the_names_in_the_case_they_were_given() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let port = echo_whole_request();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/orders?page=2")).unwrap();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "POST".to_string(),
+                url,
+                headers: vec![("X-Odd-CASE".to_string(), "yes".to_string())],
+                body: b"a=b".to_vec(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: true,
+                each: None,
+            },
+        )
+        .expect("sent");
+        let echoed = String::from_utf8_lossy(&sent.outcome.body).to_string();
+        assert!(
+            echoed.contains("POST /orders?page=2 HTTP/1.1"),
+            "the request keeps its own target, query included: {echoed}"
+        );
+        assert!(
+            echoed.contains("Content-Length: 3"),
+            "the framing header is written in the case a proxy looks for: {echoed}"
+        );
+        assert!(
+            echoed.contains("X-Odd-CASE: yes"),
+            "and so is a name the caller chose: {echoed}"
+        );
+    }
+
+    /// A walk returns one labeled sample per value.
+    #[test]
+    fn set_each_sends_once_per_value_and_names_them() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let port = echo_request_lines(3);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/thing?id=0")).unwrap();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: false,
+                each: Some(crate::broker::Each {
+                    target: "query.id".to_string(),
+                    // Commas remain part of a value.
+                    values: vec!["1".into(), "2".into(), "a,b".into()],
+                }),
+            },
+        )
+        .expect("sent");
+        let values: Vec<Option<String>> =
+            sent.samples.iter().map(|s| s.value.clone()).collect();
+        assert_eq!(
+            values,
+            vec![Some("1".into()), Some("2".into()), Some("a,b".into())],
+            "every send is a sample that names its value"
+        );
+        assert_eq!(sent.samples.len(), 3, "one send per value, and no more");
+        for (sample, value) in sent.samples.iter().zip(["id=1", "id=2", "id=a%2Cb"]) {
+            assert!(
+                sample.body_preview.contains(value),
+                "each sample carries the response that its value produced: {sample:?}"
+            );
+            assert!(!sample.body_truncated);
+        }
+    }
+
+    /// Raw requests cannot be walked.
+    #[test]
+    fn set_each_and_a_raw_send_are_refused_together() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let error = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: Some("/x".to_string()),
+                raw_request: None,
+                raw_headers: false,
+                each: Some(crate::broker::Each {
+                    target: "query.id".to_string(),
+                    values: vec!["1".into()],
+                }),
+            },
+        )
+        .expect_err("refused");
+        assert!(
+            format!("{error:?}").contains("already decided"),
+            "the refusal says why: {error:?}"
+        );
     }
 
     /// A raw request preserves its bytes and records its framing headers.
@@ -3591,6 +3852,8 @@ mod capture_wire_tests {
             .to_vec();
         let plan = crate::broker::Sends {
             raw_request: Some(wire.clone()),
+            raw_headers: false,
+            each: None,
             ..Default::default()
         };
         let raw = build_raw_request(&editable, &plan).expect("built");

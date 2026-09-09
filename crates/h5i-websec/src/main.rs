@@ -47,8 +47,7 @@ struct Cli {
     #[arg(long, short = 's', global = true, value_name = "NAME")]
     session: Option<String>,
 
-    /// Emit JSON. The default for every verb here, because the caller is
-    /// usually a script; pass `--human` for the reading version.
+    /// Emit the human-readable view instead of JSON.
     #[arg(long, global = true)]
     human: bool,
 
@@ -97,7 +96,7 @@ enum Verb {
         /// is bytes and bytes inside a JSON string are no longer the message.
         #[arg(long)]
         raw: bool,
-        /// Write the body to this file, exactly as it came back.
+        /// Write the exact body to a file, or to stdout with `-`.
         #[arg(long = "body-to", value_name = "PATH")]
         body_to: Option<String>,
     },
@@ -107,8 +106,9 @@ enum Verb {
         /// `req_42`, or just `42`.
         #[arg(value_name = "ID")]
         id: String,
-        /// `query.id=456`, `header.X-Real-IP=1.2.3.4`, `json.role=admin`,
-        /// `multipart.file.filename=shell.php`. Repeatable, applied in order.
+        /// Set a request field; repeatable and ordered. JSON values are typed,
+        /// nested by dots, and arrays use numeric segments. Preserve numeric
+        /// strings with shell-safe quotes: `--set 'json.jsonrpc="2.0"'`.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -152,11 +152,17 @@ enum Verb {
         /// written byte for byte, through the same policy and receipts.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
+        /// Preserve header-name casing while retaining edits and cookies.
+        #[arg(long = "raw-headers")]
+        raw_headers: bool,
+        /// Send once per line, as `query.id=./ids.txt`.
+        #[arg(long = "set-each", value_name = "TARGET=PATH")]
+        set_each: Option<String>,
         /// Send a whole request, written byte for byte from this file.
         ///
         /// The general form of `--raw-target`, framing headers included and
         /// recomputed by nothing, for request smuggling. `-` reads standard
-        /// input.
+        /// input. Use it when `--set` cannot express the body.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
     },
@@ -207,11 +213,23 @@ enum Verb {
     Sitemap,
 
     /// Run a multi-step flow with bindings between the steps.
+    ///
+    /// Steps run in order, bind response values, and stop on failure:
+    ///
+    /// ```json
+    /// {"steps": [
+    ///   {"resend": 3, "extract": {"csrf": "regex:value=\"([^\"]+)\""}},
+    ///   {"resend": 5, "set": ["header.X-CSRF-Token=${csrf}", "json.role=admin"]}
+    /// ]}
+    /// ```
     Sequence {
+        /// The sequence file.
         #[arg(value_name = "FILE")]
         file: String,
+        /// Set an initial `name=value` binding; repeatable.
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
+        /// Continue after failed steps.
         #[arg(long)]
         keep_going: bool,
     },
@@ -393,6 +411,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             reset_budget,
             raw_target,
             raw_request,
+            raw_headers,
+            set_each,
         } => {
             let seq = sequence_of(&id)?;
             push(&mut argv, &["resend"]);
@@ -428,6 +448,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             flag(&mut argv, "raw-target", raw_target);
             flag(&mut argv, "raw-request", raw_request);
+            if raw_headers {
+                push(&mut argv, &["--raw-headers"]);
+            }
+            flag(&mut argv, "set-each", set_each);
         }
         Verb::Socket {
             url,

@@ -139,8 +139,18 @@ pub fn show(
                 "message {seq}'s body is not in the store, so there is nothing to write"
             )
         })?;
-        std::fs::write(path, &bytes)
-            .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
+        // `-` writes the body to stdout.
+        let to_stdout = path.as_os_str() == "-";
+        if to_stdout {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(&bytes)
+                .and_then(|()| out.flush())
+                .map_err(|e| anyhow::anyhow!("the body could not be written out: {e}"))?;
+        } else {
+            std::fs::write(path, &bytes)
+                .map_err(|e| anyhow::anyhow!("{} could not be written: {e}", path.display()))?;
+        }
         // The exact byte channel every bounded view points at, so a body the
         // store cut has to say so rather than hand over a shorter file.
         let of_bytes = match body {
@@ -151,20 +161,36 @@ pub fn show(
             } => *of_bytes,
             _ => None,
         };
-        let mut note = json!({"path": path.display().to_string(), "bytes": bytes.len()});
+        let where_to = if to_stdout {
+            "standard output".to_string()
+        } else {
+            path.display().to_string()
+        };
+        let mut note = json!({"path": where_to, "bytes": bytes.len()});
         if let Some(had) = of_bytes {
             note["of_bytes"] = json!(had);
             note["truncated"] = json!(true);
         }
         wrote = Some(note);
+        // Keep stdout byte-exact; send truncation notes to stderr.
+        if to_stdout {
+            if let Some(had) = of_bytes {
+                eprintln!(
+                    "  wrote    : {} bytes — the head of a {had} byte body, which is all the \
+                     store kept",
+                    bytes.len()
+                );
+            }
+            return Ok(());
+        }
         if !json_out {
             match of_bytes {
-                None => println!("  wrote    : {} bytes to {}", bytes.len(), path.display()),
+                None => println!("  wrote    : {} bytes to {}", bytes.len(), where_to),
                 Some(had) => println!(
                     "  wrote    : {} bytes to {} — the head of a {had} byte body, which is \
                      all the store kept",
                     bytes.len(),
-                    path.display()
+                    where_to
                 ),
             }
         }
@@ -391,19 +417,14 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         }
     }
 
-    // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
-    // empty string, which made "neither body was kept" indistinguishable from
-    // "both bodies were empty".
-    // Whole bodies, or none of this is a comparison: an unstored one reads as
-    // empty and a previewed one as its own head.
+    // Compare only complete bodies.
     let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
     let (json_changes, json_total, line_changes, line_total) =
         body_changes(a, b, left_text, right_text);
 
-    // The bodies' own lengths, not the previews': `length_delta` read zero for
-    // any two binary responses past the 64 KiB cap.
+    // Measure full bodies, not previews.
     let bytes = (
         a_body.len().unwrap_or_default(),
         b_body.len().unwrap_or_default(),

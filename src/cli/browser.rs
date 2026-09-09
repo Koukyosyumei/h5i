@@ -833,6 +833,9 @@ pub enum BrowserCommands {
         limit: Option<u64>,
         #[arg(long)]
         json: bool,
+        /// Emit the human-readable view (the default).
+        #[arg(long, conflicts_with = "json")]
+        human: bool,
     },
 
     /// Run a multi-step flow: send, extract, send again with what was found.
@@ -896,6 +899,11 @@ pub enum BrowserCommands {
         ///
         /// The value is everything after the first `=`, so a payload full of
         /// `=` needs no escaping.
+        ///
+        /// A `json.` value is typed the way it reads: `json.id=99` is a number,
+        /// `json.active=true` a boolean, `json.role=admin` a string. Quote it to
+        /// insist on a string — `json.password="0e830400451993494058024219903391"`
+        /// sends a magic hash rather than the number zero.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// Set one part of it from a file: `multipart.userfile=./payload.jpg`.
@@ -986,6 +994,12 @@ pub enum BrowserCommands {
         /// `Host` and `Content-Length`; use `--raw-request` to control framing.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
+        /// Preserve header-name casing while retaining edits and cookies.
+        #[arg(long = "raw-headers")]
+        raw_headers: bool,
+        /// Send once per line, as `query.id=./ids.txt`, after shared edits.
+        #[arg(long = "set-each", value_name = "TARGET=PATH")]
+        set_each: Option<String>,
         /// Send a complete request unchanged from this file; `-` reads stdin.
         ///
         /// The stored URL supplies the authority for policy checks and dialing.
@@ -1482,6 +1496,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             denied_only,
             limit,
             json,
+            human: _,
         } => {
             let mut argv = vec!["requests".to_string()];
             let mut flag = |name: &str, value: Option<String>| {
@@ -1537,6 +1552,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             as_session,
             keep_credentials,
             raw_target,
+            raw_headers,
+            set_each,
             raw_request,
             session,
             json,
@@ -1605,6 +1622,42 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             if let Some(target) = raw_target {
                 argv.push("--raw-target".into());
                 argv.push(target);
+            }
+            if raw_headers {
+                argv.push("--raw-headers".into());
+            }
+            if let Some(spec) = set_each {
+                let (target, path) = spec.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--set-each takes `target=path`, as `query.id=./ids.txt`: the target to \
+                         walk and the file of values to walk it over"
+                    )
+                })?;
+                let text = std::fs::read_to_string(path).map_err(|e| {
+                    anyhow::anyhow!("--set-each: {path} could not be read: {e}")
+                })?;
+                // Preserve empty values; drop only the final newline.
+                let mut values: Vec<&str> = text.split('\n').collect();
+                if values.last() == Some(&"") {
+                    values.pop();
+                }
+                if values.is_empty() {
+                    anyhow::bail!("--set-each: {path} has no values in it");
+                }
+                // Match the `--repeat` ceiling.
+                if values.len() > 1000 {
+                    anyhow::bail!(
+                        "--set-each: {path} has {} values, and 1000 is the most one walk sends. \
+                         Split the file",
+                        values.len()
+                    );
+                }
+                argv.push("--set-each".into());
+                argv.push(target.to_string());
+                for value in values {
+                    argv.push("--each-value".into());
+                    argv.push(value.trim_end_matches('\r').to_string());
+                }
             }
             // Encode arbitrary request bytes for the JSON control channel.
             if let Some(path) = raw_request {

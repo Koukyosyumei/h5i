@@ -754,6 +754,15 @@ enum SessionVerb {
         /// Write a complete base64-encoded request unchanged.
         #[arg(long = "raw-request", value_name = "BASE64")]
         raw_request: Option<String>,
+        /// Preserve header-name casing.
+        #[arg(long = "raw-headers")]
+        raw_headers: bool,
+        /// Send once per target value.
+        #[arg(long = "set-each", value_name = "TARGET")]
+        set_each: Option<String>,
+        /// Ordered `--set-each` values.
+        #[arg(long = "each-value", value_name = "VALUE")]
+        each_values: Vec<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1669,6 +1678,9 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             request,
             raw_target,
             raw_request,
+            raw_headers,
+            set_each,
+            each_values,
             at,
         } => {
             let composed: Option<serde_json::Value> = match request {
@@ -1714,6 +1726,11 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "request": composed,
                     "raw_target": raw_target,
                     "raw_request": raw_request,
+                    "raw_headers": raw_headers,
+                    "each": set_each.as_ref().map(|target| serde_json::json!({
+                        "target": target,
+                        "values": each_values,
+                    })),
                 }),
             )
         }
