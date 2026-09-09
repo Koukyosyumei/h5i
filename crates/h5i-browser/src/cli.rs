@@ -754,13 +754,13 @@ enum SessionVerb {
         /// Write a complete base64-encoded request unchanged.
         #[arg(long = "raw-request", value_name = "BASE64")]
         raw_request: Option<String>,
-        /// Write the header names in the case they were given.
+        /// Preserve header-name casing.
         #[arg(long = "raw-headers")]
         raw_headers: bool,
-        /// Walk a target over these values, one send each.
+        /// Send once per target value.
         #[arg(long = "set-each", value_name = "TARGET")]
         set_each: Option<String>,
-        /// The values for `--set-each`, in order.
+        /// Ordered `--set-each` values.
         #[arg(long = "each-value", value_name = "VALUE")]
         each_values: Vec<String>,
         #[command(flatten)]

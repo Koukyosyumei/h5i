@@ -833,8 +833,7 @@ pub enum BrowserCommands {
         limit: Option<u64>,
         #[arg(long)]
         json: bool,
-        /// Emit the human-readable view. This is the default and is accepted
-        /// for symmetry with `h5i websec requests`.
+        /// Emit the human-readable view (the default).
         #[arg(long, conflicts_with = "json")]
         human: bool,
     },
@@ -995,32 +994,10 @@ pub enum BrowserCommands {
         /// `Host` and `Content-Length`; use `--raw-request` to control framing.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
-        /// Write the header names in the case they were given.
-        ///
-        /// The framed sender is an HTTP client and lower-cases header names, which is
-        /// what HTTP/2 requires and what every library does. A proxy that looks a
-        /// header up by exact string does not care: it finds `Content-Length` and
-        /// misses `content-length`. This sends the request the edits produced down the
-        /// raw path instead, where the names go out as written — so `--set` still
-        /// applies, the cookies still travel, and the case survives.
-        ///
-        /// The middle ground between `--set` and `--raw-request`, which reaches the
-        /// wire byte for byte and makes you write every byte.
+        /// Preserve header-name casing while retaining edits and cookies.
         #[arg(long = "raw-headers")]
         raw_headers: bool,
-        /// Walk one target over a list of values: `query.id=./ids.txt` sends
-        /// once per line of the file.
-        ///
-        /// Enumeration in the engine rather than in a shell loop, for the same
-        /// reason `--repeat` is: a loop outside pays process startup per
-        /// request, and its results come back as N separate documents that
-        /// nothing correlates. Here each send is one sample, carrying the value
-        /// that produced it beside its status and its clock.
-        ///
-        /// The values are lines rather than a comma-separated list because the
-        /// things worth walking are payloads, and a payload with a comma in it
-        /// should not become an escaping puzzle. Applied on top of every
-        /// `--set`, so the walked target composes with the rest of the request.
+        /// Send once per line, as `query.id=./ids.txt`, after shared edits.
         #[arg(long = "set-each", value_name = "TARGET=PATH")]
         set_each: Option<String>,
         /// Send a complete request unchanged from this file; `-` reads stdin.
@@ -1659,9 +1636,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 let text = std::fs::read_to_string(path).map_err(|e| {
                     anyhow::anyhow!("--set-each: {path} could not be read: {e}")
                 })?;
-                // Every line is a value, including one that is empty in the
-                // middle: an empty parameter is a case worth testing. Only the
-                // newline the file ends with is dropped.
+                // Preserve empty values; drop only the final newline.
                 let mut values: Vec<&str> = text.split('\n').collect();
                 if values.last() == Some(&"") {
                     values.pop();
@@ -1669,10 +1644,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 if values.is_empty() {
                     anyhow::bail!("--set-each: {path} has no values in it");
                 }
-                // The same ceiling `--repeat` has: a walk of a million lines is
-                // asking one verb to spend the session's whole budget, and a
-                // budget refusing halfway is a worse answer than a limit said
-                // up front.
+                // Match the `--repeat` ceiling.
                 if values.len() > 1000 {
                     anyhow::bail!(
                         "--set-each: {path} has {} values, and 1000 is the most one walk sends. \

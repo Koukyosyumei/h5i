@@ -2343,8 +2343,7 @@ impl LocalBroker {
         let applied = crate::edits::apply(&mut editable, edits, create)
             .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
 
-        // A walk varies one target per send, and a raw send is bytes that were
-        // written once. Refused rather than silently walking nothing.
+        // Raw requests cannot vary per send.
         if plan.each.is_some()
             && (plan.raw_request.is_some() || plan.raw_target.is_some() || plan.raw_headers)
         {
@@ -2386,10 +2385,7 @@ impl LocalBroker {
         }
 
         let follow = plan.no_follow.then_some(0);
-        // A replay is the agent exercising its own authority over a URL it
-        // named, exactly like a navigation, and not a page reaching for a
-        // subresource. That is what decides the policy question and what keeps
-        // the same-origin rules out of it: there is no document here.
+        // Replays are agent requests, not document subresources.
         let to_fetch = |one: &crate::edits::Editable| crate::broker::Fetch {
             url: one.url.clone(),
             initiator: Initiator::Replay,
@@ -2402,12 +2398,7 @@ impl LocalBroker {
             cors: None,
         };
 
-        // One send per value, each with the walked target set to its own.
-        //
-        // The edits given on the command line have already been applied, so
-        // each value is one more edit on top of them — which means the walked
-        // target can be any target, and a walk of `json.role` composes with a
-        // header the caller pinned first.
+        // Apply each walked value after the shared edits.
         if let Some(each) = &plan.each {
             let mut samples = Vec::with_capacity(each.values.len());
             let mut last: Option<(FetchOutcome, crate::broker::Sent)> = None;
@@ -2477,8 +2468,7 @@ impl LocalBroker {
     }
 }
 
-/// The origin-form request-target of a URL: path, and the query when there is
-/// one.
+/// Return a URL's origin-form request target.
 fn request_target(url: &Url) -> String {
     let path = url.path();
     let path = if path.is_empty() { "/" } else { path };
@@ -2510,8 +2500,7 @@ fn build_raw_request(
     if let Some(bytes) = &plan.raw_request {
         return parse_raw_request(editable.url.clone(), bytes.clone());
     }
-    // `--raw-headers` alone is this request, sent as itself: the target it
-    // already has, written down the path that does not rewrite header names.
+    // `--raw-headers` preserves the existing target.
     let own;
     let target = match plan.raw_target.as_deref() {
         Some(target) => target,
@@ -3598,7 +3587,7 @@ mod capture_wire_tests {
         );
     }
 
-    /// Start a server that answers `count` requests, echoing each request line.
+    /// Echo `count` request lines.
     fn echo_request_lines(count: usize) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -3630,7 +3619,7 @@ mod capture_wire_tests {
         port
     }
 
-    /// Start a server that echoes the whole request head, header case included.
+    /// Echo a complete request head.
     fn echo_whole_request() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -3721,8 +3710,7 @@ mod capture_wire_tests {
         assert_eq!(sent.outcome.status, Some(200));
     }
 
-    /// The whole point of `--raw-headers`: a proxy that looks a header up by
-    /// exact string finds `Content-Length` and misses `content-length`.
+    /// `--raw-headers` preserves header-name casing.
     #[test]
     fn raw_headers_writes_the_names_in_the_case_they_were_given() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
@@ -3765,7 +3753,7 @@ mod capture_wire_tests {
         );
     }
 
-    /// A walk is one send per value, and each sample says which value it was.
+    /// A walk returns one labeled sample per value.
     #[test]
     fn set_each_sends_once_per_value_and_names_them() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
@@ -3791,8 +3779,7 @@ mod capture_wire_tests {
                 raw_headers: false,
                 each: Some(crate::broker::Each {
                     target: "query.id".to_string(),
-                    // A value with a comma in it, because a list of payloads
-                    // is exactly where a comma-separated argument breaks.
+                    // Commas remain part of a value.
                     values: vec!["1".into(), "2".into(), "a,b".into()],
                 }),
             },
@@ -3815,7 +3802,7 @@ mod capture_wire_tests {
         }
     }
 
-    /// A walk edits the request; a raw send already decided its bytes.
+    /// Raw requests cannot be walked.
     #[test]
     fn set_each_and_a_raw_send_are_refused_together() {
         let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)

@@ -119,13 +119,7 @@ pub struct Applied {
     /// The new value, as text where it is text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
-    /// What the request now carries, when that is not what `value` says.
-    ///
-    /// A `json.` edit types its value the way it reads, so
-    /// `json.password=0e830400451993494058024219903391` is a JSON number and
-    /// reaches the wire as `0.0`. Reporting only the text that was typed makes
-    /// a receipt that describes a request nobody sent — so when the encoded
-    /// form differs from the text, it is named here.
+    /// Encoded value when it differs from `value`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoded: Option<String>,
     /// What was there before, when there was something and it was text.
@@ -723,12 +717,7 @@ fn apply_one(request: &mut Editable, edit: &Edit, create: bool) -> Result<Applie
                 let parsed = serde_json::from_slice::<serde_json::Value>(&value)
                     .unwrap_or_else(|_| serde_json::Value::String(typed.clone()));
                 refuse_a_number_that_loses_its_digits(&target, &typed, &parsed)?;
-                // The receipt reports the text that was typed, which is the
-                // right thing to read back for the overwhelmingly common edit
-                // and a lie for the rest: `json.n=0e83…` is a JSON number that
-                // reaches the wire as `0.0`. Name the encoded form whenever it
-                // reads differently, so the receipt describes the request that
-                // was actually sent.
+                // Record coercions so the receipt matches the sent body.
                 if render_json(&parsed) != typed {
                     encoded = Some(parsed.to_string());
                 }
@@ -1017,18 +1006,7 @@ fn missing(target: &str, kind: &str, have: &[(String, String)]) -> EditError {
     )
 }
 
-/// Refuse an integer that a JSON number cannot hold without rewriting it.
-///
-/// `json.` types a value the way it reads, and for almost everything the round
-/// trip is exact: `99` is 99, `true` is a boolean, `1.50` and `1.5` are the
-/// same number written twice. Integers are the exception. A JSON number is a
-/// double once it is past `2^53`, so `json.id=123456789012345678901234567890`
-/// reaches the wire as `1.2345678901234568e29` — a different number, silently,
-/// in the field most likely to be an identifier or a nonce.
-///
-/// Only integers, and only when the digits are actually lost. A caller who
-/// wanted the text sends it quoted; a caller who wanted a number that large has
-/// to write the body, because this one cannot carry it.
+/// Refuse integer literals that JSON parsing would round.
 fn refuse_a_number_that_loses_its_digits(
     target: &str,
     typed: &str,
@@ -1037,15 +1015,13 @@ fn refuse_a_number_that_loses_its_digits(
     let serde_json::Value::Number(number) = parsed else {
         return Ok(());
     };
-    // An integer literal: no fraction, no exponent. `0e83…` is a number written
-    // with an exponent and is exactly zero, which is not a loss.
+    // Fractions and exponents are not integer literals.
     let digits = typed.trim();
     let unsigned = digits.strip_prefix('-').unwrap_or(digits);
     if unsigned.is_empty() || !unsigned.bytes().all(|b| b.is_ascii_digit()) {
         return Ok(());
     }
-    // `serde_json` holds what it can as an integer; falling to a float is the
-    // moment the digits stopped fitting.
+    // Falling back to a float loses integer precision.
     if number.is_i64() || number.is_u64() {
         return Ok(());
     }
@@ -1252,8 +1228,7 @@ mod tests {
         assert_eq!(body["active"], true);
     }
 
-    /// A receipt that names the text typed and not the value sent describes a
-    /// request nobody made.
+    /// Receipts include coerced values.
     #[test]
     fn a_json_value_that_reads_as_a_number_says_what_it_became() {
         let mut request = Editable {
@@ -1281,7 +1256,7 @@ mod tests {
         assert_eq!(request.body, br#"{"password":0.0}"#.to_vec());
     }
 
-    /// The ordinary edit is not made noisier by the fix above.
+    /// Unchanged encodings stay omitted.
     #[test]
     fn a_json_value_that_survives_as_written_says_nothing_extra() {
         let mut request = Editable {
@@ -1301,7 +1276,7 @@ mod tests {
         }
     }
 
-    /// An identifier past 2^53 is a different identifier once it is a double.
+    /// Oversized integers are refused.
     #[test]
     fn an_integer_too_big_for_a_double_is_refused_rather_than_rounded() {
         let mut request = Editable {
@@ -1322,7 +1297,7 @@ mod tests {
         assert_eq!(request.body, br#"{"id":1}"#.to_vec(), "and the body is untouched");
     }
 
-    /// The largest integers a JSON number holds exactly are still numbers.
+    /// Exact integers remain numbers.
     #[test]
     fn an_integer_a_double_can_hold_is_still_a_number() {
         let mut request = Editable {
@@ -1335,7 +1310,7 @@ mod tests {
         assert_eq!(request.body, br#"{"id":9007199254740993}"#.to_vec());
     }
 
-    /// The escape from every one of the rules above.
+    /// Quoting preserves large values as strings.
     #[test]
     fn a_quoted_json_value_is_the_string_it_was_written_as() {
         let mut request = Editable {

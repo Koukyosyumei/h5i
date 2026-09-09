@@ -96,12 +96,7 @@ enum Verb {
         /// is bytes and bytes inside a JSON string are no longer the message.
         #[arg(long)]
         raw: bool,
-        /// Write the body to this file, exactly as it came back. `-` is
-        /// standard output, for a body that is going into a pipe.
-        ///
-        /// The way to read a body that is not text. `--raw` says so and stops,
-        /// because a git object or a PNG inside a terminal is neither; this
-        /// hands over the bytes.
+        /// Write the exact body to a file, or to stdout with `-`.
         #[arg(long = "body-to", value_name = "PATH")]
         body_to: Option<String>,
     },
@@ -111,16 +106,9 @@ enum Verb {
         /// `req_42`, or just `42`.
         #[arg(value_name = "ID")]
         id: String,
-        /// `method=POST`, `path=/admin`, `query.id=456`,
-        /// `header.X-Real-IP=1.2.3.4`, `json.user.role=admin`, or
-        /// `multipart.file.filename=shell.php`. Repeatable, applied in order.
-        ///
-        /// A `json.` value is typed the way it reads: `json.id=99` is a number,
-        /// `json.active=true` a boolean, `json.role=admin` a string. Dots walk
-        /// nested objects and numeric segments index existing arrays. Quote a
-        /// string that looks numeric: `--set 'json.jsonrpc="2.0"'` sends the
-        /// JSON-RPC version as a string rather than the number 2. The outer
-        /// quotes preserve the inner JSON quotes through a shell.
+        /// Set a request field; repeatable and ordered. JSON values are typed,
+        /// nested by dots, and arrays use numeric segments. Preserve numeric
+        /// strings with shell-safe quotes: `--set 'json.jsonrpc="2.0"'`.
         #[arg(long = "set", value_name = "TARGET=VALUE")]
         set: Vec<String>,
         /// `multipart.userfile=./payload.jpg`: the value is the file's bytes.
@@ -164,38 +152,17 @@ enum Verb {
         /// written byte for byte, through the same policy and receipts.
         #[arg(long = "raw-target", value_name = "TARGET")]
         raw_target: Option<String>,
-        /// Write the header names in the case they were given.
-        ///
-        /// The framed sender is an HTTP client and lower-cases header names, which is
-        /// what HTTP/2 requires and what every library does. A proxy that looks a
-        /// header up by exact string does not care: it finds `Content-Length` and
-        /// misses `content-length`. This sends the request the edits produced down the
-        /// raw path instead, where the names go out as written — so `--set` still
-        /// applies, the cookies still travel, and the case survives.
-        ///
-        /// The middle ground between `--set` and `--raw-request`, which reaches the
-        /// wire byte for byte and makes you write every byte.
+        /// Preserve header-name casing while retaining edits and cookies.
         #[arg(long = "raw-headers")]
         raw_headers: bool,
-        /// Walk one target over a list of values: `query.id=./ids.txt` sends
-        /// once per line of the file.
-        ///
-        /// Enumeration in the engine rather than in a shell loop. Each send
-        /// comes back as one sample carrying the value that produced it beside
-        /// its status and its clock, so a walk of two hundred ids is one result
-        /// to read rather than two hundred.
-        ///
-        /// Values are lines, not a comma-separated list: the things worth
-        /// walking are payloads, and a payload with a comma in it should not
-        /// become an escaping puzzle.
+        /// Send once per line, as `query.id=./ids.txt`.
         #[arg(long = "set-each", value_name = "TARGET=PATH")]
         set_each: Option<String>,
         /// Send a whole request, written byte for byte from this file.
         ///
         /// The general form of `--raw-target`, framing headers included and
         /// recomputed by nothing, for request smuggling. `-` reads standard
-        /// input. It is also the escape hatch for bodies whose structure
-        /// cannot be expressed with `--set`.
+        /// input. Use it when `--set` cannot express the body.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
     },
@@ -247,16 +214,7 @@ enum Verb {
 
     /// Run a multi-step flow with bindings between the steps.
     ///
-    /// What a CSRF-protected application needs, and what enumeration needs.
-    /// A single `replay` cannot test an endpoint whose token is minted by the
-    /// request before it, and hand-carrying that token between two shell
-    /// commands is where the mistakes happen. Steps run in order and stop at
-    /// the first failure, because a step acting on a token the step before it
-    /// failed to produce is acting on a state the file never described.
-    ///
-    /// The file is JSON. Each step names a stored request to send again, the
-    /// edits to make to it, and what to bind out of the response for the steps
-    /// after it:
+    /// Steps run in order, bind response values, and stop on failure:
     ///
     /// ```json
     /// {"steps": [
@@ -268,14 +226,10 @@ enum Verb {
         /// The sequence file.
         #[arg(value_name = "FILE")]
         file: String,
-        /// Bind a name before the first step, as `name=value`. Repeatable.
-        ///
-        /// For the value that belongs to the run rather than to the file: a
-        /// host, an account, the one identifier being walked.
+        /// Set an initial `name=value` binding; repeatable.
         #[arg(long = "var", value_name = "NAME=VALUE")]
         vars: Vec<String>,
-        /// Run every step even after one fails, to read a whole file's
-        /// failures at once.
+        /// Continue after failed steps.
         #[arg(long)]
         keep_going: bool,
     },

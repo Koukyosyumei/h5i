@@ -139,9 +139,7 @@ pub fn show(
                 "message {seq}'s body is not in the store, so there is nothing to write"
             )
         })?;
-        // `-` is standard output, the way it is for every other tool that takes
-        // a path — `replay --raw-request -` already reads stdin that way, and a
-        // body that can only land in a file cannot be piped into anything.
+        // `-` writes the body to stdout.
         let to_stdout = path.as_os_str() == "-";
         if to_stdout {
             use std::io::Write;
@@ -174,11 +172,7 @@ pub fn show(
             note["truncated"] = json!(true);
         }
         wrote = Some(note);
-        // Anything else on stdout would be appended to the bytes and stop them
-        // being the bytes, so when they went there the note goes to stderr and
-        // the verb is done: `show --body-to -` is a byte channel and nothing
-        // else. A truncated body still has to say so, which is why the note is
-        // not simply dropped.
+        // Keep stdout byte-exact; send truncation notes to stderr.
         if to_stdout {
             if let Some(had) = of_bytes {
                 eprintln!(
@@ -423,19 +417,14 @@ pub fn compare(left: (&StoredResponse, &Text), right: (&StoredResponse, &Text)) 
         }
     }
 
-    // Two bodies, or none of this is a comparison. `Text::Missing` reads as the
-    // empty string, which made "neither body was kept" indistinguishable from
-    // "both bodies were empty".
-    // Whole bodies, or none of this is a comparison: an unstored one reads as
-    // empty and a previewed one as its own head.
+    // Compare only complete bodies.
     let bodies_compared = a_body.whole() && b_body.whole();
     let left_text = a_body.as_str();
     let right_text = b_body.as_str();
     let (json_changes, json_total, line_changes, line_total) =
         body_changes(a, b, left_text, right_text);
 
-    // The bodies' own lengths, not the previews': `length_delta` read zero for
-    // any two binary responses past the 64 KiB cap.
+    // Measure full bodies, not previews.
     let bytes = (
         a_body.len().unwrap_or_default(),
         b_body.len().unwrap_or_default(),

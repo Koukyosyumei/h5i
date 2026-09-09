@@ -1895,9 +1895,7 @@ fn control_verb_inner(
                 ),
                 Ok(edited) => {
                     let outcome = &edited.outcome;
-                    // A replay should answer the common "what changed?" question
-                    // without requiring a second process. Keep the full bytes in
-                    // `show --raw`; this bounded, lossy preview is for triage.
+                    // Include bounded previews; `show --raw` retains full bytes.
                     let body_preview = crate::broker::body_preview(&outcome.body);
                     let mut samples = serde_json::to_value(&edited.samples)
                         .expect("timing samples serialize");
@@ -2748,11 +2746,7 @@ fn control_verb_inner(
             // make it. Three numbers, not the log they came from.
             let summary = session.factory.broker().log_summary();
 
-            // Only advertise a message id when the capture store can actually
-            // back `websec show`. A receipt also exists for denied and failed
-            // attempts, but those rows deliberately have no stored message.
-            // If the store reports any write error, be conservative: an id
-            // that might fail is worse than an omitted one.
+            // Advertise only IDs backed by a healthy capture store.
             let capture_healthy = session
                 .factory
                 .broker()
