@@ -11,12 +11,20 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">A Security-First Browser for AI Agents</h1>
+<h1 align="center">The Red-Teaming Browser for AI Agents</h1>
 
-**h5i** (pronounced *high-five*) is a lightweight browser for AI agents to browse, scrape, test, and automate the web. It reduces the risks of giving agents web access through network policies, sandboxing, credential isolation, and auditable sessions. The same controls let agents inspect, edit, replay, and compare HTTP traffic for automated web security testing, CTFs, and authorized red teaming.
+**h5i** (pronounced *high-five*) is a lightweight browser built for AI agents to test web applications. It combines page automation with direct control over HTTP traffic, letting agents capture, inspect, modify, replay, and compare requests through one interface. Sandboxing, network policies, credential isolation, and auditable sessions keep autonomous testing contained and within scope.
 
 <table align="center">
   <tr>
+    <td align="center">
+      <strong>Agent-native red teaming</strong><br>
+      <sub>Page automation + direct HTTP control</sub>
+    </td>
+    <td align="center">
+      <strong>Contained & auditable</strong><br>
+      <sub>Sandboxing, network policies & session records</sub>
+    </td>
     <td align="center">
       <strong>Pure Rust</strong><br>
       <sub>No Chromium or V8</sub>
@@ -25,18 +33,10 @@
       <strong>~3× faster, ~86% less memory</strong><br>
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
-    <td align="center">
-      <strong>Safer browsing for AI</strong><br>
-      <sub>Sandboxing & audit</sub>
-    </td>
-    <td align="center">
-      <strong>Web security testing</strong><br>
-      <sub>Capture, edit, replay & compare HTTP traffic</sub>
-    </td>
   </tr>
 </table>
 
-**Protect agents from the web. Use agents to test the web.**
+**Let agents test like professional hackers. Keep every action contained and auditable.**
 
 ```bash
 # Browse, scrape, and automate.
