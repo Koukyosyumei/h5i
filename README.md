@@ -26,10 +26,6 @@
       <sub>Sandboxing, network policies & session records</sub>
     </td>
     <td align="center">
-      <strong>Pure Rust</strong><br>
-      <sub>No Chromium or V8</sub>
-    </td>
-    <td align="center">
       <strong>~3× faster, ~86% less memory</strong><br>
       <sub><a href="./docs/design/design-browser.md">In our benchmarks</a></sub>
     </td>
