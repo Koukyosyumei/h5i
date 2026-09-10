@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: A Security-First Browser for AI Agents</title>
-  <meta name="description" content="h5i is a security-first browser for AI agents. Browse, scrape, and automate the web under your policies, with sandboxing, credential isolation, and an auditable record of every request. The same browser inspects, replays, and compares HTTP traffic for web security testing.">
-  <meta name="keywords" content="browser for ai agents, agent browser, security-first browser, web scraping for agents, browser automation, auditable browser, headless browser for agents, sandboxed browser, agentic browsing, web agent security, prompt injection page content, egress allowlist, browser session isolation, human takeover browser, landlock seccomp sandbox, microvm isolation, web security testing, http request replay, traffic capture, ctf, authorized pentesting, claude code, codex, h5i">
+  <title>h5i: The Red-Teaming Browser for AI Agents</title>
+  <meta name="description" content="h5i is an open-source red-teaming browser for AI agents. Test web apps with direct HTTP control, configurable sandboxing, and auditable sessions. Built in Rust.">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -21,8 +20,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: A Security-First Browser for AI Agents">
-  <meta property="og:description" content="h5i lets agents browse, scrape, and automate the web under your policies, and inspect web apps through the same browser. It reads pages ~3× faster with ~86% less peak memory than headless Chromium. Every browser action and network request is recorded for review.">
+  <meta property="og:title" content="h5i: The Red-Teaming Browser for AI Agents">
+  <meta property="og:description" content="Give AI agents page automation and direct HTTP control for authorized web red teaming. Configure sandbox and network limits, then review the session. Pure Rust, no Chromium or V8.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta property="og:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
@@ -30,8 +29,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: A Security-First Browser for AI Agents">
-  <meta name="twitter:description" content="h5i lets agents browse, scrape, and automate the web under your policies, and inspect web apps through the same browser. It reads pages ~3× faster with ~86% less peak memory than headless Chromium. Every browser action and network request is recorded for review.">
+  <meta name="twitter:title" content="h5i: The Red-Teaming Browser for AI Agents">
+  <meta name="twitter:description" content="Give AI agents page automation and direct HTTP control for authorized web red teaming. Configure sandbox and network limits, then review the session. Pure Rust, no Chromium or V8.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
 
@@ -61,7 +60,7 @@
       "name": "h5i",
       "alternateName": "high-five",
       "url": "https://h5i.dev/",
-      "description": "A security-first browser for AI agents to browse, scrape, test, and automate the web. Network policies, sandboxing, credential isolation, and auditable sessions reduce the risk of giving an agent web access, and the same controls let an agent inspect, edit, replay, and compare HTTP traffic for web security testing.",
+      "description": "The red-teaming browser for AI agents. h5i combines page automation and direct HTTP control for authorized web application testing, with configurable sandboxing, network policies, and auditable sessions.",
       "publisher": {
         "@id": "https://h5i.dev/#org"
       },
@@ -73,42 +72,33 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Browser and web security testing tool for AI agents",
+      "applicationSubCategory": "Red-teaming browser for AI agents",
       "operatingSystem": "Linux, macOS, Windows (WSL2)",
-      "description": "A security-first browser for AI agents, written in Rust with no Chromium or V8. An agent drives a session by id and reads the page as a compact outline of @ref handles, so it can browse, scrape, and automate the web; in our benchmarks it reads pages about 3 times faster with about 86% less peak memory than headless Chromium. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. One flag places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request. With capture on, h5i websec turns the traffic the browser generated into a workbench: inspect, edit, replay, compare, and assert on requests and responses for authorized web security testing, CTFs, and red teaming.",
+      "description": "h5i is an open-source red-teaming browser for AI agents, written in Rust without Chromium or V8. It combines page automation with HTTP inspection, editing, replay, and response comparison through the websec plugin. Configurable sandboxing and network policies restrict access during authorized web application testing, while session records support review.",
       "featureList": [
-        "A browser an agent drives by session id: open, snapshot, click, type, take, audit, close",
-        "Written in Rust with no Chromium or V8: about 3x faster page reads with about 86% less peak memory in our benchmarks",
-        "Pages returned as a compact outline with @ref handles instead of raw HTML or screenshots",
-        "Policy first, record second, wire third: a fetch that cannot be recorded is refused",
-        "A fail-closed request log, so a request that is not in the log did not happen",
-        "Denials recorded with their reason, so the log shows what was attempted and not only what succeeded",
-        "Page content fenced as untrusted data, with escape sequences never reaching the terminal",
-        "Human takeover of a live session, enforced as a boundary once the session is boxed",
-        "A credential broker that uses browser, model and SSH credentials without returning them to the agent",
-        "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
-        "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
-        "A disposable box holding the code, the toolchain, the dev server and the browser session",
-        "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt",
-        "Full HTTP capture of a browser session: headers and bodies, both directions, kept out of the audit log",
-        "An HTTP workbench, h5i websec: inspect, edit, replay and compare the requests and responses the browser made",
-        "Assertions over stored responses, so captured traffic becomes a repeatable test for CTFs and authorized pentesting"
+        "Page automation and compact snapshots with @ref handles for AI agents",
+        "HTTP capture, inspection, editing, replay, and response comparison through the websec plugin",
+        "Response assertions and multi-step flows for repeatable security tests",
+        "Configurable sandboxing for the browser or the entire agent workflow",
+        "Network policies that restrict destinations and record denied requests",
+        "Auditable browser actions and network requests",
+        "Credential isolation and human takeover for sensitive steps",
+        "Pure Rust, no Chromium or V8",
+        "About 3x faster reads with about 86% less peak memory than headless Chromium on simple websites in our benchmarks"
       ],
-      "keywords": "browser for AI agents, agent browser, security-first browser, web scraping for agents, browser automation, auditable browser, headless browser for AI agents, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, web security testing, HTTP capture and replay, CTF, authorized penetration testing, Claude Code, Codex",
+      "keywords": "AI agents, red teaming, web application security testing, headless browser, HTTP replay, sandboxing, Rust",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
-      "installUrl": "https://github.com/h5i-dev/h5i#install",
+      "installUrl": "https://h5i.dev/#quickstart",
       "softwareHelp": "https://h5i.dev/manual/",
       "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
-      "programmingLanguage": "Rust",
       "isAccessibleForFree": true,
       "sameAs": [
         "https://github.com/h5i-dev/h5i"
       ],
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "author": {
-        "@type": "Person",
-        "name": "h5i-dev"
+        "@id": "https://h5i.dev/#org"
       },
       "publisher": {
         "@id": "https://h5i.dev/#org"
@@ -123,7 +113,8 @@
       "@type": "WebPage",
       "@id": "https://h5i.dev/#webpage",
       "url": "https://h5i.dev/",
-      "name": "h5i: A Security-First Browser for AI Agents",
+      "name": "h5i: The Red-Teaming Browser for AI Agents",
+      "description": "h5i is an open-source red-teaming browser for AI agents. Test web apps with direct HTTP control, configurable sandboxing, and auditable sessions. Built in Rust.",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -161,7 +152,7 @@
           "name": "What is h5i?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i is a fast, lightweight browser for AI agents to browse, scrape, test, and automate the web, with built-in auditing and configurable sandboxing. The same browser can inspect, edit, replay, and compare the HTTP traffic it generated. It runs locally and is open source."
+            "text": "h5i is an open-source red-teaming browser built for AI agents. It combines page automation with direct HTTP control through the websec plugin, configurable sandboxing, and auditable sessions. It runs locally and is written in Rust without Chromium or V8."
           }
         },
         {
@@ -169,15 +160,7 @@
           "name": "Why use h5i instead of Playwright or Puppeteer?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can h5i test web apps for security issues?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. Open a session with capture on and h5i websec works on the traffic the browser generated: list the requests, inspect a message with its headers and body, edit and replay it, compare two responses, and assert conditions to build repeatable tests. It is meant for CTFs, security research, and authorized pentesting."
+            "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when your AI agent needs page automation and direct HTTP testing through one interface, with configurable sandboxing, network policies, and a reviewable session record."
           }
         },
         {
@@ -193,7 +176,7 @@
           "name": "Is h5i sandboxed by default?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM."
+            "text": "The browser uses lightweight process isolation when available. To restrict a red-teaming agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy. Available options include supervised isolation, containers, and microVMs; enforcement depends on the selected tier and host support."
           }
         },
         {
@@ -201,7 +184,7 @@
           "name": "Can h5i prevent prompt injection?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing."
+            "text": "No. A tested application can still mislead an agent. h5i treats page content as untrusted, and configured network and filesystem restrictions can limit what the agent reaches. These controls reduce the impact; they do not guarantee safe actions on an allowed target."
           }
         },
         {
@@ -264,21 +247,20 @@
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
-    <div class="hero-badge">Browse and automate &middot; Test web apps &middot; Control and audit every session</div>
-    <h1 class="hero-title"><em>A Security-First Browser</em><br>for AI Agents</h1>
+    <div class="hero-badge">Web red teaming &middot; Direct HTTP control &middot; Sandboxed execution</div>
+    <h1 class="hero-title"><em>The Red-Teaming Browser</em><br>for AI Agents</h1>
     <p class="hero-sub">
-      h5i lets agents browse, scrape, and automate the web under your policies, and inspect
-      web apps through the same browser. It reads pages
-      <strong>~3&times; faster</strong> with <strong>~86% less peak memory</strong> than headless Chromium.
-      Every browser action and network request is recorded for review.
+      Give AI agents <strong>page automation and direct HTTP control</strong> to test web applications
+      from an attacker's perspective. h5i lets them inspect, edit, replay, and compare traffic
+      through one interface. Set sandbox and network limits, then review what they did.
     </p>
     <div class="hero-install" id="quickstart">
-      <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh</code>
+      <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec</code>
       <button class="copy-btn" type="button">copy</button>
     </div>
     <div class="hero-meta">
-      Apache 2.0 · one Rust binary · no daemon, no SaaS ·
-      <a href="/manual/#h5i-browser">read the manual</a> · <a href="https://github.com/h5i-dev/h5i">source</a>
+      Apache 2.0 · Pure Rust, no Chromium or V8 · browser + websec plugin ·
+      <a href="/manual/#h5i-websec">read the manual</a> · <a href="https://github.com/h5i-dev/h5i">source</a>
     </div>
   </div>
 </section>
@@ -307,138 +289,47 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">Giving an AI agent a browser changes web security.</h2>
-      <p class="section-sub">A browser has always played two security roles. It protects its user from
-        untrusted websites, while also giving security testers a way to inspect and manipulate those
-        websites. Giving the browser to an AI agent makes both roles more
-        demanding.</p>
+      <h2 class="section-title">Automating red teaming safely is hard.</h2>
+      <p class="section-sub">Many browsers and red-teaming tools were built for people, not AI agents.
+        Automating them adds complexity, while controlling and auditing the agent's actions remains difficult.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">Web content becomes agent input</div>
-        <div class="feat-desc">A prompt injection can redirect an agent from its task, misuse a logged-in
-          session, submit unsafe forms, or send data somewhere it should not.</div>
+        <div class="feat-name">Existing tools for human are too slow</div>
+        <div class="feat-desc">Complex GUIs require agents to interpret screens and navigate menus.
+          Full browser engines also add startup time and memory overhead to automated testing.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">The browser carries the agent's authority</div>
-        <div class="feat-desc">Through the browser, an agent may reach credentials, source code, internal
-          services, and applications running on localhost. One unsafe action can expose them to the
-          web.</div>
+        <div class="feat-name">Manual red-teaming workflows are hard to automate</div>
+        <div class="feat-desc">Tools designed for human operators often require manual setup and switching
+          between browser, proxy, and request editor. Connecting these steps for an AI agent takes extra work.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Page automation hides security-relevant traffic</div>
-        <div class="feat-desc">Finding vulnerabilities often requires inspecting, editing, replaying, and
-          comparing HTTP requests and responses. Page-level automation alone does not give the agent that
-          control.</div>
+        <div class="feat-name">AI agents can attack the wrong systems</div>
+        <div class="feat-desc">An agent can make a mistake or follow a prompt injection and attack an unrelated
+          application. Telling it to stay within scope does not enforce that restriction.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Security state is split across tools</div>
-        <div class="feat-desc">Proxies, certificates, browser logs, sandboxes, test scripts, and development
-          servers each hold part of the workflow. This makes agent actions harder to control and isolate.</div>
+        <div class="feat-name">AI actions are hard to audit</div>
+        <div class="feat-desc">An agent's summary may omit actions, and logs may be scattered across tools.
+          Reconstructing which systems it reached and what it actually did is difficult.</div>
       </div>
     </div>
   </div>
 </section>
 
+<!-- ── What h5i gives you ──────────────────────────────────── -->
 <section id="what-you-get">
+  <span id="browser" aria-hidden="true"></span>
+  <span id="websec" aria-hidden="true"></span>
   <div class="container">
     <div class="section-head">
       <span class="section-tag">What h5i gives you</span>
-      <h2 class="section-title">A browser you can control, isolate, and audit.</h2>
-      <p class="section-sub">h5i lets agents browse and test web apps under rules you set. Control where
-        they can connect, review what they did, take over sensitive steps, and isolate the browser, or the
-        entire testing workflow, from your machine.</p>
-    </div>
-    <div class="feat-grid feat-grid-four">
-      <div class="feat-card">
-        <div class="feat-name">Review the complete browser session</div>
-        <div class="feat-desc">See every browser action and network request, including blocked requests and
-          why they were denied. Crashes, human takeovers, and how the session ended are recorded too.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Control where the agent can connect</div>
-        <div class="feat-desc">Allow only the websites and services required for the task. h5i blocks every
-          other request before it leaves and records the attempt.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Limit the damage of prompt injection</div>
-        <div class="feat-desc">Page content is marked as untrusted. Even if a page still manipulates the agent, 
-	  it can reach only the files and network destinations allowed by the sandbox policy.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Isolate web app testing from your machine</div>
-        <div class="feat-desc">Sandbox only the browser, or isolate the agent, generated code, dependencies,
-          development server, and browser together. Choose lightweight process isolation, a container, or a
-          microVM.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── The browser ──────────────────────────────────────────────
-     The pivot's lead. Everything below it is what the product has around
-     the browser, in the order someone reaches for it. -->
-<section id="browser">
-  <div class="container">
-    <div class="section-head">
-      <span class="section-tag">The browser</span>
-      <h2 class="section-title">A browser built for agents. Still under your control.</h2>
-      <p class="section-sub">Agents browse with simple CLI and receive compact, structured snapshots. You can keep
-        credentials out of the model's context, and review the complete session.</p>
-      <p class="section-sub"><a href="/guides/drive-a-browser-session/" style="color:var(--red-text)">Open a session and read what it reached &#8594;</a></p>
-    </div>
-    <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
-<div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
-<span class="t-pass">&#10004;</span>  browser session <span class="t-ai">br_7k2xqa</span>
-   requests : <span class="t-warn">engine-claimed</span> (fail-closed, and the engine's own account of what it fetched)
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>                                                          <span class="t-cmt"># outline, with @ref handles</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot --delta</span>                                                  <span class="t-cmt"># only what changed</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>                                                          <span class="t-cmt"># refusals included</span>
-<span class="t-out">  4 requests, 1 denied</span>
-<span class="t-red">  denied</span> <span class="t-out">https://tracker.example/px  origin not in the allowlist</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser close</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser audit</span>                                                             <span class="t-cmt"># the whole session, afterwards</span>
-<span class="t-ai">  host  </span> <span class="t-out">session opened</span>
-<span class="t-out">  engine  verb   snapshot</span>
-<span class="t-out">  engine  #1 </span><span class="t-red">DENIED</span><span class="t-out"> GET https://tracker.example/px</span>
-<span class="t-ai">  host  </span> <span class="t-out">session closed</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">printf '[profile.custom-sandbox]\nisolation = "container"\n' &gt; .h5i/env.toml</span>  <span class="t-cmt"># a container-isolation profile</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i box --profile custom-sandbox --name custom-sandbox</span>                        <span class="t-cmt"># create the box with it</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --in custom-sandbox</span>                         <span class="t-cmt"># open the session inside that box</span></pre></div></div>
-    <div class="feat-grid">
-      <div class="feat-card">
-        <div class="feat-name">Pages in a format agents can use</div>
-        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles. Agents
-          can read, click, type, and extract data.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">A complete session history</div>
-        <div class="feat-desc">Browser actions, network requests, blocked connections,
-          and crashes are kept in one timeline.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Sandbox the workflow</div>
-        <div class="feat-desc">Wrap the browser, or the entire workflow, in a customizable sandbox:
-          process isolation, a container, or a microVM.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Websec ──────────────────────────────────────────────────
-     The browser's traffic, as a workbench: what the engine already
-     captured, opened for editing and replay. -->
-<section id="websec">
-  <div class="container">
-    <div class="section-head">
-      <span class="section-tag">Websec</span>
-      <h2 class="section-title">Inspect and test web apps from the same browser.</h2>
-      <p class="section-sub">h5i captures, edits, replays, and compares the traffic generated by the
-        browser, perfect for CTFs, security research and authorized pentesting.</p>
-      <p class="section-sub"><a href="https://github.com/h5i-dev/h5i-benchmark" style="color:var(--red-text)">Make your agent a professional hacker &#8594;</a></p>
+      <h2 class="section-title">Auto-browsing. Control web traffic. Sandbox workflows.</h2>
+      <p class="section-sub">h5i combines automated browsing with its own HTTP client. It gives AI agents direct access
+        to captured requests and responses for web application penetration testing, CTFs, and red teaming.
+        Use it only on applications you own or are authorized to test.</p>
+      <p class="section-sub"><a href="https://github.com/h5i-dev/h5i-benchmark" style="color:var(--red-text)">Explore the agent benchmark results &#8594;</a></p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, from page to traffic</span></div>
 <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://target.example --capture --allow target.example</span>      <span class="t-cmt"># keep every message</span>
@@ -460,28 +351,34 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i websec match res_43 --contains "not your item"</span>                            <span class="t-cmt"># exits 0 when it holds</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i websec sitemap --human</span>                                                    <span class="t-cmt"># origins and endpoints reached</span>
 <span class="t-out">  target.example</span>
-<span class="t-out">  * /api/item                        GET      200          x3  ?id</span></pre></div></div>
+<span class="t-out">  * /api/item                        GET      200          x3  ?id</span>
+
+<span class="t-cmt"># Optional: open a separate browser session inside a container.</span>
+<span class="t-prompt">$</span> <span class="t-cmd">printf '[profile.custom-sandbox]\nisolation = "container"\n' &gt; .h5i/env.toml</span>  <span class="t-cmt"># a container-isolation profile</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i box --profile custom-sandbox --name custom-sandbox</span>                        <span class="t-cmt"># create the box with it</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --in custom-sandbox</span>                         <span class="t-cmt"># open the session inside that box</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
-        <div class="feat-name">See what the browser actually sent</div>
-        <div class="feat-desc">Inspect browser requests and responses, including headers and bodies,
-          through stable message IDs.</div>
+        <div class="feat-name">Automated browsing</div>
+        <div class="feat-desc">Read pages, click, type, and extract data through compact snapshots with <code>@ref</code> handles.
+          Pure Rust, no Chromium or V8: ~3&times; faster reads with ~86% less peak memory than headless Chromium
+          <a href="https://github.com/h5i-dev/h5i/blob/main/docs/design/design-browser.md">in our simple-site benchmarks</a>.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Edit, replay, and compare</div>
-        <div class="feat-desc">Modify captured requests, resend them in the same session, and compare the
-          resulting responses.</div>
+        <div class="feat-name">Direct HTTP capture and editing</div>
+        <div class="feat-desc">Capture requests and responses, inspect headers and bodies, edit and replay requests,
+          and compare results through the websec plugin. No separate MITM proxy or CA setup.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Build repeatable security tests</div>
-        <div class="feat-desc">Match responses and combine requests into multi-step flows for
-          authorized web testing, CTFs, and red teaming.</div>
+        <div class="feat-name">Sandboxed workflow</div>
+        <div class="feat-desc">Sandbox the browser or the entire AI agent workflow, with configurable network
+          and filesystem limits. Review recorded browser actions and blocked connections.
+          Enforcement depends on the selected isolation tier.</div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── FAQ ────────────────────────────────────────────────────── -->
 <!-- ── The dashboard ────────────────────────────────────────────
      The pivot's lead. The console figure below it is the screen this
      section describes. -->
@@ -489,7 +386,7 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The dashboard</span>
-      <h2 class="section-title">See what every agent is doing from one place.</h2>
+      <h2 class="section-title">Monitor agents, sessions, and blocked actions.</h2>
       <p class="section-sub">Monitor active sandboxes and browser sessions, inspect the pages agents see,
         review commands and network requests, and spot blocked actions or policy violations.</p>
     </div>
@@ -756,7 +653,7 @@
   </div>
 </section>
 
-<!-- ── The problem ───────────────────────────────────────────── -->
+<!-- ── FAQ ───────────────────────────────────────────────────── -->
 <section id="faq">
   <div class="container">
     <div class="section-head">
@@ -767,11 +664,11 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source.</div>
+        <div class="faq-answer">h5i is an open-source red-teaming browser built for AI agents. It combines page automation with direct HTTP control through the websec plugin, configurable sandboxing, and auditable sessions. It runs locally and is written in Rust without Chromium or V8.</div>
       </details>
       <details class="faq-item">
         <summary>Why use h5i instead of Playwright or Puppeteer?</summary>
-        <div class="faq-answer">Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent.</div>
+        <div class="faq-answer">Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when your AI agent needs page automation and direct HTTP testing through one interface, with configurable sandboxing, network policies, and a reviewable session record.</div>
       </details>
       <details class="faq-item">
         <summary>Does h5i work on every website?</summary>
@@ -779,11 +676,11 @@
       </details>
       <details class="faq-item">
         <summary>Is h5i sandboxed by default?</summary>
-        <div class="faq-answer">The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM.</div>
+        <div class="faq-answer">The browser uses lightweight process isolation when available. To restrict a red-teaming agent's other tools as well, sandbox the entire workflow and configure its network and filesystem policy. Available options include supervised isolation, containers, and microVMs; enforcement depends on the selected tier and host support.</div>
       </details>
       <details class="faq-item">
         <summary>Can h5i prevent prompt injection?</summary>
-        <div class="faq-answer">No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing.</div>
+        <div class="faq-answer">No. A tested application can still mislead an agent. h5i treats page content as untrusted, and configured network and filesystem restrictions can limit what the agent reaches. These controls reduce the impact; they do not guarantee safe actions on an allowed target.</div>
       </details>
       <details class="faq-item">
         <summary>Can the agent see my passwords or cookies?</summary>
@@ -800,11 +697,11 @@
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Let agents browse. Keep control.</h2>
-    <p class="cta-sub">Run fast, lightweight web browsing and app testing with sandboxing, network controls,
-      and complete session records built in. Local-first, Apache 2.0, with no hosted service.</p>
+    <h2 class="cta-title">Let agents test like professional hackers.</h2>
+    <p class="cta-sub">Run authorized red teaming with configurable sandbox and network limits,
+      and auditable browser sessions. Local-first, Apache 2.0, with no hosted service.</p>
     <div class="hero-install">
-      <code>curl -fsSL https://h5i.dev/install.sh | sh</code>
+      <code>curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec</code>
       <button class="copy-btn" type="button">copy</button>
     </div>
     <div class="hero-actions">
