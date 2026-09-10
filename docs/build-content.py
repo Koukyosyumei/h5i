@@ -1435,23 +1435,31 @@ def build():
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") is an open-source secure, auditable browser for AI agents. An agent drives a browser session by id and reads an outline with @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Around the browser, h5i gives each agent a disposable box for the code, the toolchain and the dev server.
+> h5i ("high-five") is an open-source red-teaming browser for AI agents. An agent drives a browser session by id, reads the page as an outline with @ref handles, and then works the traffic that session produced: read a captured message byte for byte, change one field, send it again, compare the answers. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Replay travels that same path, so it is not a side channel around scope. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Use h5i only against systems you own or are explicitly authorized to test.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview: the fast agent browser, five isolation tiers to place it in, the read-only dashboard, and the output gate.
+- [Features](https://h5i.dev/features/): Product overview: automated browsing, reconnaissance, HTTP capture and editing, the limits you place around the agent, and the review surface.
+- [Run an authorized web security test](https://h5i.dev/guides/authorized-web-security-testing/): Scope a session to one target, inventory its endpoints, replay one request, and close with the evidence intact.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
-- [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
-- [The loop](https://h5i.dev/blog/the-h5i-loop/): The complete browse, contain, work, export, apply loop, and what each step writes down.
+- [AI pentesting tools compared](https://h5i.dev/blog/ai-pentesting-tools/): Burp Suite, OWASP ZAP, Caido, and h5i, chosen by operator, scanning depth, and containment.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
 
-1. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
-2. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-3. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-4. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-5. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+1. [Run an authorized web security test with an AI agent](https://h5i.dev/guides/authorized-web-security-testing/): Scope, capture, enumerate, replay, and report a pentest, CTF, or red-team exercise.
+2. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
+3. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
+4. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
+5. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
+6. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+
+## Tool comparisons
+
+- [AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?](https://h5i.dev/blog/ai-pentesting-tools/): Four workbenches compared by operator, scanning, agent interface, and containment.
+- [Burp Suite vs h5i for AI agents](https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/): Proxy depth and a mature human interface against an agent-native session with enforced scope.
+- [OWASP ZAP vs h5i for AI agents](https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/): Automated scanning and spiders against bounded browsing, recon, and replay.
+- [Caido vs h5i for AI agents](https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/): Proxy history, Replay, Automate, and HTTPQL against a policy-controlled session record.
 
 ## Design essays
 
@@ -1461,41 +1469,84 @@ def build():
 - [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
 - [Assume the prompt injection worked](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Bound a compromised session's filesystem, credentials, sockets, egress, and output.
 
-## Core model
+## The browser session
 
 - A browser session holds one page state, one cookie jar, one request log, and one policy, addressed by an id.
 - The engine is the HTTP client: policy first, record second, wire third. A fetch that cannot be recorded is refused.
+- open grants the page it was given and nothing else remote. --allow names the origins beyond it, such as an API the page calls or a CDN it pulls from.
+- An off-origin subresource is refused even though the page loaded, and the refusal is in the request log.
+- Loopback is reachable by default because it is the dev server, and --no-loopback takes that back.
+- A credentialed cross-origin request whose answer nobody can read is refused by default. --permissive-cors lifts that for one session, is part of its policy digest, and is named on the open banner and in status.
 - Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
+- A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
 - h5i browser audit merges verbs, fetch decisions, control handovers, and the ending into one ordered timeline.
 - Every audit row carries its lane: the engine's own account, or what h5i observed from outside. They are never merged.
 - An audit reports each source as read, empty, or unavailable, because an unwatched log is not a quiet session.
 - A fetch carries caused_by naming the verb the page was under; links come from the source, never from timing.
-- h5i box export writes browser/<id>.json per session placed in the box, and lists them in report.md.
-- A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
 - Snapshots arrive fenced as untrusted page content; escape sequences and control characters never reach the terminal.
 - Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.
 - Page JavaScript is off unless requested, which removes the page-borne injection delivery channel.
 - Session states are live, closed, died, expired, evicted. A verb on a non-live session exits 69 and never restarts it.
 - Session ids are never reused; --restore inherits storage into a new id and records the inheritance.
-- engine-claimed is the engine's own fail-closed account. host-observed means a box boundary saw it too.
-- A box upgrades the lane only when something outside the engine enforces egress; being boxed is not enough.
-- The control lock is enforced for a boxed session, because every verb is carried in from the host, and advisory otherwise.
 - Sessions live under $H5I_BROWSER_HOME or $XDG_STATE_HOME/h5i/browser, never under a git repository.
+- The engine is pure Rust with no Chromium and no V8.
+
+## The HTTP workbench
+
+- websec is a plugin rather than part of the default build: h5i plugin install websec, or install.sh -s -- --websec.
+- h5i websec requests, show --raw, replay --set, diff, match, and sitemap read and work the messages a session captured.
+- Capture is opt-in with --capture, because the message store holds request and response bodies in full.
+- The message store is never included in an export unless it is named.
+- Replay goes through the same broker as browsing: the policy decides, the receipt is written first, and an off-scope replay is refused rather than sent.
+- A replay cannot widen its session's allowlist. Changing scope means a new session with a new policy, which is a visible act.
+- Hop-by-hop headers the client owns are recomputed, and an attempt to set them is reported as overridden rather than accepted silently.
+- match exits 0 when the condition holds, 1 for a miss, and 2 when it could not look.
+- h5i websec sitemap folds observed receipts into origins and endpoints, carrying methods, statuses, parameter names, and hit counts, with refused URLs listed apart. Disclosed but unvisited URLs are not in it.
+- h5i browser rpc --stdio is the same verbs over one process, so a loop that sends hundreds of requests pays process startup once.
+
+## The recon ledger
+
+- recon is a plugin as well: h5i plugin install recon, or install.sh -s -- --recon.
+- Discovery is kept apart from testing. Recon records what a target exposes and how it knows; calling a difference a vulnerability stays the agent's claim.
+- Every endpoint carries a state: candidate, observed, confirmed, refused, or gone.
+- candidate means something disclosed it and no request was ever sent. observed means a request answered, and the row names the message.
+- confirmed means the answer differs from the calibrated missing-path baseline for that directory. It does not mean interesting.
+- refused means policy declined it, and the row is kept, because that is a fact about the scope.
+- Confirmation happens only in triage --calibrate, which learns what a missing path looks like in each directory. Against an application that answers 200 for everything, nothing is confirmed without it.
+- recon extract reads what the session already fetched; recon known checks robots.txt, sitemap.xml, security.txt, and .well-known/openid-configuration.
+- robots.txt is a source of candidates and not an authorisation oracle. Scope comes from policy.
+- recon crawl walks the target under this session's login, bounded by --max-requests and --rate.
+- h5i ships no wordlist: paths --wordlist takes a list you bring, and --reuse-words uses the words the session has already seen.
+- recon import reads urls, katana, subfinder, httpx, or openapi output as candidates that stay candidates until an h5i request answers.
+- Runs that spend requests are jobs, with jobs list, show, and resume. The ledger is written as a run goes, so a run that is killed keeps what it found.
+- Recon sends through the engine's own verbs. There is no second HTTP client, no --all-origins, and no spawning of third-party security tools.
+
+## The box
+
 - A box is a complete disposable development environment for one agent.
 - Five tiers: workspace, process, supervised, container, microvm.
 - Explicit isolation requests fail closed; h5i never silently downgrades.
 - supervised and microvm enforce egress at L3/L4. container uses an L7 proxy allowlist.
+- engine-claimed is the engine's own fail-closed account. host-observed means a box boundary saw it too.
+- A box upgrades the lane only when something outside the engine enforces egress; being boxed is not enough.
+- The control lock is enforced for a boxed session, because every verb is carried in from the host, and advisory otherwise.
 - Model credentials remain host-side and are injected by a runtime-scoped proxy.
-- h5i box export produces patch.diff, report.md, and receipt.json.
+- h5i box export produces patch.diff, report.md, and receipt.json, and writes browser/<id>.json for each session placed in the box.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
 ## Honest limits
 
+- h5i cannot grant authorization or infer scope from a URL. Record the permitted hosts, accounts, techniques, request rate, and time window before running an agent.
+- h5i is not a vulnerability scanner. It ships no exploit library, payload generator, fingerprint database, or wordlist.
+- Recon produces no verdicts and no severities. confirmed means distinguishable from the not-found baseline, nothing more.
+- A response diff is evidence of a difference, not proof of impact. Severity and exploitability still require review.
+- The capture store can hold credentials and personal data in full. Treat it as sensitive test evidence and redact it before sharing an artifact.
+- With the default cross-origin refusal in force h5i cannot act as the victim, so a negative CSRF result means h5i declined, not that the target is safe.
 - A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
-- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent.
+- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent. Of twenty single-page applications measured, eighteen read usefully and one not at all.
+- For a target the engine cannot read, run Chromium inside a box and accept the tier's boundary in place of engine-level capture.
 - h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
 - A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.
-- Chromium reads more pages and gives up both fail-closed recording and the enforced takeover.
 - Containment cannot stop source code from being included in an allowed model request.
 - Every tier below microvm shares the host kernel.
 - Container egress scoping binds proxy-respecting software only.
