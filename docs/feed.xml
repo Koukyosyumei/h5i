@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
 <description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
-<language>en-us</language><lastBuildDate>Wed, 02 Sep 2026 12:00:00 GMT</lastBuildDate>
+<language>en-us</language><lastBuildDate>Wed, 09 Sep 2026 12:00:00 GMT</lastBuildDate>
 <atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
+    <item><title>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</title><link>https://h5i.dev/blog/ai-pentesting-tools/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/ai-pentesting-tools/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Compare four tools for AI-assisted pentesting and authorized red teaming: Burp Suite, OWASP ZAP, Caido, and h5i, with decisions by operator, scanning, automation, and containment.</description></item>
     <item><title>Browse, contain, work, export, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.</description></item>
@@ -17,4 +20,13 @@
       <description>Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.</description></item>
     <item><title>Assume the prompt injection worked</title><link>https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
-      <description>Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.</description></item></channel></rss>
+      <description>Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.</description></item>
+    <item><title>Burp Suite vs h5i for AI agents</title><link>https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Compare Burp Suite and h5i for AI-assisted pentesting, CTFs, and authorized red teaming: proxy depth, agent interfaces, HTTP replay, recon, scope, isolation, and audit evidence.</description></item>
+    <item><title>OWASP ZAP vs h5i for AI agents</title><link>https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Compare OWASP ZAP and h5i for AI-assisted web security testing: automated scanning, spiders, APIs, agent browsing, HTTP replay, scope enforcement, isolation, and evidence.</description></item>
+    <item><title>Caido vs h5i for AI agents</title><link>https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/</guid><pubDate>Wed, 09 Sep 2026 12:00:00 GMT</pubDate>
+      <description>Compare Caido and h5i for AI-assisted pentesting: proxy history, Replay, Automate, HTTPQL, workflows and agent skills versus bounded browsing, recon, sandboxing, and audit evidence.</description></item></channel></rss>

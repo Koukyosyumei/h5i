@@ -1,0 +1,160 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Burp Suite vs h5i for AI agents</title><meta name="description" content="Burp Suite vs h5i for AI-assisted pentesting: compare proxy depth, agent workflows, HTTP replay, recon, isolation, scope enforcement, and evidence.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Burp Suite vs h5i for AI agents"><meta property="og:description" content="Burp Suite vs h5i for AI-assisted pentesting: compare proxy depth, agent workflows, HTTP replay, recon, isolation, scope enforcement, and evidence.">
+<meta property="og:url" content="https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/"><meta property="og:image" content="https://h5i.dev/_static/burp-vs-h5i.svg">
+<meta property="og:image:alt" content="Burp Suite centers a human around a browser, proxy, scanner, and extensions; h5i places an AI agent inside a scoped session and sandbox whose evidence a human reviews"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Burp Suite vs h5i for AI agents">
+<meta name="twitter:description" content="Burp Suite vs h5i for AI-assisted pentesting: compare proxy depth, agent workflows, HTTP replay, recon, isolation, scope enforcement, and evidence."><meta name="twitter:image" content="https://h5i.dev/_static/burp-vs-h5i.svg">
+<meta name="twitter:image:alt" content="Burp Suite centers a human around a browser, proxy, scanner, and extensions; h5i places an AI agent inside a scoped session and sandbox whose evidence a human reviews">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Burp Suite vs h5i for AI agents",
+      "description": "Burp Suite vs h5i for AI-assisted pentesting: compare proxy depth, agent workflows, HTTP replay, recon, isolation, scope enforcement, and evidence.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-09",
+      "dateModified": "2026-09-09",
+      "image": "https://h5i.dev/_static/burp-vs-h5i.svg",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Burp Suite vs h5i for AI agents",
+          "item": "https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is h5i a replacement for Burp Suite?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not for every use case. Burp Suite is better suited to mature manual workflows, automated scanning, extensions, and low-level protocol testing. h5i is purpose-built for constrained, auditable AI-agent workflows."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can Burp Suite be used by AI agents?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, through integrations and surrounding automation. The comparison is not whether Burp can be automated, but whether you want to build the agent interface, containment, and evidence path around it."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use Burp Suite and h5i together?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. A practical split is human-led exploration and validation in Burp, with bounded recon or repeatable request checks delegated to h5i."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Comparison / Web security &middot; 2026-09-09</div>
+<h1>Burp Suite vs h5i for AI agents</h1><p class="post-deck">Burp Suite is the broader human-led web-security platform. h5i is the narrower agent-native browser and HTTP workbench. The right choice follows from who drives the test and where its authority should stop.</p>
+<div class="post-meta"><span>10 min read</span><span>Burp Suite &middot; AI agents &middot; Pentesting</span></div></header>
+
+<div class="callout"><strong>The short answer.</strong> Choose Burp Suite for mature manual pentesting, automated scanning, extension depth, and low-level protocol work. Choose h5i when an AI agent needs one command interface for browsing, bounded recon, HTTP experiments, sandbox placement, and an auditable session. Use both when a human leads in Burp and delegates constrained tasks to h5i.</div>
+<figure class="feature-figure"><img src="/_static/burp-vs-h5i.svg" alt="Burp Suite centers a human tester around a browser, proxy, scanner, and extensions, while h5i places an AI agent inside a scoped browser session and sandbox whose evidence a human reviews"><figcaption>The products optimize different control centers. This is a workflow comparison, not a claim that a narrow agent interface has more testing capability than Burp Suite.</figcaption></figure>
+<h2 id="method">How this comparison was made</h2>
+<p>This page compares documented product architecture and workflows, not scanner accuracy or exploit coverage. It was reviewed on 9 September 2026 against PortSwigger's current documentation for Burp's browser, Proxy, Repeater and Intruder workflow, Scanner, extensions, scope, and automated testing. h5i claims are checked against the commands in the manual shipped with this repository.</p>
+<p>No head-to-head benchmark was run. We therefore make no claim about requests per second, memory use, vulnerability detection rate, false positives, or total time to complete an engagement. Edition matters too: Burp Scanner is available in Professional and DAST, not Community Edition. Wherever the table says “best fit,” that is an architectural judgment derived from the interfaces, not a laboratory result.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>Burp Suite</th><th>h5i</th></tr></thead><tbody>
+<tr><td>Primary operator</td><td>Human security tester</td><td>AI agent through CLI or JSON RPC</td></tr>
+<tr><td>Browser model</td><td>Full browser through an intercepting proxy</td><td>Lightweight agent browser; Chromium can run in a box</td></tr>
+<tr><td>HTTP work</td><td>Deep proxy, Repeater, Intruder, Scanner and extensions</td><td>Captured messages, structured edits, replay, diff, match and sequences</td></tr>
+<tr><td>Discovery</td><td>Site map, crawling and scanning</td><td>Evidence-linked endpoint ledger with bounded jobs</td></tr>
+<tr><td>Agent boundary</td><td>Depends on surrounding integration</td><td>Origin policy, sandbox tiers, credential broker and output gate</td></tr>
+<tr><td>Best fit</td><td>Comprehensive professional web testing</td><td>Constrained, repeatable agent tasks and CTF/lab workflows</td></tr>
+</tbody></table></div>
+<p>This is not a feature-count contest. Burp Suite has decades of security workflow behind it and h5i does not try to reproduce that surface. The useful comparison is architectural: Burp places a powerful proxy and workbench in a tester's hands; h5i makes the browser session itself the object an agent can drive, constrain, and audit.</p>
+<h2 id="burp">Where Burp Suite is the clear choice</h2>
+<p>A professional tester who wants interactive interception, extensive manual tooling, automated vulnerability scanning, a large extension ecosystem, or protocol-level control should begin with Burp Suite. Its proxy-centered workflow makes it possible to observe and manipulate traffic from many clients, not only one purpose-built agent browser.</p>
+<p>That breadth matters. Mature engagements need edge-case encodings, collaborative workflows, custom extensions, scanner coverage, and a human interface optimized for exploring ambiguous behavior. h5i's workbench covers inspect, edit, replay, compare, assert, and multi-step sequences. It does not claim Burp's scanner, extension ecosystem, or breadth of protocol tooling.</p>
+<h2 id="h5i">Where h5i is the better agent interface</h2>
+<p>An AI agent sees a conventional proxy through an integration layer: start a browser, configure a proxy, manage a CA, translate a rich GUI model into tools, then decide which actions and network events become durable evidence. h5i collapses that path into one session. The agent opens a target, receives a compact page outline with stable handles, captures the exact HTTP messages, replays them through structured arguments, and queries the endpoint ledger through the same command tree.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">one agent-facing workflow</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
+$ h5i recon crawl --max-requests 200 --rate 4
+$ h5i websec replay req_42 --set query.id=456
+$ h5i websec diff res_42 res_43
+$ h5i browser audit</code></pre></div></div>
+<p>The command shape is only half the distinction. The origin allowlist is checked by the browser before a request moves. Place the session in a supervised, container, or microVM box and egress is also enforced outside the browser. That gives an autonomous tester an executable edge: the prompt may tell it to stay in scope, while the boundary prevents it reaching an undeclared destination.</p>
+<h2 id="evidence">A site map and an evidence ledger answer different questions</h2>
+<p>Security tools commonly build a site map: a useful picture of what the application appears to expose. h5i recon makes a narrower claim. Each endpoint has a state—candidate, observed, confirmed, refused, or gone—and an observed row points to the captured message that supports it. Calibration distinguishes a real path from an application that returns a friendly <code>200</code> for every missing URL.</p>
+<p>This is designed for review of agent work. The agent can claim that an endpoint is interesting, but it cannot turn a candidate into an observation without a response record. Nor can it turn a response difference into a vulnerability automatically. The ledger preserves the facts and leaves impact to the tester.</p>
+<h2 id="isolation">Isolation matters more when the tester is autonomous</h2>
+<p>Giving an agent a hacking tool changes the threat model in both directions. The target is untrusted input that may manipulate the agent, and the agent is an active client that may exceed its assignment. Browser policy narrows destinations. A box narrows files, sockets, process behavior, credentials, and network access. An output gate keeps generated code or reports from landing in the host repository without review.</p>
+<p>Burp can participate in safe agent systems, but it is not by itself the sandbox around the agent. You must provide and verify that boundary in the surrounding automation. With h5i, placement and evidence are part of the same session model, and explicit isolation requests fail closed instead of silently downgrading.</p>
+<h2 id="compatibility">Browser compatibility favors Burp's model</h2>
+<p>h5i's lightweight browser is efficient because it is not Chromium. That is an advantage for parallel reading and structured interaction, but some complex applications require browser APIs it does not implement. Burp works with mainstream browsers and is the safer choice when exact browser behavior is central to the test.</p>
+<p>h5i can run Chromium inside a sandbox for those sites. The tradeoff is explicit: sandbox controls remain, while h5i's engine-level request record and enforced browser takeover are unavailable. A comparison that hides that boundary would send the wrong tester to the wrong tool.</p>
+<h2 id="together">The strongest workflow may use both</h2>
+<p>The tools are complementary when a human owns the engagement. Use Burp for exploratory manual testing, scanner-assisted coverage, difficult protocol cases, and final validation. Delegate bounded collection or repeatable checks to h5i: crawl a permitted origin under a request budget, replay a known message across a small input set, or collect an evidence-linked inventory from several authenticated roles.</p>
+<p>Do not pass conclusions between them as prose when an artifact exists. Export URLs or OpenAPI material into the recon ledger as candidates. Keep captured request identifiers beside findings. Reproduce anything important in the human-led workbench before reporting it.</p>
+<h2 id="decision">A practical decision rule</h2>
+<ul><li><strong>Pick Burp Suite</strong> when a human is driving and breadth, scanning, extensions, and browser compatibility dominate.</li><li><strong>Pick h5i</strong> when an agent is driving and bounded authority, compact tool output, repeatable commands, and session evidence dominate.</li><li><strong>Use both</strong> when agents perform narrow collection or verification tasks inside an engagement led and validated by a human tester.</li></ul>
+<p>Neither tool establishes authorization. For pentesting, bug bounty, red teaming, or CTF automation, the target owner or competition rules define what is allowed. Network controls help enforce part of that scope; they do not replace it.</p>
+<h2 id="sources">Sources and further reading</h2>
+<ul><li><a href="/blog/ai-pentesting-tools/">Compare all four AI pentesting tools</a></li><li><a href="/guides/authorized-web-security-testing/">Run an authorized web security test with an AI agent</a></li><li><a href="/manual/#h5i-websec">h5i HTTP workbench reference</a></li><li><a href="/manual/#h5i-recon">h5i recon reference</a></li><li><a href="https://portswigger.net/burp/documentation">PortSwigger's Burp Suite documentation</a></li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is h5i a replacement for Burp Suite?</summary><div class="faq-answer">Not for every use case. Burp Suite is better suited to mature manual workflows, automated scanning, extensions, and low-level protocol testing. h5i is purpose-built for constrained, auditable AI-agent workflows.</div></details><details class="faq-item"><summary>Can Burp Suite be used by AI agents?</summary><div class="faq-answer">Yes, through integrations and surrounding automation. The comparison is not whether Burp can be automated, but whether you want to build the agent interface, containment, and evidence path around it.</div></details><details class="faq-item"><summary>Can I use Burp Suite and h5i together?</summary><div class="faq-answer">Yes. A practical split is human-led exploration and validation in Burp, with bounded recon or repeatable request checks delegated to h5i.</div></details></div>
+<a class="next-up" href="/guides/authorized-web-security-testing/"><span class="label">Try the workflow</span><h3>Run an authorized web security test</h3><p>Create a scoped session, build an endpoint ledger, and replay one captured request.</p></a>
+<div class="post-cta"><h3>Give the agent a narrow assignment</h3><p>Make target scope, request budget, captured evidence, and the stopping point part of the run.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/authorized-web-security-testing/">Follow the security-testing guide</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

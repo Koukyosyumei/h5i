@@ -1,0 +1,156 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Caido vs h5i for AI agents</title><meta name="description" content="Caido vs h5i for AI pentesting: compare Replay, Automate, HTTPQL, workflows and skills with bounded agent browsing, recon, sandboxing, and evidence.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Caido vs h5i for AI agents"><meta property="og:description" content="Caido vs h5i for AI pentesting: compare Replay, Automate, HTTPQL, workflows and skills with bounded agent browsing, recon, sandboxing, and evidence.">
+<meta property="og:url" content="https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/"><meta property="og:image" content="https://h5i.dev/_static/caido-vs-h5i.svg">
+<meta property="og:image:alt" content="Caido provides a broad proxy workspace with HTTPQL, Replay, Automate, workflows, and skills, while h5i places browsing and replay inside an agent boundary"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Caido vs h5i for AI agents">
+<meta name="twitter:description" content="Caido vs h5i for AI pentesting: compare Replay, Automate, HTTPQL, workflows and skills with bounded agent browsing, recon, sandboxing, and evidence."><meta name="twitter:image" content="https://h5i.dev/_static/caido-vs-h5i.svg">
+<meta name="twitter:image:alt" content="Caido provides a broad proxy workspace with HTTPQL, Replay, Automate, workflows, and skills, while h5i places browsing and replay inside an agent boundary">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Caido vs h5i for AI agents",
+      "description": "Caido vs h5i for AI pentesting: compare Replay, Automate, HTTPQL, workflows and skills with bounded agent browsing, recon, sandboxing, and evidence.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-09",
+      "dateModified": "2026-09-09",
+      "image": "https://h5i.dev/_static/caido-vs-h5i.svg",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Caido vs h5i for AI agents",
+          "item": "https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is h5i an alternative to Caido?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "For constrained agent-led browsing and HTTP replay, yes. For a rich human proxy workspace, HTTPQL analytics, payload automation, and visual workflows, Caido is broader."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can AI agents use Caido?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Caido publishes official skills with broad API coverage, including Replay, Automate, and traffic search."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is the main architectural difference?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Caido gives humans and agents access to a proxy workspace. h5i makes a policy-controlled browser session, optional sandbox, and audit record one agent-facing object."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Comparison / Web security &middot; 2026-09-09</div>
+<h1>Caido vs h5i for AI agents</h1><p class="post-deck">Caido is a fast, modern proxy workspace with excellent traffic search, replay, automation, workflows, and official agent skills. h5i makes a narrower bet: the agent's browser, scope, isolation, and evidence should be one session.</p>
+<div class="post-meta"><span>9 min read</span><span>Caido &middot; AI agents &middot; Pentesting</span></div></header>
+
+<div class="callout"><strong>The short answer.</strong> Choose Caido for a polished human web-security workspace, proxy history, HTTPQL search, Replay, Automate, visual workflows, and broad API access through its official agent skills. Choose h5i when the agent itself should browse through a fail-closed origin policy and run inside a disposable boundary. Caido is the richer workbench; h5i is the tighter agent envelope.</div>
+<figure class="feature-figure"><img src="/_static/caido-vs-h5i.svg" alt="Caido offers a broad workspace with HTTPQL, Replay, Automate, workflows, proxy history, and agent skills, while h5i puts browser, recon, and replay inside origin scope and a sandbox"><figcaption>Caido gives a tester or agent more ways to analyze and transform traffic. h5i concentrates on reducing the authority delegated with an autonomous browser task.</figcaption></figure>
+<h2 id="method">How this comparison was made</h2>
+<p>This comparison was reviewed on 9 September 2026 against Caido's official documentation for HTTPQL, Replay, Automate, pipelines, workflows, scopes, deployment, and Caido Skills. The important freshness check is agent access: Caido now publishes official skills with broad API coverage, so describing it as a human-only GUI would be inaccurate. h5i claims come from the manual and command surface in this repository.</p>
+<p>No performance, pricing, fuzzing-throughput, or vulnerability-coverage benchmark was run. We do not claim h5i is faster than Caido or that either finds more vulnerabilities. The assessment compares authority, interface shape, evidence, and operator workflow. Product plans and entitlements can also change; consult Caido's current documentation before making a purchasing decision.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Decision</th><th>Caido</th><th>h5i</th></tr></thead><tbody>
+<tr><td>Primary shape</td><td>Client/server intercepting proxy workspace</td><td>Agent browser session plus optional sandbox</td></tr>
+<tr><td>Traffic analysis</td><td>HTTP history and expressive HTTPQL filters</td><td>Captured messages addressed by stable IDs</td></tr>
+<tr><td>Request testing</td><td>Replay, Automate, pipelines, workflows</td><td>Structured replay, diff, match, sequences, JSON RPC</td></tr>
+<tr><td>AI integration</td><td>Official skills exposing the Caido API</td><td>CLI skill and verbs designed as the core interface</td></tr>
+<tr><td>Agent containment</td><td>Provided by the surrounding deployment</td><td>Origin policy, credential broker, sandbox tiers, output gate</td></tr>
+<tr><td>Best fit</td><td>Human-led testing with powerful agent assistance</td><td>Agent-led tasks with bounded authority</td></tr>
+</tbody></table></div>
+<h2 id="caido">Where Caido is the clear choice</h2>
+<p>Caido gives testers a modern interface over proxied traffic. HTTPQL filters requests and responses by host, path, headers, body, status, timing, source, and other fields. Replay edits and resends individual messages. Automate applies payloads at scale. Pipelines coordinate multiple requests, including last-byte synchronization for race-condition work. Workflows create reusable passive, active, and conversion graphs.</p>
+<p>Caido also has a serious agent story. Its official skills expose the client API so an agent can search traffic, send requests with Replay, fuzz with Automate, and operate other workbench features. Any comparison claiming Caido is “GUI only” or not agent-compatible is obsolete.</p>
+<h2 id="h5i">Where h5i draws a different boundary</h2>
+<p>h5i begins before proxy history. Its lightweight browser is itself the HTTP client, and one session owns the page, cookie jar, origin policy, request log, captured message store, recon ledger, control handoff, and recorded ending. An agent reads a compact outline, acts by page handle, and uses the same session to inspect or replay the resulting traffic.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">one bounded session</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
+$ h5i browser snapshot
+$ h5i recon crawl --max-requests 200 --rate 4
+$ h5i websec replay req_42 --set query.id=456
+$ h5i browser audit</code></pre></div></div>
+<p>That integration is less broad than Caido's workspace and more opinionated about autonomy. A redirect outside the allowlist is refused before it leaves. Put the session and agent in a box and filesystem, socket, credential, resource, and egress rules apply to the whole process tree. A human-operated output gate controls what comes back.</p>
+<h2 id="search">HTTPQL beats a small ledger for open-ended traffic search</h2>
+<p>When a tester has a large corpus of proxy traffic and wants to ask complex questions across it, Caido's HTTPQL is the stronger interface. It supports composable filters over raw requests and responses and understands which feature produced the traffic.</p>
+<p>h5i recon is not a general query language. It organizes discovered endpoints into candidate, observed, confirmed, refused, and gone states, with message identifiers supporting observations. That is useful when an agent must show how it knows an endpoint exists, but it does not replace exploratory traffic analytics.</p>
+<h2 id="automation">Automate and workflows offer more testing machinery</h2>
+<p>Caido's Automate, pipelines, and workflows support payload-driven tests, background processing, JavaScript and shell nodes, reusable graphs, and specialized multi-request strategies. h5i deliberately ships no payload collection or wordlist. Its sequences and one-process JSON RPC path cover repeatable message edits without attempting to become a general visual automation platform.</p>
+<p>Choose the machinery that matches the assignment. An agent asked to search and transform a rich traffic corpus benefits from Caido. An agent asked to inspect one origin without gaining ambient access to the developer machine benefits from h5i's narrower envelope.</p>
+<h2 id="security">Agent access to a security tool is itself a security boundary</h2>
+<p>Caido's skills authenticate an agent to a running instance, which is powerful and convenient. The authority of that agent follows the instance, project, token, and surrounding host controls you configure. Review that grant like any other security-sensitive integration.</p>
+<p>h5i's credential broker is designed so model and service secrets remain on the host and are inserted only into approved requests. Its session origin policy and box policy are resolved outside the agent. That does not make the agent correct; it reduces what a wrong or prompt-injected agent can touch.</p>
+<h2 id="decision">Decision rule</h2>
+<ul><li><strong>Pick Caido</strong> for a strong human UI, rich traffic filtering, Replay, payload automation, workflows, and agent access to a full proxy workbench.</li><li><strong>Pick h5i</strong> when the primary object is a policy-controlled browser session placed inside an agent sandbox.</li><li><strong>Use both</strong> when the human and agent need different interfaces: Caido for broad exploration, h5i for narrow delegated runs with explicit evidence and stopping points.</li></ul>
+<p>Neither product grants permission to test a target. Keep target ownership, rules of engagement, rate limits, and authorization outside the agent and visible to the reviewer.</p>
+<h2 id="sources">Sources and further reading</h2>
+<ul><li><a href="/blog/ai-pentesting-tools/">Compare all four AI pentesting tools</a></li><li><a href="https://docs.caido.io/app/reference/httpql">Caido HTTPQL reference</a></li><li><a href="https://docs.caido.io/app/quickstart/replay">Caido Replay</a></li><li><a href="https://docs.caido.io/concepts/workflows_intro">Caido workflows</a></li><li><a href="https://docs.caido.io/app/tutorials/skills">Caido agent skills</a></li><li><a href="/guides/authorized-web-security-testing/">Authorized testing with h5i</a></li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is h5i an alternative to Caido?</summary><div class="faq-answer">For constrained agent-led browsing and HTTP replay, yes. For a rich human proxy workspace, HTTPQL analytics, payload automation, and visual workflows, Caido is broader.</div></details><details class="faq-item"><summary>Can AI agents use Caido?</summary><div class="faq-answer">Yes. Caido publishes official skills with broad API coverage, including Replay, Automate, and traffic search.</div></details><details class="faq-item"><summary>What is the main architectural difference?</summary><div class="faq-answer">Caido gives humans and agents access to a proxy workspace. h5i makes a policy-controlled browser session, optional sandbox, and audit record one agent-facing object.</div></details></div>
+<a class="next-up" href="/blog/burp-suite-vs-h5i-for-ai-agents/"><span class="label">Compare the established suite</span><h3>Burp Suite vs h5i for AI agents</h3><p>See where a mature professional platform and an agent-native session differ.</p></a>
+<div class="post-cta"><h3>Choose by who drives the test</h3><p>A human workbench and an autonomous agent boundary solve different problems.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/guides/authorized-web-security-testing/">Run a bounded agent test</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>

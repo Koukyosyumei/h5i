@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+<title id="title">AI web security tools compared by operator and primary job</title>
+<desc id="desc">A two-axis map places Burp Suite and Caido toward human-led investigation, OWASP ZAP toward plan-driven scanning, and h5i toward agent-led investigation with a bounded session.</desc>
+<rect width="1200" height="630" fill="#0d0d0f"/><g font-family="Arial,sans-serif" fill="#eee">
+<text x="70" y="70" font-size="34" font-weight="700">Choose by operator and job</text>
+<line x1="180" y1="505" x2="1080" y2="505" stroke="#777" stroke-width="3"/><line x1="180" y1="505" x2="180" y2="125" stroke="#777" stroke-width="3"/>
+<text x="180" y="555" font-size="20">plan-driven scanning</text><text x="875" y="555" font-size="20">interactive investigation</text>
+<text x="45" y="490" font-size="20" transform="rotate(-90 45 490)">human-led</text><text x="45" y="225" font-size="20" transform="rotate(-90 45 225)">agent-led</text>
+<g font-size="25" font-weight="700"><circle cx="825" cy="380" r="62" fill="#533"/><text x="785" y="388">Burp</text><circle cx="920" cy="320" r="62" fill="#353535"/><text x="882" y="328">Caido</text><circle cx="385" cy="330" r="62" fill="#3b4c35"/><text x="350" y="338">ZAP</text><circle cx="845" cy="185" r="70" fill="#d21c1c"/><text x="820" y="193">h5i</text></g>
+<text x="600" y="602" text-anchor="middle" font-size="18" fill="#aaa">The map describes workflow fit, not overall product quality.</text></g>
+</svg>

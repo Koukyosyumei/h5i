@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i essays: auditable browsing for AI agents</title><meta name="description" content="Five essays on giving an AI agent a browser you can audit: the browse, contain, work, export, apply loop, the environment as the boundary, and what is evidence.">
+<title>h5i essays: agent browsers, sandboxes, and web security</title><meta name="description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/blog/"><link rel="alternate" type="application/rss+xml" title="The h5i Blog" href="/feed.xml"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i essays: auditable browsing for AI agents"><meta property="og:description" content="Five essays on giving an AI agent a browser you can audit: the browse, contain, work, export, apply loop, the environment as the boundary, and what is evidence.">
+<meta property="og:title" content="h5i essays: agent browsers, sandboxes, and web security"><meta property="og:description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.">
 <meta property="og:url" content="https://h5i.dev/blog/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i essays: auditable browsing for AI agents">
-<meta name="twitter:description" content="Five essays on giving an AI agent a browser you can audit: the browse, contain, work, export, apply loop, the environment as the boundary, and what is evidence."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i essays: agent browsers, sandboxes, and web security">
+<meta name="twitter:description" content="Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
@@ -18,10 +18,10 @@
       "@type": "CollectionPage",
       "@id": "https://h5i.dev/blog/#page",
       "url": "https://h5i.dev/blog/",
-      "name": "h5i essays: auditable browsing for AI agents",
-      "description": "Five essays on giving an AI agent a browser you can audit: the browse, contain, work, export, apply loop, the environment as the boundary, and what is evidence.",
+      "name": "h5i essays: agent browsers, sandboxes, and web security",
+      "description": "Nine essays on auditable AI browsing, sandboxing, evidence, and comparisons of h5i with Burp Suite, OWASP ZAP, and Caido for agent testing.",
       "inLanguage": "en",
-      "dateModified": "2026-08-31",
+      "dateModified": "2026-09-09",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -51,37 +51,61 @@
     {
       "@type": "ItemList",
       "@id": "https://h5i.dev/blog/#list",
-      "name": "h5i essays: auditable browsing for AI agents",
+      "name": "h5i essays: agent browsers, sandboxes, and web security",
       "itemListElement": [
         {
           "@type": "ListItem",
           "position": 1,
+          "url": "https://h5i.dev/blog/ai-pentesting-tools/",
+          "name": "AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
           "url": "https://h5i.dev/blog/the-h5i-loop/",
           "name": "Browse, contain, work, export, apply"
         },
         {
           "@type": "ListItem",
-          "position": 2,
+          "position": 3,
           "url": "https://h5i.dev/blog/the-environment-is-the-sandbox/",
           "name": "The environment is the sandbox"
         },
         {
           "@type": "ListItem",
-          "position": 3,
+          "position": 4,
           "url": "https://h5i.dev/blog/choosing-agent-isolation/",
           "name": "Five tiers, five different promises"
         },
         {
           "@type": "ListItem",
-          "position": 4,
+          "position": 5,
           "url": "https://h5i.dev/blog/evidence-for-agent-work/",
           "name": "A transcript is not an audit trail"
         },
         {
           "@type": "ListItem",
-          "position": 5,
+          "position": 6,
           "url": "https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/",
           "name": "Assume the prompt injection worked"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "url": "https://h5i.dev/blog/burp-suite-vs-h5i-for-ai-agents/",
+          "name": "Burp Suite vs h5i for AI agents"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "url": "https://h5i.dev/blog/owasp-zap-vs-h5i-for-ai-agents/",
+          "name": "OWASP ZAP vs h5i for AI agents"
+        },
+        {
+          "@type": "ListItem",
+          "position": 9,
+          "url": "https://h5i.dev/blog/caido-vs-h5i-for-ai-agents/",
+          "name": "Caido vs h5i for AI agents"
         }
       ]
     }
@@ -99,17 +123,25 @@
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav><section class="index-hero"><div class="post-eyebrow">Design essays</div>
-<h1>Fewer posts. Sharper arguments.</h1><p>The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.</p></section><section class="post-list"><a class="post-card featured" href="/blog/the-h5i-loop/">
-<div class="card-meta"><span>Essay 01</span><span>11 min</span></div>
+<h1>Fewer posts. Sharper arguments.</h1><p>The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.</p></section><section class="post-list"><a class="post-card featured" href="/blog/ai-pentesting-tools/">
+<div class="card-meta"><span>Essay 01</span><span>12 min</span></div>
+<h2>AI pentesting tools: Burp Suite, ZAP, Caido, or h5i?</h2><p>Compare four tools for AI-assisted pentesting and authorized red teaming: Burp Suite, OWASP ZAP, Caido, and h5i, with decisions by operator, scanning, automation, and containment.</p></a><a class="post-card" href="/blog/the-h5i-loop/">
+<div class="card-meta"><span>Essay 02</span><span>11 min</span></div>
 <h2>Browse, contain, work, export, apply</h2><p>The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, then read a patch, a report and a receipt before anything crosses back.</p></a><a class="post-card" href="/blog/the-environment-is-the-sandbox/">
-<div class="card-meta"><span>Essay 02</span><span>12 min</span></div>
+<div class="card-meta"><span>Essay 03</span><span>12 min</span></div>
 <h2>The environment is the sandbox</h2><p>Coding agents do not execute one risky command. They operate a development environment, so that whole environment must become the security boundary.</p></a><a class="post-card" href="/blog/choosing-agent-isolation/">
-<div class="card-meta"><span>Essay 03</span><span>13 min</span></div>
+<div class="card-meta"><span>Essay 04</span><span>13 min</span></div>
 <h2>Five tiers, five different promises</h2><p>Choose coding-agent isolation by threat model: checkout separation, process confinement, L3/L4 egress control, portable containers, or a separate kernel.</p></a><a class="post-card" href="/blog/evidence-for-agent-work/">
-<div class="card-meta"><span>Essay 04</span><span>12 min</span></div>
-<h2>A transcript is not an audit trail</h2><p>Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.</p></a><a class="post-card" href="/blog/prompt-injection-is-a-boundary-problem/">
 <div class="card-meta"><span>Essay 05</span><span>12 min</span></div>
-<h2>Assume the prompt injection worked</h2><p>Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
+<h2>A transcript is not an audit trail</h2><p>Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.</p></a><a class="post-card" href="/blog/prompt-injection-is-a-boundary-problem/">
+<div class="card-meta"><span>Essay 06</span><span>12 min</span></div>
+<h2>Assume the prompt injection worked</h2><p>Prompt-injection defenses should bound a compromised coding agent's authority: filesystem reach, credentials, sockets, network destinations, and output.</p></a><a class="post-card" href="/blog/burp-suite-vs-h5i-for-ai-agents/">
+<div class="card-meta"><span>Essay 07</span><span>10 min</span></div>
+<h2>Burp Suite vs h5i for AI agents</h2><p>Compare Burp Suite and h5i for AI-assisted pentesting, CTFs, and authorized red teaming: proxy depth, agent interfaces, HTTP replay, recon, scope, isolation, and audit evidence.</p></a><a class="post-card" href="/blog/owasp-zap-vs-h5i-for-ai-agents/">
+<div class="card-meta"><span>Essay 08</span><span>9 min</span></div>
+<h2>OWASP ZAP vs h5i for AI agents</h2><p>Compare OWASP ZAP and h5i for AI-assisted web security testing: automated scanning, spiders, APIs, agent browsing, HTTP replay, scope enforcement, isolation, and evidence.</p></a><a class="post-card" href="/blog/caido-vs-h5i-for-ai-agents/">
+<div class="card-meta"><span>Essay 09</span><span>9 min</span></div>
+<h2>Caido vs h5i for AI agents</h2><p>Compare Caido and h5i for AI-assisted pentesting: proxy history, Replay, Automate, HTTPQL, workflows and agent skills versus bounded browsing, recon, sandboxing, and audit evidence.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
   <div class="legal">Apache 2.0 &middot; Built with Rust</div>
