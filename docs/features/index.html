@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i features: the agent browser, its sandbox, one dashboard</title>
-  <meta name="description" content="The h5i agent browser: pages as @ref outlines, a fail-closed request log, five isolation tiers to place a session in, and one read-only dashboard over it all.">
-  <meta name="keywords" content="agent browser, headless browser for ai agents, browser automation for llm agents, ai agent sandbox, web app testing agent, coding agent containment, claude code sandbox, codex sandbox, isolation tiers, egress allowlist, execution receipt, disposable dev environment, prompt injection containment, h5i box">
+  <title>h5i features: agent browser and web security testing</title>
+  <meta name="description" content="A browser and HTTP workbench for AI agents: scoped web security testing, evidence-linked recon, request replay, sandboxing, and auditable sessions.">
+  <meta name="keywords" content="agent browser, ai web security testing, ai pentesting, red team ai agent, ctf agent, hacking agent sandbox, Burp Suite alternative for agents, OWASP ZAP alternative, Caido alternative, HTTP request replay, endpoint recon, agent sandbox, egress allowlist, prompt injection containment">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -20,7 +20,7 @@
   <!-- Open Graph -->
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i features: the agent browser, its sandbox, one dashboard">
+  <meta property="og:title" content="h5i features: agent browser and web security testing">
   <meta property="og:description" content="A fast, lightweight browser agents control from the command line, with pages returned as structured snapshots and every action and request recorded. Place the session in a sandbox when a task needs a tighter boundary, then review it all from one screen.">
   <meta property="og:url" content="https://h5i.dev/features/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
@@ -30,7 +30,7 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i features: the agent browser, its sandbox, one dashboard">
+  <meta name="twitter:title" content="h5i features: agent browser and web security testing">
   <meta name="twitter:description" content="Read pages ~3x faster with ~86% less peak memory, control where the browser can connect, take over the sensitive steps, and review every session from one read-only dashboard.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta name="twitter:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
@@ -88,6 +88,8 @@
         "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
         "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
         "A disposable box holding the code, the toolchain, the dev server and the browser session",
+        "An HTTP workbench for captured requests: inspect, edit, replay, diff, match, and sequence",
+        "Evidence-linked endpoint recon with bounded crawling, calibration, and explicit states",
         "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt"
       ],
       "keywords": "browser for AI agents, agent browser, auditable browser, headless browser for AI agents, browser automation audit log, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, Claude Code, Codex",
@@ -239,8 +241,8 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Feature Overview</span>
-      <h1 class="section-title">A fast browser, a secure sandbox, and one place to see it all.</h1>
-      <p class="section-sub">h5i lets agents browse the web, run code and test apps without giving them unrestricted access to your machine.</p>
+      <h1 class="section-title">A fast agent browser, a scoped security workbench, and a sandbox around both.</h1>
+      <p class="section-sub">h5i lets agents browse, inspect HTTP traffic, map endpoints, and test authorized targets without giving them unrestricted access to your machine or the network.</p>
       <div class="divider"></div>
     </div>
 
@@ -311,6 +313,33 @@
         <div class="feat-name">Take over sensitive steps</div>
         <div class="feat-desc">Take control for logins, payments or approvals, then hand the session back to the agent. Credentials can be typed by you or substituted from the host by name.</div>
         <div class="feat-proves">handing control back invalidates the agent&#39;s page refs, so it re-reads before it acts.</div>
+      </div>
+
+      <!-- ── Web security ────────────────────────────────── -->
+      <div class="pillar-tag reveal" id="web-security">Web security<span>Give authorized pentest, red-team, and CTF agents a bounded workbench.</span></div>
+      <div class="feat-card flagship reveal">
+        <span class="feat-cmd">h5i websec show &#183; replay &#183; diff &#183; match</span>
+        <div class="feat-name">Inspect and replay captured HTTP traffic</div>
+        <div class="feat-desc">Capture exact messages, edit structured fields, resend requests through the same session policy, compare responses, and assert conditions. <a href="/guides/authorized-web-security-testing/" style="color:var(--red-text)">Run an authorized test &#8594;</a></div>
+        <div class="feat-proves">a response difference is preserved as evidence, not promoted into a vulnerability claim.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i recon extract &#183; crawl &#183; triage &#183; endpoints</span>
+        <div class="feat-name">Build an evidence-linked endpoint inventory</div>
+        <div class="feat-desc">Extract disclosed URLs, run a rate-limited crawl, calibrate soft 404s, and track every endpoint as candidate, observed, confirmed, refused, or gone.</div>
+        <div class="feat-proves">every observation names the HTTP message that supports it.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">--allow target.example &#183; --max-requests 200 &#183; --rate 4</span>
+        <div class="feat-name">Make the rules of engagement executable</div>
+        <div class="feat-desc">Turn permitted destinations, request ceilings, and rates into controls outside the agent prompt. h5i cannot grant authorization, but it can enforce the network scope you declare.</div>
+        <div class="feat-proves">an autonomous tester cannot quietly follow a redirect beyond the target allowlist.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">Burp Suite &#183; OWASP ZAP &#183; Caido</span>
+        <div class="feat-name">Choose the right security workbench</div>
+        <div class="feat-desc">h5i is narrower than a mature proxy or DAST platform: it is built for bounded agent-led sessions. <a href="/blog/ai-pentesting-tools/" style="color:var(--red-text)">Compare all four AI pentesting tools</a>, or read the detailed pages for <a href="/blog/burp-suite-vs-h5i-for-ai-agents/" style="color:var(--red-text)">Burp Suite</a>, <a href="/blog/owasp-zap-vs-h5i-for-ai-agents/" style="color:var(--red-text)">OWASP ZAP</a>, and <a href="/blog/caido-vs-h5i-for-ai-agents/" style="color:var(--red-text)">Caido</a>.</div>
+        <div class="feat-proves">scanner breadth, human workflow, and agent containment are different buying decisions.</div>
       </div>
 
       <!-- ── Sandbox ─────────────────────────────────────── -->
@@ -385,6 +414,9 @@
         </thead>
         <tbody>
           <tr><td>Let an agent browse a website</td><td><code>h5i browser open &lt;url&gt;</code></td></tr>
+          <tr><td>Run an authorized AI web security test</td><td><code>h5i browser open &lt;url&gt; --capture</code></td></tr>
+          <tr><td>Map a target under a request budget</td><td><code>h5i recon crawl --max-requests 200</code></td></tr>
+          <tr><td>Edit and replay an HTTP request</td><td><code>h5i websec replay &lt;request&gt;</code></td></tr>
           <tr><td>Give an agent an isolated copy of my repository</td><td><code>h5i box .</code></td></tr>
           <tr><td>Run and test an external pull request</td><td><code>h5i box --pr 1234</code></td></tr>
           <tr><td>Watch or take over the browser</td><td><code>h5i box view &lt;name&gt;</code></td></tr>

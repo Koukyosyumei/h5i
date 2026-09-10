@@ -1,15 +1,15 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i guides: drive an agent browser you can audit</title><meta name="description" content="Five guides to the h5i agent browser: drive a session and audit what it reached, box it, review an untrusted PR, write a policy, watch the page.">
+<title>h5i guides: agent browsing and web security testing</title><meta name="description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/guides/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i guides: drive an agent browser you can audit"><meta property="og:description" content="Five guides to the h5i agent browser: drive a session and audit what it reached, box it, review an untrusted PR, write a policy, watch the page.">
+<meta property="og:title" content="h5i guides: agent browsing and web security testing"><meta property="og:description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.">
 <meta property="og:url" content="https://h5i.dev/guides/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: drive an agent browser you can audit">
-<meta name="twitter:description" content="Five guides to the h5i agent browser: drive a session and audit what it reached, box it, review an untrusted PR, write a policy, watch the page."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: agent browsing and web security testing">
+<meta name="twitter:description" content="Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
 <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
@@ -18,10 +18,10 @@
       "@type": "CollectionPage",
       "@id": "https://h5i.dev/guides/#page",
       "url": "https://h5i.dev/guides/",
-      "name": "h5i guides: drive an agent browser you can audit",
-      "description": "Five guides to the h5i agent browser: drive a session and audit what it reached, box it, review an untrusted PR, write a policy, watch the page.",
+      "name": "h5i guides: agent browsing and web security testing",
+      "description": "Six h5i guides for auditable agent browsing, sandboxed code review, and authorized AI web security testing for pentests, red teams, and CTFs.",
       "inLanguage": "en",
-      "dateModified": "2026-08-31",
+      "dateModified": "2026-09-09",
       "isPartOf": {
         "@id": "https://h5i.dev/#website"
       },
@@ -51,7 +51,7 @@
     {
       "@type": "ItemList",
       "@id": "https://h5i.dev/guides/#list",
-      "name": "h5i guides: drive an agent browser you can audit",
+      "name": "h5i guides: agent browsing and web security testing",
       "itemListElement": [
         {
           "@type": "ListItem",
@@ -82,6 +82,12 @@
           "position": 5,
           "url": "https://h5i.dev/guides/watch-the-browser/",
           "name": "Watch the page, then take the controls"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "url": "https://h5i.dev/guides/authorized-web-security-testing/",
+          "name": "Run an authorized web security test with an AI agent"
         }
       ]
     }
@@ -109,7 +115,9 @@
 <div class="card-meta"><span>Step 04</span><span>10 min</span></div>
 <h2>Write down what the agent may reach</h2><p>Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.</p></a><a class="post-card" href="/guides/watch-the-browser/">
 <div class="card-meta"><span>Step 05</span><span>9 min</span></div>
-<h2>Watch the page, then take the controls</h2><p>Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
+<h2>Watch the page, then take the controls</h2><p>Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.</p></a><a class="post-card" href="/guides/authorized-web-security-testing/">
+<div class="card-meta"><span>Step 06</span><span>12 min</span></div>
+<h2>Run an authorized web security test with an AI agent</h2><p>Use h5i for an authorized pentest, CTF, or red-team exercise: scope an agent's network access, capture HTTP traffic, map endpoints, replay requests, and preserve evidence.</p></a></section><footer class="blog-footer"><div class="blog-footer-inner">
   <div class="brand">h5i<span class="red"> / high-five</span></div>
   <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
   <div class="legal">Apache 2.0 &middot; Built with Rust</div>

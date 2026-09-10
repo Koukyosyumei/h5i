@@ -1,0 +1,168 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI web security testing with h5i | Authorized guide</title><meta name="description" content="Run an authorized pentest, CTF, or red-team exercise with an AI agent: scope access, map endpoints, replay HTTP requests, and preserve evidence.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/authorized-web-security-testing/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="AI web security testing with h5i | Authorized guide"><meta property="og:description" content="Run an authorized pentest, CTF, or red-team exercise with an AI agent: scope access, map endpoints, replay HTTP requests, and preserve evidence.">
+<meta property="og:url" content="https://h5i.dev/guides/authorized-web-security-testing/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="AI web security testing with h5i | Authorized guide">
+<meta name="twitter:description" content="Run an authorized pentest, CTF, or red-team exercise with an AI agent: scope access, map endpoints, replay HTTP requests, and preserve evidence."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Run an authorized web security test with an AI agent",
+      "description": "Run an authorized pentest, CTF, or red-team exercise with an AI agent: scope access, map endpoints, replay HTTP requests, and preserve evidence.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-09-09",
+      "dateModified": "2026-09-09",
+      "image": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "mainEntityOfPage": "https://h5i.dev/guides/authorized-web-security-testing/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Run an authorized web security test with an AI agent",
+          "item": "https://h5i.dev/guides/authorized-web-security-testing/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Can I use h5i for CTFs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, when the CTF rules permit automation. A target-scoped session, bounded crawl, endpoint ledger, and request replay fit web challenges particularly well."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is h5i a vulnerability scanner?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It records browsing, discovery, and HTTP experiments. It deliberately ships no scanner, exploit library, payload generator, or wordlist."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can h5i enforce a pentest scope?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It can enforce allowed network destinations and request budgets, but it cannot encode every rule of engagement or establish legal authorization."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css?v=3fac769d8f"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 06 / Web security &middot; 2026-09-09</div>
+<h1>Run an authorized web security test with an AI agent</h1><p class="post-deck">An offensive-security agent needs room to investigate and a hard edge around the assignment. This workflow gives it both: one target-scoped session, a bounded discovery ledger, an HTTP workbench, and a record you can review.</p>
+<div class="post-meta"><span>12 min read</span><span>Pentesting &middot; CTF &middot; Red team</span></div></header>
+
+<div class="callout"><strong>Outcome.</strong> You will create a session for a system you own or are explicitly authorized to test, inventory its exposed endpoints, change and replay one captured request, compare the response, and close the session with its evidence intact.</div>
+<figure class="feature-figure"><img src="/_static/browser-authority-threat-model.svg" alt="An authorized target is reached through a policy-controlled browser session while credentials, localhost services, and unrelated sites remain outside its authority"><figcaption>Scope should be executable, not a sentence in a prompt. The session policy decides which origins the browser can reach; the ledger records what it learned inside that boundary.</figcaption></figure>
+<h2 id="before">Before you start: write down authorization</h2>
+<p>Use this guide only for a CTF target, lab, bug-bounty asset, or application whose owner has authorized the test. Record the permitted hosts, accounts, techniques, request rate, and time window before running an agent. h5i can enforce destinations and bound a crawl, but it cannot decide whether you have permission.</p>
+<p>This walkthrough uses <code>https://target.example</code> as a placeholder. Replace it only with an in-scope host. Start conservatively: a single origin, four requests per second, and no path wordlist until the target rules allow it.</p>
+<h2 id="install">1. Install the HTTP and recon plugins</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ curl -fsSL https://h5i.dev/install.sh | sh -s -- --websec --recon
+$ h5i plugin list</code></pre></div></div>
+<p><strong>Check:</strong> the list identifies <code>websec</code> as the HTTP workbench and <code>recon</code> as the endpoint ledger. They are optional plugins, so a default h5i install does not imply they are present.</p>
+<h2 id="session">2. Open a captured, target-scoped session</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser open https://target.example --capture --allow target.example
+$ h5i browser status</code></pre></div></div>
+<p><code>--capture</code> keeps request and response bodies because replay needs the exact message. That store can contain credentials and personal data. Treat it as sensitive test evidence and do not export it casually.</p>
+<p><strong>Check:</strong> status names the intended target and the request log. If the application legitimately uses another origin, add that origin explicitly after confirming it is in scope; do not replace the allowlist with unrestricted egress.</p>
+<h2 id="observe">3. Observe before you enumerate</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser snapshot
+$ h5i recon extract
+$ h5i recon known
+$ h5i recon endpoints --json</code></pre></div></div>
+<p><code>extract</code> reads URLs already disclosed by pages and bundles. <code>known</code> checks conventional files such as <code>robots.txt</code>, <code>sitemap.xml</code>, and <code>security.txt</code>. Discovery and testing remain separate: a candidate endpoint is not called a vulnerability.</p>
+<p><strong>Check:</strong> every observed endpoint names the message that supports it. A candidate is only a lead; <code>confirmed</code> means its answer differs from the calibrated missing-path response.</p>
+<h2 id="crawl">4. Run bounded reconnaissance</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i recon crawl --max-requests 200 --rate 4
+$ h5i recon triage --calibrate
+$ h5i recon endpoints --state confirmed --json</code></pre></div></div>
+<p>The request ceiling and rate are part of the test, not tuning trivia. They prevent an autonomous crawler from silently turning a small assessment into a load event. h5i ships no payloads or wordlists; if the rules permit path discovery, you provide the reviewed input with <code>recon paths --wordlist</code>.</p>
+<p><strong>Check:</strong> inspect <code>h5i recon jobs list</code> and the endpoint states. A refused row means policy declined the request; it does not mean the endpoint is absent or safe.</p>
+<h2 id="replay">5. Inspect and replay one HTTP request</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i websec requests
+$ h5i websec show req_42 --raw
+$ h5i websec replay req_42 --set query.id=456
+$ h5i websec diff res_42 res_43
+$ h5i websec match res_43 --status 200 --contains ok</code></pre></div></div>
+<p>Choose a request permitted by the rules of engagement and change one field at a time. Replay travels through the same session policy and record as browsing; it is not a side channel around scope. The response diff is evidence of a difference, not proof of impact.</p>
+<p><strong>Check:</strong> verify the replay appears in the session and that the destination did not change. Escalate only after a person confirms the observation and the next action remains authorized.</p>
+<h2 id="audit">6. Audit, report, and stop</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser audit
+$ h5i recon export --out endpoints.jsonl
+$ h5i browser close</code></pre></div></div>
+<p>Keep three categories distinct in the report: observed HTTP facts, recon state, and the agent's interpretation. Include request identifiers so another reviewer can trace a claim back to a message. Redact captured secrets before sharing any artifact.</p>
+<p><strong>Stopping point:</strong> the session is closed, no new requests can be issued under its identity, and its ending is recorded. Do not leave a captured authenticated session live after the authorization window ends.</p>
+<h2 id="gotchas">What this workflow does not do</h2>
+<ul><li>It does not grant authorization or infer scope from a URL.</li><li>It does not provide a vulnerability scanner, exploit library, payload generator, or built-in wordlist.</li><li>It does not make agent conclusions trustworthy. Message records support observations; severity and exploitability still require review.</li><li>It does not match every browser API. Run Chromium inside an h5i box when compatibility matters more than engine-level capture.</li></ul>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#h5i-websec">HTTP workbench commands</a></li><li><a href="/manual/#h5i-recon">Recon ledger and endpoint states</a></li><li><a href="/manual/#h5i-browser">Browser session policy and audit</a></li><li><a href="/blog/ai-pentesting-tools/">AI pentesting tools compared</a></li><li><a href="/blog/burp-suite-vs-h5i-for-ai-agents/">Burp Suite vs h5i for AI agents</a></li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Can I use h5i for CTFs?</summary><div class="faq-answer">Yes, when the CTF rules permit automation. A target-scoped session, bounded crawl, endpoint ledger, and request replay fit web challenges particularly well.</div></details><details class="faq-item"><summary>Is h5i a vulnerability scanner?</summary><div class="faq-answer">No. It records browsing, discovery, and HTTP experiments. It deliberately ships no scanner, exploit library, payload generator, or wordlist.</div></details><details class="faq-item"><summary>Can h5i enforce a pentest scope?</summary><div class="faq-answer">It can enforce allowed network destinations and request budgets, but it cannot encode every rule of engagement or establish legal authorization.</div></details></div>
+<a class="next-up" href="/blog/burp-suite-vs-h5i-for-ai-agents/"><span class="label">Choose the workbench</span><h3>Burp Suite vs h5i for AI agents</h3><p>Compare a mature human-led proxy platform with an agent-native, policy-controlled session.</p></a>
+<div class="post-cta"><h3>Test only what you are allowed to test</h3><p>Start with one origin, an explicit request budget, and a captured session you can audit.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-websec">Read the workbench reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js?v=41dbda103a" defer></script><script src="/_static/highlight.js?v=ed81eee4e6" defer></script></body></html>
