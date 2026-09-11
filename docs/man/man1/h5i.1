@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH h5i 1  "h5i 0.4.2" 
 .SH NAME
-h5i \- Disposable, confined development environments for coding agents
+h5i \- The red\-teaming browser for AI agents: page automation with direct control over HTTP traffic, in sessions that stay contained and auditable
 .SH SYNOPSIS
 \fBh5i\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-Disposable, confined development environments for coding agents
+The red\-teaming browser for AI agents: page automation with direct control over HTTP traffic, in sessions that stay contained and auditable
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -1814,7 +1814,7 @@ Send one of this session's own requests again, with changes
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-headers\fR] [\fB\-\-set\-each\fR] [\fB\-\-raw\-request\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
+\fBresend\fR [\fB\-\-set\fR] [\fB\-\-set\-file\fR] [\fB\-\-unset\fR] [\fB\-\-create\fR] [\fB\-\-repeat\fR] [\fB\-\-race\fR] [\fB\-\-no\-follow\fR] [\fB\-\-reset\-budget\fR] [\fB\-\-as\fR] [\fB\-\-keep\-credentials\fR] [\fB\-\-raw\-target\fR] [\fB\-\-raw\-headers\fR] [\fB\-\-set\-each\fR] [\fB\-\-raw\-request\fR] [\fB\-\-walk\fR] [\fB\-\-rate\fR] [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISEQ\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1892,6 +1892,16 @@ Send once per line, as `query.id=./ids.txt`, after shared edits
 Send a complete request unchanged from this file; `\-` reads stdin.
 
 The stored URL supplies the authority for policy checks and dialing.
+.TP
+\fB\-\-walk\fR \fI<PATH>\fR
+Walk a list of sends from this file; `\-` reads stdin.
+
+`{"steps":[{"label":"alice/admin","set":["query.user=alice", "json.role=admin"]},...]}`: the general form of `\-\-set\-each`, where one send sets more than one target. The combinations come from the caller, as the values do; nothing here generates them.
+.TP
+\fB\-\-rate\fR \fI<PER_SECOND>\fR
+Send at most this many requests per second.
+
+A walk of a thousand values is the one thing here that looks like an attack to whoever is watching the target, and an authorised engagement usually comes with a number.
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open

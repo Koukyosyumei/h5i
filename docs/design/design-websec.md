@@ -1,4 +1,4 @@
-# Design: the HTTP workbench, sections W1 to W20
+# Design: the HTTP workbench, sections W1 to W23
 
 Status: proposed, 2026-09-02. This design turns h5i's HTTP records into an
 agent-callable workbench. Sections marked "built" describe later progress.
@@ -97,7 +97,8 @@ The workbench is mostly a matter of exposing machinery that is shipped.
    edits are applied *in the broker process*, so the renderer never holds the
    credential a stored request carries.
 4. **No timing detail, parallelism, site map, sequence engine, DOM taint or
-   OAST.** Features 11, 12, 15 to 20. Match and extract (feature 14) were built
+   OAST.** Features 11, 12, 15 to 20. Experiments and findings (21, 22) were
+   built 2026-09-10; see W22 and W23. Match and extract (feature 14) were built
    2026-09-03: `h5i websec match` takes regex, substring, JSON path, header,
    status and length conditions, ANDs them, hands back what each captured, and
    keeps three answers apart in its exit code (matched, did not match, could not
@@ -479,7 +480,11 @@ Two things have to be right:
 - It composes with `budget.rs`. A parallel replay spends from the same
   `Limits`, so a runaway loop hits `max_requests` exactly as a runaway page
   does. Rate limiting is a first-class flag (`--rate R`) because a CTF target
-  and an authorised engagement both have someone who will notice.
+  and an authorised engagement both have someone who will notice. This
+  paragraph described `--rate` as built for a week in which it was not: the
+  flag arrived 2026-09-10 with W22, on `resend` and on `experiment` both,
+  measured from the last send rather than as a sleep between them, and refused
+  together with `--race`, which releases at one moment by definition.
 - It is not a fuzzer. The payloads come from the caller, one per line on stdin
   or as a list in an edits file. h5i sends them efficiently, records each, and
   returns a table. It never generates one.
@@ -578,6 +583,8 @@ The twenty features, ranked, with the phase that carries them.
 | 18 | site map and inventory | Target site map | B, built |
 | 19 | DOM instrumentation | DOM Invader | C |
 | 20 | OAST callbacks | Collaborator | C |
+| 21 | multi-position experiments | Intruder, Caido Automate | B, built |
+| 22 | findings | none: Burp's is a report | B, built |
 
 **Phase A, the workbench.** Features 1 to 7, 9, 13, 14, plus W9's JSON contract
 and the plugin packaging of W21. The engine work is the message store, the
@@ -723,6 +730,98 @@ control. Anyone who can install a plugin can install any tool. What it buys is
 that the capability is *named* at install time and visible in `h5i plugin list`,
 which is the same stance the rest of h5i takes toward capability, and none of
 the enforcement in W16 depends on it.
+
+## W22. Experiments
+
+Built 2026-09-10. Feature 21: Intruder's shape for a caller that is not looking
+at a screen.
+
+`replay --set-each` walks one target over a file of values, which covers a
+surprising amount and stops exactly where two things vary at once. `h5i websec
+experiment <plan.json>` is the general form:
+
+```json
+{"request": "req_42",
+ "positions": [
+   {"name": "user", "target": "query.user", "values_file": "users.txt"},
+   {"name": "role", "target": "json.role", "values": ["user", "admin"]}],
+ "strategy": "product",
+ "baseline": "res_42",
+ "extract": {"error": "regex:SQL error: (\\w+)"},
+ "rate": 4}
+```
+
+Three decisions worth defending.
+
+**The plugin expands, the engine sends.** The combinations are computed here
+and handed to `h5i browser resend --walk -` as one walk on standard input; a
+step is a label and a list of `target=value` edits, and the engine applies them
+after the shared ones. So an experiment is still the engine's fetches, checked
+by its policy, spent from its budget and written into its receipts (W21), and
+`--set-each` became the one-target case of the same code path rather than a
+second one beside it.
+
+**The answer is clusters, not responses.** The fold is `h5i-wire::triage`, the
+same one recon uses, with one knob: recon groups by shape, because two
+renderings of one template are the noise it came to fold away, and an
+experiment groups by shape *and by what the body says*, because "same status,
+same length, different answer" is precisely the result it came for. Five
+hundred sends come back as a handful of rows, and every row still names every
+message it folded, so `h5i websec show` reads any of them.
+
+**No transforms.** The obvious next field is `"transforms": ["urlencode"]`, and
+it is not built, because the edit language already encodes what an edit needs
+to be correct (W8) and anything past that is the caller's own encoding of the
+caller's own value. A payload list that needs double-encoding is a payload list
+with double-encoded values in it. Wordlists are input, never cargo, and so are
+their encodings.
+
+Identity is a position like any other: `"as": "other-session"` sends under
+another session's credentials, and the results are then read from *that*
+session's store. Reading the calling session's was the one bug the live run
+found, and it did not fail loudly. It answered with whatever message happened
+to hold the same number.
+
+What is deliberately absent is concurrency. `"concurrency": 8` would send the
+walk from a pool, and the receipts would stop being in request order for the
+first time in this engine — the property `h5i browser`'s own comments call the
+reason its client is serial. A race already has `--race`, which is honest about
+being a burst; a walk that wants to be faster can raise `--rate`.
+
+## W23. Findings
+
+Built 2026-09-10. Feature 22, and the first thing here with no Burp analogue
+worth naming: Burp's findings are a scanner's output and a report generator's
+input, and this is neither.
+
+`h5i websec finding create|list|show|update` keeps an append-only log beside
+the message store: a title, a state, notes, the message ids it rests on, and a
+file that reproduces it. Owner-only, never in an export, dropped with the
+capture, for the reason W5 gives about the store and N5 about the ledger.
+
+**The state is free text, deliberately.** In the ledger a state is an enum
+because the fold reads it and a wrong one changes an inventory (N5). Nothing
+reads a finding's state, so nothing restricts it: an agent that has to pick the
+nearest of five words spends a turn on vocabulary rather than on the target,
+and `filter-bypass-worked?` is a better note to its future self than
+`candidate`.
+
+**h5i asserts exactly one thing:** that every message id cited is a message
+this session holds. A finding whose evidence names nothing reads exactly like
+one whose evidence is real, so it is refused at write time rather than
+discovered at the end of an engagement. Everything else in the record is the
+agent's claim, which is the same boundary the rest of this file keeps: h5i
+reports differences, and calling one a vulnerability is the agent's to sign.
+
+**There is no `check` verb, and that is not an omission.** Re-running a repro
+is `sequence` or `experiment`, and asking whether the answer still holds is
+`match`, which already exits 0, 1 and 2 for held, did not hold and could not
+look. A `check finding_7` would add a path lookup and a write-back, and the
+property it looks like it adds — that a re-verification cannot be fabricated —
+is already carried by the receipts: a state of "fixed" beside `--evidence
+req_1204` is checkable by anyone who can read the store. If it returns it will
+be as a batch over every finding, for a repository that has actually wired
+findings into CI.
 
 ## What is deliberately not built
 

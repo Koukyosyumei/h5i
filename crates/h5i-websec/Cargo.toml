@@ -29,3 +29,6 @@ serde = { workspace = true }
 regex = "1"
 serde_json = { workspace = true }
 url = "2.5"
+
+[dev-dependencies]
+tempfile = "3.8"

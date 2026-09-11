@@ -8,6 +8,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use url::Url;
 
+// The shape and its tolerance live in `h5i-wire`: recon compares responses and
+// so does the workbench's experiment. What stays here is what recon does with
+// one, which is decide that a login has expired.
+pub use h5i_wire::triage::{Fingerprint, SIZE_TOLERANCE};
+
 /// What bounds a crawl. Every one of these is named on the command line and
 /// reported when the job ends: a crawl that chose its own limits would be a
 /// scan with a friendly name.
@@ -160,67 +165,6 @@ pub fn normalise(url: &Url) -> String {
         url.path(),
         query
     )
-}
-
-/// What a response looked like, coarsely enough that two renderings of the
-/// same page match and finely enough that a different page does not.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Fingerprint {
-    pub status: Option<u16>,
-    pub content_type: String,
-    /// The body's size, kept exactly and compared loosely. A bucket stored
-    /// here would put two sizes either side of a boundary in different
-    /// buckets, which is the one case the tolerance exists for.
-    pub size: u64,
-    /// Where a redirect pointed, path only.
-    pub location: Option<String>,
-}
-
-impl Fingerprint {
-    pub fn of(status: Option<u16>, content_type: &str, bytes: u64, location: Option<&str>) -> Self {
-        Self {
-            status,
-            content_type: content_type
-                .split(';')
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase(),
-            size: bytes,
-            location: location.map(|value| {
-                Url::parse(value)
-                    .map(|url| url.path().to_string())
-                    .unwrap_or_else(|_| value.split('?').next().unwrap_or_default().to_string())
-            }),
-        }
-    }
-}
-
-/// How far two sizes may differ and still be the same page: about an eighth.
-///
-/// A rendered page carries a timestamp, a nonce and a session name, and none of
-/// those makes it a different page.
-pub const SIZE_TOLERANCE: f64 = 0.125;
-
-impl Fingerprint {
-    /// Whether these are two sightings of one page.
-    pub fn matches(&self, other: &Fingerprint) -> bool {
-        if self.status != other.status
-            || self.content_type != other.content_type
-            || self.location != other.location
-        {
-            return false;
-        }
-        let (small, large) = if self.size <= other.size {
-            (self.size, other.size)
-        } else {
-            (other.size, self.size)
-        };
-        if large == 0 {
-            return true;
-        }
-        (large - small) as f64 <= large as f64 * SIZE_TOLERANCE
-    }
 }
 
 /// Whether a re-probed page changed shape, meaning the login is gone.

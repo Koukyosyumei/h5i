@@ -43,6 +43,27 @@ use h5i_core::ui::SUCCESS;
 /// says what it was waiting for and leaves the engine's own log behind.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The most sends one `--set-each` or `--walk` may ask for.
+///
+/// The same ceiling `--repeat` has. A walk is bounded here as well as by the
+/// page's budget, because the budget is a number the caller can reset and this
+/// is the one an authorised engagement was told about.
+const MAX_WALK_STEPS: usize = 1000;
+
+/// Read a file named by a flag, or standard input when it is `-`.
+fn read_arg_file(flag: &str, path: &str) -> anyhow::Result<String> {
+    if path == "-" {
+        use std::io::Read as _;
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|e| anyhow::anyhow!("{flag} -: stdin could not be read: {e}"))?;
+        return Ok(text);
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("{flag}: {path} could not be read: {e}"))
+}
+
 /// Refuse an identity that lives in a file when the session runs in a box.
 #[cfg(feature = "identity")]
 fn refuse_a_file_identity_in_a_box(in_box: Option<&str>, selector: &str) -> anyhow::Result<()> {
@@ -1005,6 +1026,21 @@ pub enum BrowserCommands {
         /// The stored URL supplies the authority for policy checks and dialing.
         #[arg(long = "raw-request", value_name = "PATH")]
         raw_request: Option<String>,
+        /// Walk a list of sends from this file; `-` reads stdin.
+        ///
+        /// `{"steps":[{"label":"alice/admin","set":["query.user=alice",
+        /// "json.role=admin"]},…]}`: the general form of `--set-each`, where
+        /// one send sets more than one target. The combinations come from the
+        /// caller, as the values do; nothing here generates them.
+        #[arg(long = "walk", value_name = "PATH", conflicts_with = "set_each")]
+        walk: Option<String>,
+        /// Send at most this many requests per second.
+        ///
+        /// A walk of a thousand values is the one thing here that looks like an
+        /// attack to whoever is watching the target, and an authorised
+        /// engagement usually comes with a number.
+        #[arg(long, value_name = "PER_SECOND")]
+        rate: Option<f64>,
         /// Which session, when more than one is open.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
@@ -1555,6 +1591,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             raw_headers,
             set_each,
             raw_request,
+            walk,
+            rate,
             session,
             json,
         } => {
@@ -1645,10 +1683,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                     anyhow::bail!("--set-each: {path} has no values in it");
                 }
                 // Match the `--repeat` ceiling.
-                if values.len() > 1000 {
+                if values.len() > MAX_WALK_STEPS {
                     anyhow::bail!(
-                        "--set-each: {path} has {} values, and 1000 is the most one walk sends. \
-                         Split the file",
+                        "--set-each: {path} has {} values, and {MAX_WALK_STEPS} is the most one \
+                         walk sends. Split the file",
                         values.len()
                     );
                 }
@@ -1658,6 +1696,41 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                     argv.push("--each-value".into());
                     argv.push(value.trim_end_matches('\r').to_string());
                 }
+            }
+            if let Some(path) = walk {
+                let text = read_arg_file("--walk", &path)?;
+                let parsed: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| anyhow::anyhow!("--walk: {path} is not JSON: {e}"))?;
+                let steps = parsed
+                    .get("steps")
+                    .and_then(|steps| steps.as_array())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "--walk: {path} has no `steps` list. One send per step, as \
+                             `{{\"steps\":[{{\"label\":\"alice\",\"set\":\
+                             [\"query.user=alice\"]}}]}}`"
+                        )
+                    })?;
+                if steps.is_empty() {
+                    anyhow::bail!("--walk: {path} has no steps in it");
+                }
+                // The same ceiling `--set-each` has, for the same reason.
+                if steps.len() > MAX_WALK_STEPS {
+                    anyhow::bail!(
+                        "--walk: {path} has {} steps, and {MAX_WALK_STEPS} is the most one walk \
+                         sends. Split the file",
+                        steps.len()
+                    );
+                }
+                argv.push("--walk-json".into());
+                argv.push(parsed.to_string());
+            }
+            if let Some(rate) = rate {
+                if rate <= 0.0 || !rate.is_finite() {
+                    anyhow::bail!("--rate is sends per second and has to be a positive number");
+                }
+                argv.push("--rate".into());
+                argv.push(rate.to_string());
             }
             // Encode arbitrary request bytes for the JSON control channel.
             if let Some(path) = raw_request {

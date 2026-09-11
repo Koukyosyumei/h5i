@@ -763,6 +763,15 @@ enum SessionVerb {
         /// Ordered `--set-each` values.
         #[arg(long = "each-value", value_name = "VALUE")]
         each_values: Vec<String>,
+        /// A walk as JSON: `{"steps":[{"label":…,"set":["target=value",…]},…]}`.
+        ///
+        /// The general form of `--set-each`, where one send may set more than
+        /// one target. What `h5i browser resend --walk` passes on.
+        #[arg(long = "walk-json", value_name = "JSON", conflicts_with = "set_each")]
+        walk_json: Option<String>,
+        /// At most this many sends per second.
+        #[arg(long, value_name = "PER_SECOND")]
+        rate: Option<f64>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1681,6 +1690,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             raw_headers,
             set_each,
             each_values,
+            walk_json,
+            rate,
             at,
         } => {
             let composed: Option<serde_json::Value> = match request {
@@ -1710,6 +1721,15 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     base64::engine::general_purpose::STANDARD.encode(&bytes),
                 ));
             }
+            let walk: Option<serde_json::Value> = match walk_json {
+                None => None,
+                Some(text) => match serde_json::from_str(text) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        return Err(H5iError::Metadata(format!("`--walk` is not JSON: {e}")));
+                    }
+                },
+            };
             (
                 at,
                 serde_json::json!({
@@ -1727,10 +1747,11 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "raw_target": raw_target,
                     "raw_request": raw_request,
                     "raw_headers": raw_headers,
-                    "each": set_each.as_ref().map(|target| serde_json::json!({
+                    "each": walk.or_else(|| set_each.as_ref().map(|target| serde_json::json!({
                         "target": target,
                         "values": each_values,
-                    })),
+                    }))),
+                    "rate": rate,
                 }),
             )
         }

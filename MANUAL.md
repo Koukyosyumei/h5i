@@ -1239,10 +1239,57 @@ h5i websec show req_42 --raw                     # one message, exactly
 h5i websec replay req_42 --set query.id=456      # edit and resend
 h5i websec diff res_42 res_43                    # compare two answers
 h5i websec match res_43 --status 200 --contains ok
+h5i websec experiment ./plan.json                # many sends, folded to clusters
+h5i websec finding create --title … --evidence req_42
 ```
 
 Capture is opt-in (`--capture`) because the message store holds bodies and
 credentials in full. It is never included in an export unless it is named.
+
+### Experiments
+
+One request sent many ways, with the answers folded into clusters. The plan
+names what varies; the values are yours, and nothing here generates one.
+
+```json
+{"request": "req_42",
+ "positions": [
+   {"name": "user", "target": "query.user", "values_file": "users.txt"},
+   {"name": "role", "target": "json.role", "values": ["user", "admin"]}],
+ "strategy": "product",
+ "baseline": "res_42",
+ "extract": {"error": "regex:SQL error: (\\w+)"},
+ "rate": 4}
+```
+
+`product` sends every combination and `zip` takes the nth value of each
+position together. Responses group by status, type, redirect target, size and
+*what the body says*, so two answers of the same shape and length stay apart;
+five hundred sends come back as a handful of rows, each naming every message it
+folded. `"as": "other-session"` sends under another identity, and the results
+are read from that session's store.
+
+The ceiling is 1000 sends per experiment, and `--rate` is a ceiling on what the
+target sees. Both are also on `h5i browser resend`, as `--walk` and `--rate`.
+
+### Findings
+
+What the agent concluded, and the evidence it stands on.
+
+```bash
+h5i websec finding create --title "cross-tenant invoice read" \
+    --state "verified once" --evidence req_42,res_43 --repro ./exploit.json
+h5i websec finding update finding_1 --note "only on the JSON endpoint"
+h5i websec finding list
+```
+
+The log is append-only, so what was believed at turn 30 is still readable at
+turn 300. The title, state and repro replace; notes and evidence accumulate.
+`--state` is free text: h5i does not read it, so h5i does not restrict it.
+
+h5i asserts one thing here, that every message id cited is a message this
+session holds. Whether the claim is true is the agent's to say. Findings live
+beside the message store, owner-only, and are never in an export.
 
 `h5i browser rpc --stdio` is the same verbs over one process: one JSON object
 per line in, one per line out, ids matched. A loop that sends hundreds of

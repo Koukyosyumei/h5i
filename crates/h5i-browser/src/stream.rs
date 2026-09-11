@@ -1701,16 +1701,46 @@ fn control_verb_inner(
                     .get("raw_headers")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                // Two shapes, one walk. `{target, values}` is what `--set-each`
+                // sends, and `{steps}` is the general form an experiment
+                // expands to, where one send sets more than one target.
                 each: request.get("each").and_then(|each| {
-                    let target = each.get("target")?.as_str()?.to_string();
-                    let values: Vec<String> = each
-                        .get("values")?
-                        .as_array()?
-                        .iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect();
-                    (!values.is_empty()).then_some(crate::broker::Each { target, values })
+                    let walk = match each.get("steps").and_then(Value::as_array) {
+                        Some(steps) => crate::broker::Each {
+                            steps: steps
+                                .iter()
+                                .filter_map(|step| {
+                                    let set: Vec<String> = step
+                                        .get("set")?
+                                        .as_array()?
+                                        .iter()
+                                        .filter_map(|v| v.as_str().map(str::to_string))
+                                        .collect();
+                                    (!set.is_empty()).then(|| crate::broker::Step {
+                                        label: step
+                                            .get("label")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        set,
+                                    })
+                                })
+                                .collect(),
+                        },
+                        None => {
+                            let target = each.get("target")?.as_str()?.to_string();
+                            let values: Vec<String> = each
+                                .get("values")?
+                                .as_array()?
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect();
+                            crate::broker::Each::over(&target, values)
+                        }
+                    };
+                    (!walk.steps.is_empty()).then_some(walk)
                 }),
+                rate: request.get("rate").and_then(Value::as_f64),
             };
             let strings = |key: &str| -> Vec<String> {
                 request

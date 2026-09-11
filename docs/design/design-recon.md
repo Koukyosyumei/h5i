@@ -345,7 +345,9 @@ What an agent gets back from a five thousand request run is on the order of
 twenty rows: the clusters, their sizes, and the outliers. That is the difference
 between a tool an agent can drive and a tool that fills its context window.
 
-Built 2026-09-07 in `triage.rs`. Calibration is per directory and persisted
+Built 2026-09-07 in `triage.rs`, and moved down to `h5i-wire::triage` on
+2026-09-10 when the workbench's experiment needed the same fold (W22). Recon
+asks for `By::Shape`, which is what folds a template's renderings together. Calibration is per directory and persisted
 beside the ledger's cursor, so the cheap verb stays cheap. Two rules the code
 adds: a baseline whose probes disagree with each other is *unstable* and
 confirms nothing, because a directory that answers unpredictably would confirm

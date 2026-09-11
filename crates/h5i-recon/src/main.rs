@@ -1119,7 +1119,7 @@ fn triage(
         let body = h5i_recon::store::body_text(&store, &message.response.body).unwrap_or_default();
         samples.push(h5i_recon::triage::Sample {
             endpoint: endpoint.id.clone(),
-            path: endpoint.path.clone(),
+            name: endpoint.path.clone(),
             req: req.clone(),
             fingerprint: h5i_recon::crawl::Fingerprint::of(
                 message.response.status,
@@ -1145,7 +1145,7 @@ fn triage(
         };
         let mut directories: Vec<String> = samples
             .iter()
-            .map(|sample| h5i_recon::triage::directory_of(&sample.path))
+            .map(|sample| h5i_recon::triage::directory_of(&sample.name))
             .collect();
         directories.sort();
         directories.dedup();
@@ -1212,9 +1212,9 @@ fn triage(
     let mut verdicts = Vec::new();
     let mut confirmed = 0usize;
     let mut nothing_here = 0usize;
-    let clusters = h5i_recon::triage::cluster(&samples);
+    let clusters = h5i_recon::triage::cluster(&samples, h5i_recon::triage::By::Shape);
     for sample in &samples {
-        let directory = h5i_recon::triage::directory_of(&sample.path);
+        let directory = h5i_recon::triage::directory_of(&sample.name);
         let Some(baseline) = progress.baselines.get(&directory) else {
             continue;
         };
@@ -1299,11 +1299,11 @@ fn triage(
     println!();
     for cluster in &clusters {
         println!("  x{:<5} {}", cluster.count, cluster.label);
-        for path in &cluster.paths {
-            println!("           {}", preview(path));
+        for name in &cluster.names {
+            println!("           {}", preview(name));
         }
-        if cluster.count > cluster.paths.len() {
-            println!("           … and {} more", cluster.count - cluster.paths.len());
+        if cluster.count > cluster.names.len() {
+            println!("           … and {} more", cluster.count - cluster.names.len());
         }
         println!("           read one: h5i websec show {}", cluster.representative);
     }

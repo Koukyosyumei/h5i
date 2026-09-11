@@ -30,7 +30,7 @@ SERVER=$!
 cleanup() {
     kill "$SERVER" 2>/dev/null
     for name in "${SESSIONS[@]}"; do "$H5I" browser close --session "$name" >/dev/null 2>&1; done
-    rm -f /tmp/ws-smoke-flow.$$.json
+    rm -f /tmp/ws-smoke-flow.$$.json /tmp/ws-smoke-plan.$$.json
 }
 trap cleanup EXIT
 sleep 1
@@ -186,6 +186,76 @@ OVER=$(printf '%s\n{"id":5,"verb":"ping"}\n' "$HUGE" | "$H5I" browser rpc --stdi
 is "an oversized line is refused" "$(echo "$OVER" | sed -n 1p | jqp "d['error']['code']")" "too-long"
 is "and the next line is still read" "$(echo "$OVER" | sed -n 2p | jqp "d['id']")" "5"
 
+echo "── experiments ──────────────────────────────────────────────────────"
+PLAN=/tmp/ws-smoke-plan.$$.json
+cat > "$PLAN" <<PLANEOF
+{"request": "req_0",
+ "positions": [{"name": "id", "target": "query.user_id",
+                "values": ["1", "2", "3", "98", "99"]}],
+ "baseline": "res_0",
+ "extract": {"missing": "regex:\"error\": \"([a-z ]+)\""},
+ "rate": 20}
+PLANEOF
+XP="$("$WEBSEC" experiment "$PLAN" --session ws-smoke-a 2>/dev/null)"
+is "every position value is sent once" "$(echo "$XP" | jqp 'd["sent"]')" "5"
+is "and every send is read back"       "$(echo "$XP" | jqp 'd["read"]')" "5"
+# Three 404s fold into one row; the two real users stay apart, because they
+# answer with the same shape and different words.
+is "the answers fold to three clusters" "$(echo "$XP" | jqp 'len(d["clusters"])')" "3"
+is "the noise is one row of three"      "$(echo "$XP" | jqp 'd["clusters"][0]["count"]')" "3"
+is "and it still names every message"   "$(echo "$XP" | jqp 'len(d["clusters"][0]["members"])')" "3"
+is "the baseline scores itself 1.0" \
+   "$(echo "$XP" | jqp '[c["similarity"] for c in d["clusters"] if c["values"]==["id=1"]][0]')" "1.0"
+is "an extractor names what it caught" \
+   "$(echo "$XP" | jqp 'd["extracted"]["missing"][0]["found"]')" "no such user"
+
+# Under `--as` the sends land in the other session's store, and reading this
+# one's would answer with whatever message held the same number.
+cat > "$PLAN" <<PLANEOF
+{"request": "$DOC_SEQ", "as": "ws-smoke-b",
+ "positions": [{"name": "doc", "target": "query.id", "values": ["1", "2", "3"]}]}
+PLANEOF
+AS="$("$WEBSEC" experiment "$PLAN" --session ws-smoke-a 2>/dev/null)"
+is "an experiment as another identity reads where it landed" \
+   "$(echo "$AS" | jqp 'd["read"]')" "3"
+is "and the identity's answers separate" "$(echo "$AS" | jqp 'len(d["clusters"])')" "3"
+
+# A product of two positions is one send per combination, both edits on it.
+cat > "$PLAN" <<PLANEOF
+{"request": "req_0", "create": true,
+ "positions": [{"name": "id", "target": "query.user_id", "values": ["1", "2"]},
+               {"name": "d", "target": "query.debug", "values": ["0", "1", "2"]}]}
+PLANEOF
+PROD="$("$WEBSEC" experiment "$PLAN" --session ws-smoke-a 2>/dev/null)"
+is "a product sends every combination" "$(echo "$PROD" | jqp 'd["sent"]')" "6"
+has "and labels one by both positions" "$(echo "$PROD" | jqp 'd["clusters"][0]["values"][0]')" "d="
+
+cat > "$PLAN" <<'PLANEOF'
+{"request": "req_0", "positions": [{"target": "query.user_id", "values": ["1"]}],
+ "stratergy": "product"}
+PLANEOF
+"$WEBSEC" experiment "$PLAN" --session ws-smoke-a >/dev/null 2>&1
+is "a misspelled key is refused, not ignored" "$?" "2"
+rm -f "$PLAN"
+
+echo
+echo "── findings ─────────────────────────────────────────────────────────"
+NEW="$("$WEBSEC" finding create --title "cross-tenant doc read" \
+        --state "confirmed once" --note "bob is refused doc 1" \
+        --evidence "req_$DOC_SEQ" --session ws-smoke-a 2>/dev/null)"
+is "a finding is written and numbered" "$(echo "$NEW" | jqp 'd["id"]')" "finding_1"
+is "and keeps the state it was given"  "$(echo "$NEW" | jqp 'd["state"]')" "confirmed once"
+UPD="$("$WEBSEC" finding update finding_1 --state "still open" \
+        --note "only on the JSON endpoint" --session ws-smoke-a 2>/dev/null)"
+is "an update replaces the state"      "$(echo "$UPD" | jqp 'd["state"]')" "still open"
+is "and adds to the notes"             "$(echo "$UPD" | jqp 'len(d["notes"])')" "2"
+is "the list shows it once"            "$(echo "$("$WEBSEC" finding list --session ws-smoke-a 2>/dev/null)" | jqp 'len(d["findings"])')" "1"
+"$WEBSEC" finding create --title "no evidence" --evidence req_9999 --session ws-smoke-a >/dev/null 2>&1
+is "evidence that names nothing is refused" "$?" "2"
+"$WEBSEC" finding show finding_99 --session ws-smoke-a >/dev/null 2>&1
+is "and so is a finding that is not there"  "$?" "2"
+
+echo
 echo "── the plugin ───────────────────────────────────────────────────────"
 PLUGIN="$WEBSEC"
 if [ -x "$PLUGIN" ]; then

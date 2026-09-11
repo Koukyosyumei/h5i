@@ -2238,6 +2238,39 @@ impl crate::broker::Broker for LocalBroker {
 }
 
 
+/// Holds a caller to a number of sends per second.
+///
+/// Measured from the last send rather than by sleeping a fixed amount between
+/// them, so a slow response spends the interval it was going to wait: a rate is
+/// a ceiling on what the target sees, not an extra delay on top of it.
+struct Pace {
+    interval: Option<std::time::Duration>,
+    last: Option<std::time::Instant>,
+}
+
+impl Pace {
+    fn new(rate: Option<f64>) -> Self {
+        Self {
+            interval: rate
+                .filter(|rate| *rate > 0.0 && rate.is_finite())
+                .map(|rate| std::time::Duration::from_secs_f64(1.0 / rate)),
+            last: None,
+        }
+    }
+
+    /// Wait, if the previous send was more recent than the interval allows.
+    fn hold(&mut self) {
+        if let Some(interval) = self.interval {
+            if let Some(last) = self.last
+                && let Some(remaining) = interval.checked_sub(last.elapsed())
+            {
+                std::thread::sleep(remaining);
+            }
+            self.last = Some(std::time::Instant::now());
+        }
+    }
+}
+
 impl LocalBroker {
     /// One send, and what it cost.
     fn send_once(
@@ -2363,6 +2396,22 @@ impl LocalBroker {
                     .to_string(),
             ));
         }
+        // A burst meets at a barrier and then sends; a rate holds each send
+        // back. Together they are neither, and the race would not reproduce.
+        if plan.together && plan.rate.is_some() {
+            return Err(SendError::new(
+                "bad-rate",
+                "`--race` releases every request at one moment and `--rate` holds them apart. \
+                 Pick one"
+                    .to_string(),
+            ));
+        }
+        if plan.rate.is_some_and(|rate| rate <= 0.0 || !rate.is_finite()) {
+            return Err(SendError::new(
+                "bad-rate",
+                "`--rate` is sends per second and has to be a positive number".to_string(),
+            ));
+        }
 
         // Build raw requests after edits so `--set` still applies.
         if plan.raw_request.is_some() || plan.raw_target.is_some() || plan.raw_headers {
@@ -2398,15 +2447,21 @@ impl LocalBroker {
             cors: None,
         };
 
-        // Apply each walked value after the shared edits.
+        // Apply each step's edits after the shared ones.
         if let Some(each) = &plan.each {
-            let mut samples = Vec::with_capacity(each.values.len());
+            let mut samples = Vec::with_capacity(each.steps.len());
             let mut last: Option<(FetchOutcome, crate::broker::Sent)> = None;
-            for value in &each.values {
+            let mut pace = Pace::new(plan.rate);
+            for step in &each.steps {
                 let mut one = editable.clone();
-                let edit = crate::edits::parse_set(&format!("{}={value}", each.target))
-                    .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
-                crate::edits::apply(&mut one, std::slice::from_ref(&edit), create)
+                let mut walked = Vec::with_capacity(step.set.len());
+                for spec in &step.set {
+                    walked.push(
+                        crate::edits::parse_set(spec)
+                            .map_err(|e| SendError::new("bad-edit", e.to_string()))?,
+                    );
+                }
+                crate::edits::apply(&mut one, &walked, create)
                     .map_err(|e| SendError::new("bad-edit", e.to_string()))?;
                 let fetch = to_fetch(&one);
                 let sent = crate::broker::Sent {
@@ -2415,8 +2470,9 @@ impl LocalBroker {
                     header_names: fetch.headers.iter().map(|(name, _)| name.clone()).collect(),
                     body_bytes: fetch.body.len() as u64,
                 };
+                pace.hold();
                 let (mut sample, outcome) = self.send_once(&fetch);
-                sample.value = Some(value.clone());
+                sample.value = Some(step.label.clone());
                 samples.push(sample);
                 last = Some((outcome, sent));
             }
@@ -2447,7 +2503,9 @@ impl LocalBroker {
         } else {
             let mut samples = Vec::with_capacity(sends as usize);
             let mut last = None;
+            let mut pace = Pace::new(plan.rate);
             for _ in 0..sends {
+                pace.hold();
                 let (sample, outcome) = self.send_once(&fetch);
                 samples.push(sample);
                 last = Some(outcome);
@@ -3699,6 +3757,7 @@ mod capture_wire_tests {
                 raw_request: None,
                 raw_headers: false,
                 each: None,
+                rate: None,
             },
         )
         .expect("sent");
@@ -3735,6 +3794,7 @@ mod capture_wire_tests {
                 raw_request: None,
                 raw_headers: true,
                 each: None,
+                rate: None,
             },
         )
         .expect("sent");
@@ -3777,11 +3837,12 @@ mod capture_wire_tests {
                 raw_target: None,
                 raw_request: None,
                 raw_headers: false,
-                each: Some(crate::broker::Each {
-                    target: "query.id".to_string(),
-                    // Commas remain part of a value.
-                    values: vec!["1".into(), "2".into(), "a,b".into()],
-                }),
+                rate: None,
+                // Commas remain part of a value.
+                each: Some(crate::broker::Each::over(
+                    "query.id",
+                    vec!["1".into(), "2".into(), "a,b".into()],
+                )),
             },
         )
         .expect("sent");
@@ -3800,6 +3861,140 @@ mod capture_wire_tests {
             );
             assert!(!sample.body_truncated);
         }
+    }
+
+    /// The general form: one send sets more than one target.
+    #[test]
+    fn a_walk_step_sets_every_target_it_names_and_is_labeled_as_one() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let port = echo_request_lines(2);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/thing?user=x&role=y")).unwrap();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: false,
+                rate: None,
+                each: Some(crate::broker::Each {
+                    steps: vec![
+                        crate::broker::Step {
+                            label: "user=alice role=user".to_string(),
+                            set: vec![
+                                "query.user=alice".to_string(),
+                                "query.role=user".to_string(),
+                            ],
+                        },
+                        crate::broker::Step {
+                            label: "user=bob role=admin".to_string(),
+                            set: vec![
+                                "query.user=bob".to_string(),
+                                "query.role=admin".to_string(),
+                            ],
+                        },
+                    ],
+                }),
+            },
+        )
+        .expect("sent");
+        assert_eq!(sent.samples.len(), 2, "one send per step");
+        assert_eq!(
+            sent.samples[1].value.as_deref(),
+            Some("user=bob role=admin"),
+            "the sample is named by the whole combination, not by one value"
+        );
+        assert!(
+            sent.samples[1].body_preview.contains("user=bob")
+                && sent.samples[1].body_preview.contains("role=admin"),
+            "both of the step's edits rode on the same request: {:?}",
+            sent.samples[1]
+        );
+    }
+
+    /// A burst meets at a barrier; a rate holds each send back.
+    #[test]
+    fn a_rate_and_a_race_are_refused_together() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let error = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 4,
+                together: true,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: false,
+                each: None,
+                rate: Some(2.0),
+            },
+        )
+        .expect_err("refused");
+        assert!(
+            format!("{error:?}").contains("Pick one"),
+            "the refusal says why: {error:?}"
+        );
+    }
+
+    /// A rate is a ceiling on what the target sees.
+    #[test]
+    fn a_rate_holds_the_sends_apart() {
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let port = echo_request_lines(3);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/thing")).unwrap();
+        let started = std::time::Instant::now();
+        let sent = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 3,
+                together: false,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: false,
+                each: None,
+                // Fast enough to keep the suite quick, slow enough that three
+                // sends cannot land inside one interval by accident.
+                rate: Some(25.0),
+            },
+        )
+        .expect("sent");
+        assert_eq!(sent.samples.len(), 3);
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(80),
+            "three sends at 25/s take two intervals: {:?}",
+            started.elapsed()
+        );
     }
 
     /// Raw requests cannot be walked.
@@ -3825,10 +4020,8 @@ mod capture_wire_tests {
                 raw_target: Some("/x".to_string()),
                 raw_request: None,
                 raw_headers: false,
-                each: Some(crate::broker::Each {
-                    target: "query.id".to_string(),
-                    values: vec!["1".into()],
-                }),
+                rate: None,
+                each: Some(crate::broker::Each::over("query.id", vec!["1".into()])),
             },
         )
         .expect_err("refused");
