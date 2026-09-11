@@ -36,12 +36,21 @@ use serde_json::{Value, json};
 use h5i_core::browser_session as bs;
 use h5i_core::ui::SUCCESS;
 
-/// How long `start` waits for the engine to advertise its control file.
+/// How long `start` waits with the engine showing no sign of work.
 ///
 /// Generous, because the first thing a session does is fetch and render the URL
-/// it was given, and a cold font scan is not instant. A start that gives up
-/// says what it was waiting for and leaves the engine's own log behind.
+/// it was given, and a cold font scan is not instant. Measured from the last
+/// request the engine logged rather than from the spawn: a heavy page can take
+/// minutes of honest work, and giving up on one while it is still fetching
+/// reported a mid-load kill as a failure to start (issue #631).
 const START_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long `start` waits in total, however busy the engine looks.
+///
+/// Past the engine's own last-resort stop (a navigation budget of 45s plus its
+/// 60s margin), so an engine that is going to end itself has done so and said
+/// why before this is reached.
+const START_CEILING: Duration = Duration::from_secs(150);
 
 /// The most sends one `--set-each` or `--walk` may ask for.
 ///
@@ -2845,7 +2854,13 @@ fn await_control(spawned: &mut Spawned, dir: &Path) -> Result<(), String> {
         // Nothing on this side to watch. The first verb finds out.
         return Ok(());
     };
-    let deadline = Instant::now() + START_TIMEOUT;
+    let started = Instant::now();
+    // What the engine has fetched, as a sign it is working. The receipt log is
+    // written as the load goes, so its length answers "is this a slow page or a
+    // stuck one" without asking the engine anything.
+    let receipts = dir.join(bs::RECEIPTS_FILE);
+    let mut logged = progress_of(&receipts);
+    let mut moved = Instant::now();
     loop {
         if witness.exists() {
             return Ok(());
@@ -2856,16 +2871,56 @@ fn await_control(spawned: &mut Spawned, dir: &Path) -> Result<(), String> {
                 tail_of(&dir.join("engine.log"))
             ));
         }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "the browser engine did not come up within {}s (see {})",
-                START_TIMEOUT.as_secs(),
-                dir.join("engine.log").display()
+        let now = progress_of(&receipts);
+        if now > logged {
+            logged = now;
+            moved = Instant::now();
+        }
+        if moved.elapsed() >= START_TIMEOUT || started.elapsed() >= START_CEILING {
+            return Err(stalled_message(
+                logged,
+                started.elapsed(),
+                moved.elapsed(),
+                dir,
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+/// How much the engine has written about what it fetched, in bytes.
+///
+/// The length rather than a line count: this is asked twenty times a second and
+/// only ever compared with itself.
+fn progress_of(receipts: &Path) -> u64 {
+    std::fs::metadata(receipts).map(|meta| meta.len()).unwrap_or(0)
+}
+
+/// Why the wait ended, said in terms of what the engine was actually doing.
+///
+/// Two failures wore one message until issue #631: an engine that never
+/// started, and one that came up, fetched two hundred subresources and had not
+/// finished. Reporting the second as the first sent a reader looking for a
+/// startup problem that was not there.
+fn stalled_message(logged: u64, waited: Duration, since: Duration, dir: &Path) -> String {
+    let log = dir.join("engine.log").display().to_string();
+    if logged == 0 {
+        return format!(
+            "the browser engine did not come up within {}s: it logged no request at all, so it              never reached the page (see {log})",
+            waited.as_secs()
+        );
+    }
+    format!(
+        "the browser engine came up and did not finish this page within {}s. It was fetching —          {} of receipts are written — and then went quiet for {}s.
+
+           This is a page that loads for longer than a session start waits, not a failed start.          Read it without a session (`h5i browser read <url>`), or narrow what it may fetch with          `--allow`. Its receipts are in {} and its own output in {log}",
+        waited.as_secs(),
+        human_bytes(logged),
+        since.as_secs(),
+        dir.join(bs::RECEIPTS_FILE).display()
+    )
+}
+
 
 /// The last few lines of the engine's own output, scrubbed.
 ///
@@ -4787,3 +4842,52 @@ fn kill(pid: u32) {
 
 #[cfg(not(unix))]
 fn kill(_pid: u32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two failures wore one message until issue #631.
+    #[test]
+    fn a_start_that_gives_up_says_which_of_the_two_things_happened() {
+        let dir = std::path::Path::new("/tmp/br_test");
+
+        let never = stalled_message(0, Duration::from_secs(30), Duration::from_secs(30), dir);
+        assert!(never.contains("did not come up"), "{never}");
+        assert!(never.contains("no request at all"), "{never}");
+
+        // The one the issue was about: the engine was up, fetching, and had
+        // made two hundred requests when the wait ran out.
+        let loading = stalled_message(
+            64 * 1024,
+            Duration::from_secs(78),
+            Duration::from_secs(31),
+            dir,
+        );
+        assert!(
+            !loading.contains("did not come up"),
+            "an engine that fetched came up: {loading}"
+        );
+        assert!(loading.contains("did not finish this page"), "{loading}");
+        assert!(
+            loading.contains("not a failed start"),
+            "it has to say so out loud: {loading}"
+        );
+        assert!(
+            loading.contains("h5i browser read"),
+            "and what to do instead: {loading}"
+        );
+    }
+
+    #[test]
+    fn progress_is_read_off_the_receipts_and_is_zero_when_there_are_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let receipts = dir.path().join("requests.jsonl");
+        assert_eq!(progress_of(&receipts), 0, "nothing written yet");
+        std::fs::write(&receipts, "{}\n").expect("write");
+        let one = progress_of(&receipts);
+        assert!(one > 0);
+        std::fs::write(&receipts, "{}\n{}\n").expect("write");
+        assert!(progress_of(&receipts) > one, "a fetching engine grows it");
+    }
+}

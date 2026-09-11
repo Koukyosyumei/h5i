@@ -908,6 +908,16 @@ struct NetArgs {
     /// 30-second limit are together minutes an agent is waiting.
     #[arg(long, default_value_t = 60, value_name = "SECONDS")]
     max_network_seconds: u64,
+
+    /// How many seconds one page may spend loading, waiting or not.
+    ///
+    /// The ceiling the others could not give: a page whose cost is parsing,
+    /// layout and fonts is inside every limit above and can still load for two
+    /// minutes. Past this the next fetch is refused, so the page finishes with
+    /// what it has rather than becoming one that never returns. Matches
+    /// `--navigation-seconds`, which bounds the same span in the renderer.
+    #[arg(long, default_value_t = 45, value_name = "SECONDS")]
+    max_load_seconds: u64,
 }
 
 #[derive(Args, Clone)]
@@ -1279,6 +1289,7 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
             // inconsistently.
             max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
             max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
+            max_load_time: std::time::Duration::from_secs(net.max_load_seconds),
         },
         net,
     )?;

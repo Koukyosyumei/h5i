@@ -783,6 +783,18 @@ published boa would do, and fails the build the day one would. Patch both crates
 together, and note that a `Gc` in a `thread_local` must be `ManuallyDrop` or the
 thread aborts at exit.
 
+*A navigation is bounded by a wall clock, not only by what it spends.*
+`Limits::max_load_time` (45s, `--max-load-seconds`) refuses the next fetch once
+the navigation has been loading that long, whatever the request, byte and
+network-time ceilings say. The others bound spending, and a page whose cost is
+parsing, layout and fonts is inside every one of them and still loading two
+minutes later; the only stop left was `HardStop`, which ends the process and so
+reports nothing. Added 2026-09-11 for issues #631 and #632, where
+`https://www.nba.com/` loaded for 105s and was killed with every byte it had
+rendered discarded. It bounds the fetch-driven half of a load: a page that stops
+fetching and grinds in layout still meets `HardStop`, and that is the next piece
+of this, not a claim this one makes.
+
 ---
 
 ## B3. Security: what script bought and what it cost
