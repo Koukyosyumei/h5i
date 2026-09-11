@@ -24,6 +24,22 @@ pub struct Limits {
     /// are three minutes an agent is waiting.
     #[serde(with = "millis")]
     pub max_network_time: Duration,
+    /// Wall clock since the navigation began, spent or not.
+    ///
+    /// The one ceiling the others could not give. A page whose cost is parsing,
+    /// layout and fonts rather than waiting is inside every limit above and can
+    /// still load for two minutes; the engine then has no answer except
+    /// [`HardStop`], which is not an answer at all because it discards the page
+    /// instead of reporting it unfinished.
+    #[serde(with = "millis", default = "default_max_load_time")]
+    pub max_load_time: Duration,
+}
+
+/// Matches `--navigation-seconds`, which bounds the same span from the other
+/// side of the process split. Two numbers for one rule, because the budget is
+/// the broker's and the navigation deadline is the renderer's.
+fn default_max_load_time() -> Duration {
+    Duration::from_secs(45)
 }
 
 impl Default for Limits {
@@ -38,6 +54,7 @@ impl Default for Limits {
             // compression bomb pushes.
             max_decoded_bytes: 256 * 1024 * 1024,
             max_network_time: Duration::from_secs(60),
+            max_load_time: default_max_load_time(),
         }
     }
 }
@@ -54,6 +71,14 @@ pub struct Budget {
     wire_bytes: AtomicU64,
     decoded_bytes: AtomicU64,
     network_micros: AtomicU64,
+    /// A fixed point to measure the navigation's wall clock from.
+    ///
+    /// An `Instant` cannot be stored atomically, and a lock here would
+    /// serialise the one part of this engine that is deliberately concurrent.
+    /// So the base holds still and the offset moves.
+    epoch: Instant,
+    /// When the current navigation began, as microseconds since `epoch`.
+    navigation_micros: AtomicU64,
 }
 
 impl Default for Budget {
@@ -80,6 +105,8 @@ impl Budget {
             wire_bytes: AtomicU64::new(0),
             decoded_bytes: AtomicU64::new(0),
             network_micros: AtomicU64::new(0),
+            epoch: Instant::now(),
+            navigation_micros: AtomicU64::new(0),
         }
     }
 
@@ -94,6 +121,16 @@ impl Budget {
         self.wire_bytes.store(0, Ordering::Relaxed);
         self.decoded_bytes.store(0, Ordering::Relaxed);
         self.network_micros.store(0, Ordering::Relaxed);
+        self.navigation_micros.store(
+            self.epoch.elapsed().as_micros() as u64,
+            Ordering::Relaxed,
+        );
+    }
+
+    /// How long the current navigation has been loading.
+    pub fn loading(&self) -> Duration {
+        let began = Duration::from_micros(self.navigation_micros.load(Ordering::Relaxed));
+        self.epoch.elapsed().saturating_sub(began)
     }
 
     /// Whether there is room for one more request.
@@ -162,6 +199,18 @@ impl Budget {
                  limit for one navigation is {}ms.",
                 micros / 1000,
                 limit / 1000
+            )));
+        }
+        // Last, because it is the least specific: when a page is over two
+        // ceilings the one naming what it spent is the more useful answer.
+        let loading = self.loading();
+        if loading > self.limits.max_load_time {
+            return Err(Exceeded(format!(
+                "budget-exceeded: this page has been loading for {}s, and the limit for one \
+                 navigation is {}s. What it has rendered by now is what there is; navigating \
+                 gives the page a fresh allowance.",
+                loading.as_secs(),
+                self.limits.max_load_time.as_secs()
             )));
         }
         Ok(())
@@ -329,7 +378,37 @@ mod tests {
             max_wire_bytes: 1000,
             max_decoded_bytes: 2000,
             max_network_time: Duration::from_millis(100),
+            max_load_time: Duration::from_secs(3600),
         })
+    }
+
+    /// The ceiling the per-phase budgets could not give. Without it a page
+    /// whose cost is not the network has no stop but `HardStop`, which reports
+    /// nothing because it ends the process.
+    #[test]
+    fn a_page_that_loads_for_too_long_is_refused_the_next_fetch() {
+        let budget = Budget::new(Limits {
+            max_load_time: Duration::from_millis(40),
+            ..Limits::default()
+        });
+        assert!(budget.claim_request().is_ok(), "inside the clock");
+        std::thread::sleep(Duration::from_millis(60));
+        let refused = budget
+            .claim_request()
+            .expect_err("past the clock, whatever else it spent");
+        assert!(
+            refused.to_string().contains("has been loading for"),
+            "the refusal names the clock: {refused}"
+        );
+        assert!(
+            refused.to_string().contains("what there is"),
+            "and says the page is unfinished rather than broken: {refused}"
+        );
+
+        // A navigation is a fresh decision by the principal, so it gets a
+        // fresh clock along with everything else.
+        budget.reset();
+        assert!(budget.claim_request().is_ok(), "navigating starts it again");
     }
 
     #[test]

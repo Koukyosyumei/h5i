@@ -763,6 +763,15 @@ enum SessionVerb {
         /// Ordered `--set-each` values.
         #[arg(long = "each-value", value_name = "VALUE")]
         each_values: Vec<String>,
+        /// A walk as JSON: `{"steps":[{"label":…,"set":["target=value",…]},…]}`.
+        ///
+        /// The general form of `--set-each`, where one send may set more than
+        /// one target. What `h5i browser resend --walk` passes on.
+        #[arg(long = "walk-json", value_name = "JSON", conflicts_with = "set_each")]
+        walk_json: Option<String>,
+        /// At most this many sends per second.
+        #[arg(long, value_name = "PER_SECOND")]
+        rate: Option<f64>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -899,6 +908,16 @@ struct NetArgs {
     /// 30-second limit are together minutes an agent is waiting.
     #[arg(long, default_value_t = 60, value_name = "SECONDS")]
     max_network_seconds: u64,
+
+    /// How many seconds one page may spend loading, waiting or not.
+    ///
+    /// The ceiling the others could not give: a page whose cost is parsing,
+    /// layout and fonts is inside every limit above and can still load for two
+    /// minutes. Past this the next fetch is refused, so the page finishes with
+    /// what it has rather than becoming one that never returns. Matches
+    /// `--navigation-seconds`, which bounds the same span in the renderer.
+    #[arg(long, default_value_t = 45, value_name = "SECONDS")]
+    max_load_seconds: u64,
 }
 
 #[derive(Args, Clone)]
@@ -1270,6 +1289,7 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
             // inconsistently.
             max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
             max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
+            max_load_time: std::time::Duration::from_secs(net.max_load_seconds),
         },
         net,
     )?;
@@ -1681,6 +1701,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             raw_headers,
             set_each,
             each_values,
+            walk_json,
+            rate,
             at,
         } => {
             let composed: Option<serde_json::Value> = match request {
@@ -1710,6 +1732,15 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     base64::engine::general_purpose::STANDARD.encode(&bytes),
                 ));
             }
+            let walk: Option<serde_json::Value> = match walk_json {
+                None => None,
+                Some(text) => match serde_json::from_str(text) {
+                    Ok(value) => Some(value),
+                    Err(e) => {
+                        return Err(H5iError::Metadata(format!("`--walk` is not JSON: {e}")));
+                    }
+                },
+            };
             (
                 at,
                 serde_json::json!({
@@ -1727,10 +1758,11 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "raw_target": raw_target,
                     "raw_request": raw_request,
                     "raw_headers": raw_headers,
-                    "each": set_each.as_ref().map(|target| serde_json::json!({
+                    "each": walk.or_else(|| set_each.as_ref().map(|target| serde_json::json!({
                         "target": target,
                         "values": each_values,
-                    })),
+                    }))),
+                    "rate": rate,
                 }),
             )
         }

@@ -1,4 +1,4 @@
-//! `h5i`: a disposable, confined development environment for coding agents.
+//! `h5i`: the red-teaming browser for AI agents.
 //!
 //! The library owns the whole CLI: the top-level `Cli`/`Commands` parse, the
 //! argument bootstrap, and the dispatch into `cli/`, where every noun's clap enum
@@ -17,7 +17,12 @@ pub mod cli;
 #[derive(Parser)]
 #[command(
     name = "h5i",
-    about = "Disposable, confined development environments for coding agents",
+    // What the product is now. It read "Disposable, confined development
+    // environments for coding agents" until 2026-09-10, which was the
+    // positioning before the pivot (ROADMAP.md) and had outlived the README,
+    // the site and the skill.
+    about = "The red-teaming browser for AI agents: page automation with direct control over \
+             HTTP traffic, in sessions that stay contained and auditable",
     version
 )]
 pub struct Cli {

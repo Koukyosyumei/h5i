@@ -261,6 +261,13 @@ pub struct Sends {
     /// Preserve header-name casing via the raw sender.
     #[serde(default)]
     pub raw_headers: bool,
+    /// Sends per second, at most. `None` sends as fast as the wire allows.
+    ///
+    /// Not a courtesy. A walk of a thousand values is the one verb here that
+    /// can look like an attack to whoever is watching the target, and an
+    /// authorised engagement usually comes with a number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f64>,
 }
 
 impl Default for Sends {
@@ -273,6 +280,7 @@ impl Default for Sends {
             raw_headers: false,
             each: None,
             raw_request: None,
+            rate: None,
         }
     }
 }
@@ -310,13 +318,38 @@ pub fn body_preview(body: &[u8]) -> String {
     String::from_utf8_lossy(&body[..body.len().min(BODY_PREVIEW_BYTES)]).into_owned()
 }
 
-/// A target and its per-send values.
+/// One send of a walk: the edits that make it different, and what to call it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Step {
+    /// What names this send in the samples. The value, when one target is
+    /// walked; the whole combination, when several are.
+    pub label: String,
+    /// `target=value` edits, applied after the shared ones.
+    pub set: Vec<String>,
+}
+
+/// A walk: one send per step, in order.
+///
+/// One shape for one target and for several, because the sender's job is the
+/// same either way and two paths through it would drift.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Each {
-    /// Target such as `query.id` or `json.role`.
-    pub target: String,
-    /// One value per send, in order.
-    pub values: Vec<String>,
+    pub steps: Vec<Step>,
+}
+
+impl Each {
+    /// The one-target form: `query.id` over a file of values.
+    pub fn over(target: &str, values: Vec<String>) -> Self {
+        Self {
+            steps: values
+                .into_iter()
+                .map(|value| Step {
+                    set: vec![format!("{target}={value}")],
+                    label: value,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// What went out, in the parts that are safe to hand back.

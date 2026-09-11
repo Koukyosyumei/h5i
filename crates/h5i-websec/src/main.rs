@@ -17,6 +17,8 @@
 //! `h5i browser`, and defaults chosen for a loop rather than for a person
 //! reading a page.
 
+mod experiment;
+mod finding;
 mod read;
 
 use std::ffi::OsString;
@@ -212,6 +214,41 @@ enum Verb {
     /// What this session reached, as origins and endpoints.
     Sitemap,
 
+    /// Send one request many ways, and fold the answers into clusters.
+    ///
+    /// Intruder's shape, for a caller that is not looking at a screen. The
+    /// plan names the request, what varies and how the values combine:
+    ///
+    /// ```json
+    /// {"request": "req_42",
+    ///  "positions": [
+    ///    {"name": "user", "target": "query.user", "values_file": "users.txt"},
+    ///    {"name": "role", "target": "json.role", "values": ["user", "admin"]}],
+    ///  "strategy": "product",
+    ///  "baseline": "res_42",
+    ///  "extract": {"error": "regex:SQL error: (\\w+)"},
+    ///  "rate": 4}
+    /// ```
+    ///
+    /// The values are yours; nothing here generates one. What comes back is
+    /// the clusters, each naming every message it folded.
+    Experiment {
+        /// The experiment file. Relative paths inside it are read from beside
+        /// it, so a plan and its wordlist move together.
+        #[arg(value_name = "FILE")]
+        file: String,
+    },
+
+    /// What the agent concluded, and the evidence it stands on.
+    ///
+    /// h5i keeps the record and checks that the evidence exists. Whether the
+    /// claim is true is the agent's to say, which is why `--state` is free
+    /// text and nothing here reads it.
+    Finding {
+        #[command(subcommand)]
+        what: FindingVerb,
+    },
+
     /// Run a multi-step flow with bindings between the steps.
     ///
     /// Steps run in order, bind response values, and stop on failure:
@@ -235,13 +272,64 @@ enum Verb {
     },
 }
 
+#[derive(Subcommand)]
+enum FindingVerb {
+    /// Write one down.
+    Create {
+        /// What it is, in one line.
+        #[arg(long, value_name = "TEXT")]
+        title: String,
+        /// Where it stands, in whatever words are useful. Free text: nothing
+        /// here reads it, so nothing here restricts it.
+        #[arg(long, value_name = "TEXT")]
+        state: Option<String>,
+        /// What was learned. Repeatable over the finding's life.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+        /// Message ids it rests on, as `req_42,res_43`. Refused when this
+        /// session holds no such message.
+        #[arg(long, value_name = "IDS")]
+        evidence: Vec<String>,
+        /// A file that reproduces it: a sequence, or an experiment.
+        #[arg(long, value_name = "PATH")]
+        repro: Option<String>,
+    },
+    /// Every finding in this session, oldest first.
+    List {
+        /// Only findings whose state contains this.
+        #[arg(long, value_name = "TEXT")]
+        state: Option<String>,
+    },
+    /// One finding, with its notes and every change to it.
+    Show {
+        /// `finding_7`, or just `7`.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    /// Change one. The title, state and repro replace; notes and evidence add.
+    Update {
+        #[arg(value_name = "ID")]
+        id: String,
+        #[arg(long, value_name = "TEXT")]
+        title: Option<String>,
+        #[arg(long, value_name = "TEXT")]
+        state: Option<String>,
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+        #[arg(long, value_name = "IDS")]
+        evidence: Vec<String>,
+        #[arg(long, value_name = "PATH")]
+        repro: Option<String>,
+    },
+}
+
 /// `req_42`, `res_42` and `42` all name sequence 42.
 ///
 /// The prefixes exist because a finding reads better with them and because a
 /// request and its response share a number; neither is a different thing to
 /// look up. Anything else is refused rather than parsed as far as it goes: `42x`
 /// silently becoming 42 is how a loop tests the wrong request.
-fn sequence_of(id: &str) -> anyhow::Result<String> {
+pub fn sequence_of(id: &str) -> anyhow::Result<String> {
     let bare = id
         .strip_prefix("req_")
         .or_else(|| id.strip_prefix("res_"))
@@ -359,6 +447,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             );
         }
         Verb::Sitemap => return read::sitemap(&root, session.as_deref(), json_out),
+        Verb::Experiment { file } => {
+            return experiment::run(&root, session.as_deref(), file, json_out, &h5i());
+        }
+        Verb::Finding { what } => {
+            return findings(&root, session.as_deref(), what, json_out);
+        }
         _ => {}
     }
 
@@ -394,8 +488,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         // Handled above, in this process: these read the store rather than
         // send anything.
-        Verb::Show { .. } | Verb::Diff { .. } | Verb::Match { .. } | Verb::Sitemap => {
-            unreachable!("the reading verbs return before this")
+        Verb::Show { .. }
+        | Verb::Diff { .. }
+        | Verb::Match { .. }
+        | Verb::Sitemap
+        | Verb::Experiment { .. }
+        | Verb::Finding { .. } => {
+            unreachable!("the verbs this process handles return before this")
         }
         Verb::Replay {
             id,
@@ -503,6 +602,114 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     // match" and 2 for "could not look", and flattening those here would break
     // every script built on them.
     std::process::exit(status.code().unwrap_or(2));
+}
+
+/// `h5i websec finding`, all four of it.
+///
+/// In this process because a finding is a file beside the message store, and
+/// the plugin is what reads that store. Nothing here sends.
+fn findings(
+    root: &std::path::Path,
+    selector: Option<&str>,
+    what: &FindingVerb,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let session = read::resolve_for_reading(root, selector)?;
+    let store = read::store_dir(root, selector)?.1;
+    let log = finding::Findings::open(root, &session.id)?;
+
+    let show = |one: &finding::Finding| -> anyhow::Result<()> {
+        if json_out {
+            println!("{}", serde_json::to_string_pretty(one)?);
+            return Ok(());
+        }
+        print!("{}", one.human());
+        Ok(())
+    };
+
+    match what {
+        FindingVerb::Create {
+            title,
+            state,
+            note,
+            evidence,
+            repro,
+        } => {
+            let evidence = finding::check_evidence(&store, evidence)?;
+            let id = log.next_id()?;
+            log.append(&finding::entry(
+                &id,
+                Some(title.as_str()),
+                state.as_deref(),
+                note.as_deref(),
+                evidence,
+                repro.as_deref(),
+            )?)?;
+            show(&log.find(&id)?)
+        }
+        FindingVerb::Update {
+            id,
+            title,
+            state,
+            note,
+            evidence,
+            repro,
+        } => {
+            let id = finding::normalise_id(id)?;
+            // Read first: an update to a finding that is not there would sit in
+            // the log as a second finding with a familiar name.
+            log.find(&id)?;
+            if title.is_none()
+                && state.is_none()
+                && note.is_none()
+                && evidence.is_empty()
+                && repro.is_none()
+            {
+                anyhow::bail!("`finding update` with nothing to change would only move its clock");
+            }
+            let evidence = finding::check_evidence(&store, evidence)?;
+            log.append(&finding::entry(
+                &id,
+                title.as_deref(),
+                state.as_deref(),
+                note.as_deref(),
+                evidence,
+                repro.as_deref(),
+            )?)?;
+            show(&log.find(&id)?)
+        }
+        FindingVerb::Show { id } => show(&log.find(id)?),
+        FindingVerb::List { state } => {
+            let all = log.read()?;
+            let kept: Vec<&finding::Finding> = all
+                .iter()
+                .filter(|one| match state {
+                    Some(want) => one.state.contains(want.as_str()),
+                    None => true,
+                })
+                .collect();
+            if json_out {
+                let rows: Vec<serde_json::Value> = kept.iter().map(|one| one.brief()).collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "session": session.id,
+                        "findings": rows,
+                    }))?
+                );
+                return Ok(());
+            }
+            if kept.is_empty() {
+                println!("  no findings in session {}", session.id);
+                return Ok(());
+            }
+            for one in kept {
+                println!("{}", one.line());
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
