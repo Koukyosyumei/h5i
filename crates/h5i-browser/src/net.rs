@@ -2238,6 +2238,12 @@ impl crate::broker::Broker for LocalBroker {
 }
 
 
+/// The longest a rate may hold one send back: an hour.
+const SLOWEST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The slowest rate that means anything, in sends per second.
+const SLOWEST_RATE: f64 = 1.0 / 3600.0;
+
 /// Holds a caller to a number of sends per second.
 ///
 /// Measured from the last send rather than by sleeping a fixed amount between
@@ -2253,7 +2259,16 @@ impl Pace {
         Self {
             interval: rate
                 .filter(|rate| *rate > 0.0 && rate.is_finite())
-                .map(|rate| std::time::Duration::from_secs_f64(1.0 / rate)),
+                // `from_secs_f64` panics on an interval it cannot hold, and a
+                // panic here is a request that never answers rather than a
+                // refusal. The caller-facing check above rejects these; this
+                // one is here because the control channel is JSON and a
+                // sender's arithmetic must not depend on it.
+                .map(|rate| {
+                    std::time::Duration::try_from_secs_f64(1.0 / rate)
+                        .unwrap_or(SLOWEST_INTERVAL)
+                        .min(SLOWEST_INTERVAL)
+                }),
             last: None,
         }
     }
@@ -2388,6 +2403,17 @@ impl LocalBroker {
                     .to_string(),
             ));
         }
+        // `--repeat` sends one request N times; a walk sends N different ones.
+        // Silently taking the walk was a caller asking for 5 passes over 100
+        // values and getting one.
+        if plan.count > 1 && plan.each.is_some() {
+            return Err(SendError::new(
+                "bad-each",
+                "`--repeat` sends one request again and a walk sends a different request each \
+                 time. Pick one"
+                    .to_string(),
+            ));
+        }
         if plan.together && plan.each.is_some() {
             return Err(SendError::new(
                 "bad-each",
@@ -2410,6 +2436,19 @@ impl LocalBroker {
             return Err(SendError::new(
                 "bad-rate",
                 "`--rate` is sends per second and has to be a positive number".to_string(),
+            ));
+        }
+        // A rate this small is a typo, not a plan: one send an hour is already
+        // slower than any engagement asks for, and the interval it implies is
+        // what `Duration` cannot hold.
+        if plan.rate.is_some_and(|rate| rate < SLOWEST_RATE) {
+            return Err(SendError::new(
+                "bad-rate",
+                format!(
+                    "`--rate {}` is slower than one send an hour, which is not a rate anybody \
+                     meant to ask for",
+                    plan.rate.unwrap_or_default()
+                ),
             ));
         }
 
@@ -3953,6 +3992,51 @@ mod capture_wire_tests {
         .expect_err("refused");
         assert!(
             format!("{error:?}").contains("Pick one"),
+            "the refusal says why: {error:?}"
+        );
+    }
+
+    /// A number small enough to overflow the interval used to panic the
+    /// sender, which reaches a caller as a request that never answers.
+    #[test]
+    fn a_rate_too_small_to_be_a_rate_is_refused_and_never_panics() {
+        assert_eq!(
+            Pace::new(Some(1e-300)).interval,
+            Some(SLOWEST_INTERVAL),
+            "the arithmetic is bounded even when the check above is bypassed"
+        );
+        assert_eq!(Pace::new(Some(f64::MIN_POSITIVE)).interval, Some(SLOWEST_INTERVAL));
+        assert_eq!(Pace::new(Some(f64::NAN)).interval, None);
+        assert_eq!(Pace::new(Some(0.0)).interval, None);
+        assert_eq!(Pace::new(None).interval, None);
+
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
+        let url = Url::parse("http://127.0.0.1:1/").unwrap();
+        let error = crate::broker::Broker::send_given(
+            broker.as_ref(),
+            crate::broker::Given {
+                method: "GET".to_string(),
+                url,
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+            &[],
+            false,
+            crate::broker::Sends {
+                count: 1,
+                together: false,
+                no_follow: false,
+                raw_target: None,
+                raw_request: None,
+                raw_headers: false,
+                each: None,
+                rate: Some(1e-300),
+            },
+        )
+        .expect_err("refused");
+        assert!(
+            format!("{error:?}").contains("one send an hour"),
             "the refusal says why: {error:?}"
         );
     }

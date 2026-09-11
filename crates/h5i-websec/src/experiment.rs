@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use h5i_wire::message::StoredResponse;
-use h5i_wire::read::{Text, body_text, read_json};
+use h5i_wire::read::{Text, body_text, printable, read_json};
 use h5i_wire::triage::{By, Fingerprint, Sample, cluster, text_digest};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -62,6 +62,14 @@ pub struct Plan {
     pub as_session: Option<String>,
     #[serde(default)]
     pub keep_credentials: bool,
+    /// Start the page's network allowance again before sending.
+    ///
+    /// An experiment is the case that flag exists for: hundreds of requests an
+    /// agent composed, against a budget meant to bound page code. Off by
+    /// default, because a ceiling nobody can see is worse than one that stops
+    /// a walk and says so.
+    #[serde(default)]
+    pub reset_budget: bool,
 }
 
 /// One thing that varies.
@@ -179,12 +187,23 @@ impl Plan {
                 (0..length).map(|n| vec![n; columns.len()]).collect()
             }
             Strategy::Product => {
-                let total: usize = columns.iter().map(Vec::len).product();
-                if total > MAX_STEPS {
-                    anyhow::bail!(
+                // Checked, because `product()` wraps in release and a plan of
+                // four positions of 65536 values wraps to zero, which passed
+                // this test and then tried to build 2^64 rows.
+                let total = columns
+                    .iter()
+                    .try_fold(1usize, |total, column| total.checked_mul(column.len()));
+                match total {
+                    Some(total) if total <= MAX_STEPS => {}
+                    Some(total) => anyhow::bail!(
                         "this is {total} sends, and {MAX_STEPS} is the most one experiment \
                          sends. Narrow a position, or split the plan"
-                    );
+                    ),
+                    None => anyhow::bail!(
+                        "these positions multiply out to more sends than a machine can count, \
+                         and {MAX_STEPS} is the most one experiment sends. Narrow a position, \
+                         or split the plan"
+                    ),
                 }
                 let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
                 for column in &columns {
@@ -426,12 +445,30 @@ pub fn run(
         })
         .collect();
 
+    // A send that never reached the wire has a sample and no status. Counting
+    // it as a quieter result is how an experiment that was cut in half by the
+    // page's budget reads as a negative answer.
+    let answered = sent
+        .iter()
+        .filter(|item| item.get("status").is_some_and(|s| !s.is_null()))
+        .count();
+    let error = answer
+        .get("response")
+        .and_then(|response| response.get("error"))
+        .filter(|error| !error.is_null())
+        .cloned()
+        .or_else(|| answer.get("message").cloned());
+    let complete = answered == steps.len() && samples.len() == answered;
+
     let report = json!({
-        "ok": true,
+        // Every step sent, answered and read. Anything less is not an
+        // experiment with fewer results; it is an experiment that did not run.
+        "ok": complete && error.is_none(),
         "request": format!("req_{seq}"),
         "strategy": plan.strategy.name(),
         "planned": steps.len(),
         "sent": sent.len(),
+        "answered": answered,
         "read": samples.len(),
         "landed_in": landed.unwrap_or_default(),
         "rate": plan.rate,
@@ -439,6 +476,15 @@ pub fn run(
         "baseline": baseline.as_ref().map(|(id, _)| id.clone()),
         "clusters": rows,
         "extracted": found,
+        "error": error,
+        "incomplete": (!complete).then(|| json!({
+            "planned": steps.len(),
+            "answered": answered,
+            "read": samples.len(),
+            "why": "every step with no answer is a request the engine did not make. \
+                    A page's allowance is the usual reason: add \"reset_budget\": true \
+                    to the plan, or split it",
+        })),
     });
 
     if json_out {
@@ -479,6 +525,9 @@ fn send(
     }
     if plan.create {
         command.arg("--create");
+    }
+    if plan.reset_budget {
+        command.arg("--reset-budget");
     }
     if let Some(session) = &plan.as_session {
         command.arg("--as").arg(session);
@@ -521,10 +570,23 @@ fn send(
 fn human(report: &Value, clusters: &usize) {
     let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or_default();
     println!(
-        "  {} sends, {} read, {clusters} clusters",
-        count("sent"),
+        "  {} planned, {} answered, {} read, {clusters} clusters",
+        count("planned"),
+        count("answered"),
         count("read")
     );
+    // Loud, because a walk that was cut short and a walk that found nothing
+    // look the same in a table of clusters.
+    if let Some(error) = report.get("error").and_then(Value::as_str) {
+        println!("  stopped: {}", printable(error));
+    }
+    if report.get("incomplete").is_some_and(|it| !it.is_null()) {
+        println!(
+            "  incomplete: {} of {} steps were never sent, so this is not a negative result",
+            count("planned").saturating_sub(count("answered")),
+            count("planned")
+        );
+    }
     if let Some(rate) = report.get("rate").and_then(Value::as_f64) {
         println!("  at most {rate}/s");
     }
@@ -539,7 +601,7 @@ fn human(report: &Value, clusters: &usize) {
         print!(
             "  x{:<5} {}",
             row.get("count").and_then(Value::as_u64).unwrap_or_default(),
-            text("label")
+            printable(text("label"))
         );
         match row.get("similarity").and_then(Value::as_f64) {
             Some(similarity) => println!("   similarity {similarity:.2}"),
@@ -551,7 +613,7 @@ fn human(report: &Value, clusters: &usize) {
             .map(Vec::as_slice)
             .unwrap_or_default()
         {
-            println!("           {}", value.as_str().unwrap_or_default());
+            println!("           {}", printable(value.as_str().unwrap_or_default()));
         }
         println!(
             "           read one: h5i websec show {}",
@@ -563,7 +625,8 @@ fn human(report: &Value, clusters: &usize) {
         println!();
         for (name, hits) in extracted {
             println!(
-                "  {name}: {} matched",
+                "  {}: {} matched",
+                printable(name),
                 hits.as_array().map(Vec::len).unwrap_or_default()
             );
         }
@@ -645,9 +708,42 @@ mod tests {
             rate: None,
             as_session: None,
             keep_credentials: false,
+            reset_budget: false,
         };
         let refused = plan.expand(Path::new(".")).expect_err("1600 is too many");
         assert!(refused.to_string().contains("1600 sends"), "{refused}");
+    }
+
+    /// `product()` wraps in release, and 65536^4 wraps to exactly zero, which
+    /// passed the ceiling and then tried to build 2^64 rows.
+    #[test]
+    fn a_product_that_overflows_the_count_is_refused_rather_than_wrapping() {
+        let values: Vec<String> = (0..65536u32).map(|n| n.to_string()).collect();
+        let plan = Plan {
+            request: "req_1".to_string(),
+            positions: (0..4)
+                .map(|n| Position {
+                    name: None,
+                    target: format!("query.p{n}"),
+                    values: values.clone(),
+                    values_file: None,
+                })
+                .collect(),
+            strategy: Strategy::Product,
+            set: Vec::new(),
+            create: false,
+            baseline: None,
+            extract: BTreeMap::new(),
+            rate: None,
+            as_session: None,
+            keep_credentials: false,
+            reset_budget: false,
+        };
+        let refused = plan.expand(Path::new(".")).expect_err("2^64 sends");
+        assert!(
+            refused.to_string().contains("than a machine can count"),
+            "{refused}"
+        );
     }
 
     #[test]

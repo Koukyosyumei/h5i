@@ -623,16 +623,7 @@ fn findings(
             println!("{}", serde_json::to_string_pretty(one)?);
             return Ok(());
         }
-        println!("  {}  {}", one.id, one.title);
-        println!("  state    : {}", if one.state.is_empty() { "-" } else { &one.state });
-        println!("  evidence : {}", one.evidence.join(", "));
-        if let Some(repro) = &one.repro {
-            println!("  repro    : {repro}");
-        }
-        for note in &one.notes {
-            println!("  note     : {} ({})", note.text, note.at);
-        }
-        println!("  written  : {}, last changed {}", one.created, one.updated);
+        print!("{}", one.human());
         Ok(())
     };
 
@@ -714,12 +705,7 @@ fn findings(
                 return Ok(());
             }
             for one in kept {
-                println!(
-                    "  {:<12} {:<24} {}",
-                    one.id,
-                    if one.state.is_empty() { "-" } else { &one.state },
-                    one.title
-                );
+                println!("{}", one.line());
             }
             Ok(())
         }

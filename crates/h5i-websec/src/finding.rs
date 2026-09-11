@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use h5i_core::browser_session as bs;
-use h5i_wire::read::sequences;
+use h5i_wire::read::{printable, sequences};
 use h5i_wire::record::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -81,6 +81,54 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// The human view, with what a terminal would act on made visible.
+    ///
+    /// The fields here are the agent's, but an agent quoting a target's error
+    /// message into a note is the ordinary case, and an escape in one repaints
+    /// the report of what was found. Same rule the rest of the workbench
+    /// follows; `--json` is the byte channel and is untouched.
+    pub fn human(&self) -> String {
+        let mut out = format!("  {}  {}\n", self.id, printable(&self.title));
+        out.push_str(&format!(
+            "  state    : {}\n",
+            if self.state.is_empty() {
+                "-".to_string()
+            } else {
+                printable(&self.state)
+            }
+        ));
+        out.push_str(&format!("  evidence : {}\n", self.evidence.join(", ")));
+        if let Some(repro) = &self.repro {
+            out.push_str(&format!("  repro    : {}\n", printable(repro)));
+        }
+        for note in &self.notes {
+            out.push_str(&format!(
+                "  note     : {} ({})\n",
+                printable(&note.text),
+                note.at
+            ));
+        }
+        out.push_str(&format!(
+            "  written  : {}, last changed {}\n",
+            self.created, self.updated
+        ));
+        out
+    }
+
+    /// One line for a list, with the same rule.
+    pub fn line(&self) -> String {
+        format!(
+            "  {:<12} {:<24} {}",
+            self.id,
+            if self.state.is_empty() {
+                "-".to_string()
+            } else {
+                printable(&self.state)
+            },
+            printable(&self.title)
+        )
+    }
+
     /// The list view: enough to decide which one to open.
     pub fn brief(&self) -> Value {
         json!({
@@ -232,6 +280,9 @@ pub fn fold(entries: &[Entry]) -> Vec<Finding> {
 /// now rather than discovered at the end of the engagement.
 pub fn check_evidence(store: &Path, specs: &[String]) -> anyhow::Result<Vec<String>> {
     let mut ids: Vec<String> = Vec::new();
+    // Read the store once. A caller may name a great many ids, and re-listing
+    // the directory for each of them is work that grows with their product.
+    let have = sequences(store);
     for spec in specs {
         for one in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let bare = one
@@ -241,7 +292,6 @@ pub fn check_evidence(store: &Path, specs: &[String]) -> anyhow::Result<Vec<Stri
             let seq: u64 = bare.parse().map_err(|_| {
                 anyhow::anyhow!("`{one}` is not a message id: try `req_42`, `res_42` or `42`")
             })?;
-            let have = sequences(store);
             if !have.contains(&seq) {
                 anyhow::bail!(
                     "this session holds no message {seq}, so a finding citing it would name \
@@ -394,6 +444,28 @@ mod tests {
         let mut only = entry_at("t1", "finding_1");
         only.state = Some("filter-bypass-worked?".to_string());
         assert_eq!(fold(&[only])[0].state, "filter-bypass-worked?");
+    }
+
+    /// The report of what was found must not be repaintable by what was found.
+    #[test]
+    fn an_escape_sequence_never_reaches_the_terminal() {
+        let one = Finding {
+            id: "finding_1".to_string(),
+            title: "quoting the target".to_string(),
+            state: "\u{1b}[32mgreen".to_string(),
+            evidence: vec!["req_1".to_string()],
+            repro: None,
+            notes: vec![Note {
+                at: "t1".to_string(),
+                text: "the error said: \u{1b}[2J\u{1b}[1;1HALL CLEAR".to_string(),
+            }],
+            created: "t1".to_string(),
+            updated: "t1".to_string(),
+        };
+        let shown = one.human();
+        assert!(!shown.contains('\u{1b}'), "{shown}");
+        assert!(shown.contains("ALL CLEAR"), "escaped, not dropped: {shown}");
+        assert!(!one.line().contains('\u{1b}'), "{}", one.line());
     }
 
     #[test]

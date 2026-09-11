@@ -782,6 +782,17 @@ session's store. Reading the calling session's was the one bug the live run
 found, and it did not fail loudly. It answered with whatever message happened
 to hold the same number.
 
+**An incomplete walk is not a negative result.** The page's allowance bounds
+page code at 500 requests per navigation, and a walk of a thousand steps runs
+into it halfway: the engine answers `budget-exceeded` and the samples past that
+point carry no status. Folding those into a quieter table would make "the
+experiment found nothing" and "the experiment did not run" identical, which is
+the same mistake W15 refuses for a burst that sent fewer requests than it was
+asked for. The report counts `planned`, `answered` and `read` apart, carries the
+engine's error, and `ok` is true only when the three agree. `"reset_budget":
+true` is the way past it, off by default because a ceiling nobody can see is
+worse than one that stops a walk and names itself.
+
 What is deliberately absent is concurrency. `"concurrency": 8` would send the
 walk from a pool, and the receipts would stop being in request order for the
 first time in this engine — the property `h5i browser`'s own comments call the

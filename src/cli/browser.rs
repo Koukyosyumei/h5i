@@ -1722,8 +1722,19 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                         steps.len()
                     );
                 }
+                // The walk crosses to the engine as one argument, so it is
+                // bounded here rather than discovered as an `E2BIG` from
+                // `execve`. The same number a single request line may be.
+                let compact = parsed.to_string();
+                if compact.len() > RPC_MAX_LINE {
+                    anyhow::bail!(
+                        "--walk: {path} is {} bytes of steps, and {RPC_MAX_LINE} is the most one \
+                         walk carries. Split the file",
+                        compact.len()
+                    );
+                }
                 argv.push("--walk-json".into());
-                argv.push(parsed.to_string());
+                argv.push(compact);
             }
             if let Some(rate) = rate {
                 if rate <= 0.0 || !rate.is_finite() {

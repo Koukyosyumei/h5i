@@ -1269,8 +1269,15 @@ five hundred sends come back as a handful of rows, each naming every message it
 folded. `"as": "other-session"` sends under another identity, and the results
 are read from that session's store.
 
+The report counts `planned`, `answered` and `read` separately, and `ok` is true
+only when all three agree. A step with no answer is a request the engine did
+not make, and the usual reason is the page's allowance of 500 requests per
+navigation: add `"reset_budget": true`, or split the plan. A walk cut short
+reads exactly like a walk that found nothing, so it says so instead.
+
 The ceiling is 1000 sends per experiment, and `--rate` is a ceiling on what the
-target sees. Both are also on `h5i browser resend`, as `--walk` and `--rate`.
+target sees, between one an hour and as fast as the wire allows. Both are also
+on `h5i browser resend`, as `--walk` and `--rate`.
 
 ### Findings
 

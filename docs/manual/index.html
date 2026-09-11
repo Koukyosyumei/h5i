@@ -1466,8 +1466,14 @@ position together. Responses group by status, type, redirect target, size and
 five hundred sends come back as a handful of rows, each naming every message it
 folded. <code>"as": "other-session"</code> sends under another identity, and the results
 are read from that session's store.</p>
+<p>The report counts <code>planned</code>, <code>answered</code> and <code>read</code> separately, and <code>ok</code> is true
+only when all three agree. A step with no answer is a request the engine did
+not make, and the usual reason is the page's allowance of 500 requests per
+navigation: add <code>"reset_budget": true</code>, or split the plan. A walk cut short
+reads exactly like a walk that found nothing, so it says so instead.</p>
 <p>The ceiling is 1000 sends per experiment, and <code>--rate</code> is a ceiling on what the
-target sees. Both are also on <code>h5i browser resend</code>, as <code>--walk</code> and <code>--rate</code>.</p>
+target sees, between one an hour and as fast as the wire allows. Both are also
+on <code>h5i browser resend</code>, as <code>--walk</code> and <code>--rate</code>.</p>
 <h3 id="findings">Findings</h3>
 <p>What the agent concluded, and the evidence it stands on.</p>
 <pre><code class="language-bash">h5i websec finding create --title &quot;cross-tenant invoice read&quot; \

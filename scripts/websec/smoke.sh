@@ -22,7 +22,7 @@ WEBSEC="${2:-$(dirname "$H5I")/h5i-websec}"
 export H5I_BIN="$(cd "$(dirname "$H5I")" && pwd)/$(basename "$H5I")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=$((20000 + RANDOM % 10000))
-SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race ws-smoke-up)
+SESSIONS=(ws-smoke-a ws-smoke-b ws-smoke-csrf ws-smoke-log ws-smoke-time ws-smoke-race ws-smoke-up ws-smoke-bud)
 FAILED=0
 
 python3 "$HERE/server.py" "$PORT" &
@@ -229,6 +229,22 @@ PLANEOF
 PROD="$("$WEBSEC" experiment "$PLAN" --session ws-smoke-a 2>/dev/null)"
 is "a product sends every combination" "$(echo "$PROD" | jqp 'd["sent"]')" "6"
 has "and labels one by both positions" "$(echo "$PROD" | jqp 'd["clusters"][0]["values"][0]')" "d="
+
+# A walk the page's allowance cuts in half must not read as a negative result.
+# The limit is 500 requests per navigation, so 520 steps runs into it.
+python3 - "$PLAN" <<'PLANEOF'
+import json, sys
+open(sys.argv[1], "w").write(json.dumps({
+    "request": "req_0",
+    "positions": [{"name": "id", "target": "query.user_id",
+                   "values": [str(n) for n in range(520)]}]}))
+PLANEOF
+"$H5I" browser open "http://127.0.0.1:$PORT/profile?user_id=1" \
+    --session ws-smoke-bud --new --capture >/dev/null 2>&1
+CUT="$("$WEBSEC" experiment "$PLAN" --session ws-smoke-bud 2>/dev/null)"
+is "a walk the budget cut short is not ok"  "$(echo "$CUT" | jqp 'd["ok"]')" "False"
+has "and says what stopped it"              "$(echo "$CUT" | jqp 'd["error"]')" "budget"
+has "and that it is not a negative result"  "$(echo "$CUT" | jqp 'd["incomplete"]["why"]')" "did not make"
 
 cat > "$PLAN" <<'PLANEOF'
 {"request": "req_0", "positions": [{"target": "query.user_id", "values": ["1"]}],
